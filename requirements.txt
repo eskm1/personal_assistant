@@ -1,0 +1,21 @@
+# Telegram bot
+python-telegram-bot==21.9
+
+# LLM
+anthropic>=0.40.0
+
+# Voice transcription
+openai>=1.30.0
+
+# Config
+python-dotenv>=1.0.0
+
+# Phase 3: Gmail
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+google-api-python-client>=2.120.0
+# Phase 4: Microsoft Graph
+msal>=1.28.0
+
+# Phase 6: Telethon (Telegram DMs as yourself)
+# telethon>=1.36.0

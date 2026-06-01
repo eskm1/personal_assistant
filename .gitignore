@@ -1,0 +1,11 @@
+# Secrets — never commit these
+.env
+auth/credentials.json
+auth/token_gmail.json
+auth/token_ms.json
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
