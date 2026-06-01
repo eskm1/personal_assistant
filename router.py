@@ -63,16 +63,25 @@ def _execute_tool(name: str, inputs: dict) -> str:
         return f"Tool error ({name}): {e}"
 
 
-def chat(history: list[dict]) -> str:
-    """Run the Claude tool-use loop until the model returns a final text response."""
+def chat(history: list[dict], is_owner: bool = True) -> str:
+    """Run the Claude tool-use loop until the model returns a final text response.
+
+    is_owner=False disables all personal tools (email, calendar, tasks, maps)
+    so non-owners in group chats only get general Claude conversation.
+    """
+    active_tools = TOOLS if is_owner else []
+
     while True:
-        response = client.messages.create(
+        kwargs: dict = dict(
             model=CLAUDE_MODEL,
             max_tokens=2048,
             system=_system_prompt(),
             messages=history,
-            tools=TOOLS,
         )
+        if active_tools:
+            kwargs["tools"] = active_tools
+
+        response = client.messages.create(**kwargs)
 
         assistant_content = response.content
         history.append({"role": "assistant", "content": assistant_content})

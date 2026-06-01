@@ -30,7 +30,8 @@ histories: dict[int, list[dict]] = defaultdict(list)
 
 # ── Auth guard ────────────────────────────────────────────────────────────────
 
-def allowed(user_id: int) -> bool:
+def is_owner(user_id: int) -> bool:
+    """Full access — Bryan's personal tools (email, calendar, tasks, etc.)"""
     return user_id in ALLOWED_USER_IDS
 
 
@@ -42,7 +43,12 @@ def trim_history(history: list[dict]) -> None:
         history[:] = history[-max_messages:]
 
 
-async def reply_from_claude(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> None:
+async def reply_from_claude(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_text: str,
+    owner: bool = True,
+) -> None:
     user_id = update.effective_user.id
     history = histories[user_id]
 
@@ -51,7 +57,7 @@ async def reply_from_claude(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
     await context.bot.send_chat_action(update.effective_chat.id, "typing")
 
-    response = chat(history)
+    response = chat(history, is_owner=owner)
     history.append({"role": "assistant", "content": response})
 
     await update.message.reply_text(response)
@@ -60,26 +66,26 @@ async def reply_from_claude(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 # ── Command handlers ──────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not allowed(update.effective_user.id):
+    if not is_owner(update.effective_user.id):
         return
     histories[update.effective_user.id].clear()
     await update.message.reply_text(
-        "Hi! I'm your personal assistant.\n\n"
-        "You can talk to me normally or send a voice note. I can help with your calendar, "
-        "email, tasks, Telegram messages, directions, and general questions.\n\n"
+        "Hi! I'm Bryan's personal assistant.\n\n"
+        "You can talk to me normally or send a voice note. I can help with calendar, "
+        "email, tasks, directions, and general questions.\n\n"
         "Use /clear to reset the conversation."
     )
 
 
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not allowed(update.effective_user.id):
+    if not is_owner(update.effective_user.id):
         return
     histories[update.effective_user.id].clear()
     await update.message.reply_text("Conversation cleared.")
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not allowed(update.effective_user.id):
+    if not is_owner(update.effective_user.id):
         return
     await update.message.reply_text(
         "Commands:\n"
@@ -90,20 +96,20 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-# ── Message handlers ──────────────────────────────────────────────────────────
+# ── Private chat handlers ─────────────────────────────────────────────────────
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    if not allowed(user_id):
-        logger.warning("Blocked unauthorized user %s", user_id)
+    if not is_owner(user_id):
+        logger.warning("Blocked unauthorized DM from user %s", user_id)
         return
-    await reply_from_claude(update, context, update.message.text)
+    await reply_from_claude(update, context, update.message.text, owner=True)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    if not allowed(user_id):
-        logger.warning("Blocked unauthorized user %s", user_id)
+    if not is_owner(user_id):
+        logger.warning("Blocked unauthorized voice from user %s", user_id)
         return
 
     await context.bot.send_chat_action(update.effective_chat.id, "typing")
@@ -120,7 +126,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         err = str(e)
         if "insufficient_quota" in err or "429" in err:
             await update.message.reply_text(
-                "⚠️ Voice transcription is unavailable — your OpenAI account is out of credits.\n"
+                "⚠️ Voice transcription is unavailable — OpenAI account is out of credits.\n"
                 "Top up at platform.openai.com/account/billing, then try again."
             )
         else:
@@ -130,10 +136,50 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
-    # Echo the transcript so the user can confirm what was heard
-    await update.message.reply_text(f'_Heard:_ "{transcript}"', parse_mode="Markdown")
+    await update.message.reply_text(f'Heard: "{transcript}"')
+    await reply_from_claude(update, context, transcript, owner=True)
 
-    await reply_from_claude(update, context, transcript)
+
+# ── Group chat handler ────────────────────────────────────────────────────────
+
+async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.message
+    if not message or not message.text:
+        return
+
+    bot_username = context.bot.username
+
+    # Only respond when @mentioned or when replying to the bot
+    is_mention = any(
+        e.type == "mention"
+        and message.text[e.offset : e.offset + e.length].lstrip("@") == bot_username
+        for e in (message.entities or [])
+    )
+    is_reply_to_bot = (
+        message.reply_to_message is not None
+        and message.reply_to_message.from_user is not None
+        and message.reply_to_message.from_user.id == context.bot.id
+    )
+
+    if not is_mention and not is_reply_to_bot:
+        return
+
+    # Strip the @mention from the text before sending to Claude
+    text = message.text
+    if is_mention:
+        text = text.replace(f"@{bot_username}", "").strip()
+
+    if not text:
+        await message.reply_text("Yes? How can I help?")
+        return
+
+    user_id = update.effective_user.id
+    owner = is_owner(user_id)
+
+    if not owner:
+        logger.info("Group message from non-owner user %s — general chat only", user_id)
+
+    await reply_from_claude(update, context, text, owner=owner)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -149,8 +195,15 @@ async def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+
+    # Private chats — full access
+    private = filters.ChatType.PRIVATE
+    app.add_handler(MessageHandler(private & filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(private & filters.VOICE, handle_voice))
+
+    # Group / supergroup chats — @mention or reply only, tools restricted to owner
+    group = filters.ChatType.GROUP | filters.ChatType.SUPERGROUP
+    app.add_handler(MessageHandler(group & filters.TEXT & ~filters.COMMAND, handle_group_message))
 
     logger.info("Bot starting, allowed users: %s", ALLOWED_USER_IDS)
 
@@ -159,7 +212,7 @@ async def main() -> None:
         await app.updater.start_polling()
         logger.info("Bot is running. Press Ctrl+C to stop.")
         try:
-            await asyncio.Event().wait()  # block until interrupted
+            await asyncio.Event().wait()
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         finally:
