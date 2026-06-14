@@ -16,6 +16,7 @@ from telegram.ext import (
 from config import TELEGRAM_BOT_TOKEN, ALLOWED_USER_IDS, MAX_HISTORY_PAIRS
 from router import chat
 from voice import transcribe_voice
+from tools.umcpm import list_umcpm_projects
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -91,9 +92,20 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Commands:\n"
         "/start — reset and introduce myself\n"
         "/clear — clear conversation history\n"
+        "/projects — list Urban Makers projects\n"
         "/help  — show this message\n\n"
         "You can also send voice notes and I'll transcribe them automatically."
     )
+
+
+async def cmd_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_owner(update.effective_user.id):
+        return
+    await context.bot.send_chat_action(update.effective_chat.id, "typing")
+    # Optional search term after the command, e.g. "/projects tan kitchen"
+    query = " ".join(context.args) if context.args else ""
+    result = list_umcpm_projects(query)
+    await update.message.reply_text(result, disable_web_page_preview=True)
 
 
 # ── Private chat handlers ─────────────────────────────────────────────────────
@@ -195,6 +207,7 @@ async def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("projects", cmd_projects))
 
     # Private chats — full access
     private = filters.ChatType.PRIVATE

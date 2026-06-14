@@ -15,6 +15,11 @@ ALLOWED_USER_IDS: set[int] = set(
     if uid.strip().isdigit()
 )
 
+# Urban Makers (umcpm) Supabase integration
+UMCPM_SUPABASE_URL = os.getenv("UMCPM_SUPABASE_URL", "https://rlcigpzbjuigpjnewimm.supabase.co")
+UMCPM_SERVICE_KEY = os.getenv("UMCPM_SERVICE_KEY", "")
+UMCPM_BASE_URL = os.getenv("UMCPM_BASE_URL", "https://umcpm.netlify.app")
+
 MS_CLIENT_ID = os.getenv("MS_CLIENT_ID", "")
 MS_TENANT_ID = os.getenv("MS_TENANT_ID", "common")
 

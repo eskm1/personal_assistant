@@ -8,6 +8,7 @@ from tools.outlook_mail import TOOL_DEFS as OUTLOOK_MAIL_TOOLS, DISPATCH as OUTL
 from tools.calendar import TOOL_DEFS as CALENDAR_TOOLS, DISPATCH as CALENDAR_DISPATCH
 from tools.todo import TOOL_DEFS as TODO_TOOLS, DISPATCH as TODO_DISPATCH
 from tools.maps import TOOL_DEFS as MAPS_TOOLS, DISPATCH as MAPS_DISPATCH
+from tools.umcpm import TOOL_DEFS as UMCPM_TOOLS, DISPATCH as UMCPM_DISPATCH
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
@@ -28,6 +29,7 @@ You are Bryan's personal assistant on Telegram. You help with:
 - Tasks (Microsoft To Do): list, add, complete tasks
 - Sending Telegram messages to contacts: coming soon
 - Navigation and directions (Google Maps): get directions or travel time between any two places
+- Urban Makers (umcpm) quotation tool: create projects with draft quotes, add draft quotes to existing projects, list projects, and return review links
 - General questions: always available
 
 Keep replies concise — Bryan is on mobile.
@@ -43,6 +45,7 @@ TOOLS = [
     *CALENDAR_TOOLS,
     *TODO_TOOLS,
     *MAPS_TOOLS,
+    *UMCPM_TOOLS,
 ]
 
 DISPATCH: dict = {
@@ -51,6 +54,7 @@ DISPATCH: dict = {
     **CALENDAR_DISPATCH,
     **TODO_DISPATCH,
     **MAPS_DISPATCH,
+    **UMCPM_DISPATCH,
 }
 
 
