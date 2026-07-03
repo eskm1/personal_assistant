@@ -18,6 +18,7 @@ from config import TELEGRAM_BOT_TOKEN, ALLOWED_USER_IDS, MAX_HISTORY_PAIRS
 from router import chat
 from voice import transcribe_voice
 from tools.umcpm import list_umcpm_projects
+from tools.inbox import append_to_inbox
 from tools.pending import current_conversation
 
 logging.basicConfig(
@@ -145,8 +146,10 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/start — reset and introduce myself\n"
         "/clear — clear conversation history\n"
         "/projects — list Urban Makers projects\n"
+        "/note — capture a personal note to my second-brain inbox\n"
         "/help  — show this message\n\n"
-        "You can also send voice notes and I'll transcribe them automatically."
+        "You can also send voice notes and I'll transcribe them automatically, "
+        "and just say \"note that down\" to capture something to your vault."
     )
 
 
@@ -158,6 +161,25 @@ async def cmd_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     query = " ".join(context.args) if context.args else ""
     result = await asyncio.to_thread(list_umcpm_projects, query)
     await send_chunked(update.message, result)
+
+
+async def cmd_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_owner(update.effective_user.id):
+        return
+    # Take the raw text after the command so multi-line notes keep their newlines
+    # (context.args would collapse them). Handles "/note ..." and "/note@bot ...".
+    raw = update.message.text or ""
+    parts = raw.split(maxsplit=1)
+    text = parts[1].strip() if len(parts) > 1 else ""
+    if not text:
+        await update.message.reply_text(
+            "Send the note after the command, e.g.\n"
+            "/note idea: telegram capture straight into my vault inbox"
+        )
+        return
+    await context.bot.send_chat_action(update.effective_chat.id, "typing")
+    result = await asyncio.to_thread(append_to_inbox, text)
+    await update.message.reply_text(result)
 
 
 # ── Private chat handlers ─────────────────────────────────────────────────────
@@ -273,6 +295,7 @@ async def main() -> None:
     app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("projects", cmd_projects))
+    app.add_handler(CommandHandler("note", cmd_note))
 
     # Private chats — full access
     private = filters.ChatType.PRIVATE
