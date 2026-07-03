@@ -33,6 +33,11 @@ def _slugify(name: str) -> str:
     return slug[:80] or "project"
 
 
+def _safe_term(term: str) -> str:
+    """Strip characters that would corrupt a PostgREST or=(...) filter expression."""
+    return re.sub(r'[,()"\*]', " ", term).strip()
+
+
 def _project_link(slug: str, quote_id: str | None = None) -> str:
     base = UMCPM_BASE_URL.rstrip("/")
     if quote_id:
@@ -59,7 +64,9 @@ def _blank_quote_data(project_name: str, client_name: str, proj_type: str,
 
 def _find_project(query: str) -> dict | None:
     """Find a single active project by name or slug (case-insensitive partial match)."""
-    term = query.strip()
+    term = _safe_term(query)
+    if not term:
+        return None
     params = {
         "select": "id,slug,project_name,client_name,stage,status",
         "or": f"(project_name.ilike.*{term}*,slug.ilike.*{term}*)",
@@ -188,8 +195,8 @@ def list_umcpm_projects(query: str = "", status: str = "active") -> str:
             "order": "created_at.desc",
             "limit": "20",
         }
-        if query.strip():
-            term = query.strip()
+        term = _safe_term(query)
+        if term:
             params["or"] = f"(project_name.ilike.*{term}*,slug.ilike.*{term}*)"
 
         r = requests.get(f"{_REST}/projects", headers=_headers(), params=params, timeout=15)

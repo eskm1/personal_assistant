@@ -1,6 +1,7 @@
 from datetime import datetime, timezone, timedelta
 from auth.ms_graph import graph_get, graph_post, graph_delete
 from config import USER_TIMEZONE
+from tools import pending
 
 
 def list_calendar_events(start: str = "", end: str = "") -> str:
@@ -16,7 +17,9 @@ def list_calendar_events(start: str = "", end: str = "") -> str:
             "$top": 25,
             "$orderby": "start/dateTime",
         }
-        data = graph_get("me/calendarView", params=params)
+        # Ask Graph to return event times in the user's timezone (default is UTC).
+        headers = {"Prefer": f'outlook.timezone="{USER_TIMEZONE}"'}
+        data = graph_get("me/calendarView", params=params, headers=headers)
         events = data.get("value", [])
 
         if not events:
@@ -36,7 +39,7 @@ def list_calendar_events(start: str = "", end: str = "") -> str:
                 line += f"Location: {loc}\n"
             lines.append(line)
 
-        return "\n---\n".join(lines)
+        return f"(times shown in {USER_TIMEZONE})\n" + "\n---\n".join(lines)
 
     except Exception as e:
         return f"Calendar list error: {e}"
@@ -74,12 +77,19 @@ def create_calendar_event(
         return f"Calendar create error: {e}"
 
 
-def cancel_calendar_event(event_id: str) -> str:
+def _do_cancel_calendar_event(event_id: str) -> str:
     try:
         graph_delete(f"me/events/{event_id}")
         return "Event cancelled and removed from your calendar."
     except Exception as e:
         return f"Calendar cancel error: {e}"
+
+
+def cancel_calendar_event(event_id: str, event_title: str = "") -> str:
+    """Stage a calendar-event cancellation for confirmation (does not delete immediately)."""
+    label = f"'{event_title}'" if event_title else f"event {event_id[:20]}…"
+    summary = f"Cancel and delete calendar {label}"
+    return pending.stage(summary, lambda: _do_cancel_calendar_event(event_id))
 
 
 TOOL_DEFS = [
@@ -115,11 +125,16 @@ TOOL_DEFS = [
     },
     {
         "name": "cancel_calendar_event",
-        "description": "Cancel and delete a calendar event by its ID. Always confirm with the user before calling.",
+        "description": (
+            "Stage the cancellation of a calendar event. This does NOT delete immediately — it stages the "
+            "cancellation and returns a summary. Show Bryan the summary and, once he confirms, call "
+            "confirm_pending_action to actually cancel."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "event_id": {"type": "string", "description": "Full event ID from list_calendar_events"},
+                "event_title": {"type": "string", "description": "Event title, for a clearer confirmation message", "default": ""},
             },
             "required": ["event_id"],
         },

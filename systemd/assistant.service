@@ -7,12 +7,20 @@ Wants=network-online.target
 Type=simple
 User=assistant
 WorkingDirectory=/home/assistant/telegram-assistant
+Environment=HEADLESS=1
 EnvironmentFile=/home/assistant/telegram-assistant/.env
 ExecStart=/home/assistant/telegram-assistant/venv/bin/python bot.py
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
+
+# Hardening (bot shares the host with the company website)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/assistant/telegram-assistant
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

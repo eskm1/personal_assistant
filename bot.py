@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import tempfile
+import traceback
 from collections import defaultdict
 
 from telegram import Update
@@ -17,16 +18,28 @@ from config import TELEGRAM_BOT_TOKEN, ALLOWED_USER_IDS, MAX_HISTORY_PAIRS
 from router import chat
 from voice import transcribe_voice
 from tools.umcpm import list_umcpm_projects
+from tools.pending import current_conversation
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     level=logging.INFO,
 )
+# The bot token appears in every Telegram API URL; httpx logs full URLs at INFO,
+# which would write the token into journald on every poll. Keep these at WARNING.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# Per-user conversation history stored as flat message list.
-# Cleared on /start or /clear.
-histories: dict[int, list[dict]] = defaultdict(list)
+# Conversation history, keyed by (chat_id, user_id) so DM and group threads
+# stay fully isolated. Cleared on /start or /clear.
+histories: dict[tuple[int, int], list[dict]] = defaultdict(list)
+
+# Telegram hard-caps a message at 4096 chars; leave headroom.
+MAX_MESSAGE_CHARS = 3900
+
+
+def conv_key(update: Update) -> tuple[int, int]:
+    return (update.effective_chat.id, update.effective_user.id)
 
 
 # ── Auth guard ────────────────────────────────────────────────────────────────
@@ -38,10 +51,37 @@ def is_owner(user_id: int) -> bool:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _is_plain_user_message(msg: dict) -> bool:
+    """A safe history boundary: a user turn whose content is plain text (not tool_result blocks)."""
+    return msg.get("role") == "user" and isinstance(msg.get("content"), str)
+
+
 def trim_history(history: list[dict]) -> None:
+    """Trim to the last N messages, then drop leading messages until the first is a
+    plain user text message — so history never begins mid tool_use/tool_result pair."""
     max_messages = MAX_HISTORY_PAIRS * 2
     if len(history) > max_messages:
-        history[:] = history[-max_messages:]
+        del history[:-max_messages]
+    while history and not _is_plain_user_message(history[0]):
+        history.pop(0)
+
+
+async def send_chunked(message, text: str) -> None:
+    """Send text as one or more Telegram messages, splitting on natural boundaries
+    so nothing exceeds Telegram's 4096-char limit."""
+    text = text or "(no response)"
+    while text:
+        if len(text) <= MAX_MESSAGE_CHARS:
+            chunk, text = text, ""
+        else:
+            window = text[:MAX_MESSAGE_CHARS]
+            cut = window.rfind("\n\n")
+            if cut < MAX_MESSAGE_CHARS // 2:
+                cut = window.rfind("\n")
+            if cut < MAX_MESSAGE_CHARS // 2:
+                cut = MAX_MESSAGE_CHARS
+            chunk, text = text[:cut], text[cut:].lstrip("\n")
+        await message.reply_text(chunk, disable_web_page_preview=True)
 
 
 async def reply_from_claude(
@@ -50,18 +90,30 @@ async def reply_from_claude(
     user_text: str,
     owner: bool = True,
 ) -> None:
-    user_id = update.effective_user.id
-    history = histories[user_id]
+    key = conv_key(update)
+    history = histories[key]
 
     history.append({"role": "user", "content": user_text})
     trim_history(history)
+    turn_start = len(history) - 1  # index of the user message we just added
 
     await context.bot.send_chat_action(update.effective_chat.id, "typing")
 
-    response = chat(history, is_owner=owner)
-    history.append({"role": "assistant", "content": response})
+    # Tell staged/destructive tools which conversation they belong to (for the
+    # confirmation gate). Set before to_thread so the copied context carries it.
+    current_conversation.set(f"{key[0]}:{key[1]}")
 
-    await update.message.reply_text(response)
+    try:
+        # chat() is blocking (network + tool loop); run it off the event loop so
+        # other messages keep flowing. chat() appends the assistant turn in-place.
+        response = await asyncio.to_thread(chat, history, is_owner=owner)
+    except Exception:
+        # Roll the whole failed turn back out of history (user msg + any partial
+        # assistant/tool appends) so the next call isn't left with an orphan pair.
+        del history[turn_start:]
+        raise  # surfaced by the global error handler
+
+    await send_chunked(update.message, response)
 
 
 # ── Command handlers ──────────────────────────────────────────────────────────
@@ -69,7 +121,7 @@ async def reply_from_claude(
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_owner(update.effective_user.id):
         return
-    histories[update.effective_user.id].clear()
+    histories[conv_key(update)].clear()
     await update.message.reply_text(
         "Hi! I'm Bryan's personal assistant.\n\n"
         "You can talk to me normally or send a voice note. I can help with calendar, "
@@ -81,7 +133,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_owner(update.effective_user.id):
         return
-    histories[update.effective_user.id].clear()
+    histories[conv_key(update)].clear()
     await update.message.reply_text("Conversation cleared.")
 
 
@@ -104,8 +156,8 @@ async def cmd_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await context.bot.send_chat_action(update.effective_chat.id, "typing")
     # Optional search term after the command, e.g. "/projects tan kitchen"
     query = " ".join(context.args) if context.args else ""
-    result = list_umcpm_projects(query)
-    await update.message.reply_text(result, disable_web_page_preview=True)
+    result = await asyncio.to_thread(list_umcpm_projects, query)
+    await send_chunked(update.message, result)
 
 
 # ── Private chat handlers ─────────────────────────────────────────────────────
@@ -132,7 +184,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     try:
         await voice_file.download_to_drive(tmp_path)
-        transcript = transcribe_voice(tmp_path)
+        transcript = await asyncio.to_thread(transcribe_voice, tmp_path)
     except Exception as e:
         os.unlink(tmp_path)
         err = str(e)
@@ -194,6 +246,19 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     await reply_from_claude(update, context, text, owner=owner)
 
 
+# ── Global error handler ──────────────────────────────────────────────────────
+
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.error("Unhandled exception:\n%s",
+                 "".join(traceback.format_exception(context.error)))
+    if isinstance(update, Update) and update.effective_message:
+        err = str(context.error) or context.error.__class__.__name__
+        try:
+            await update.effective_message.reply_text(f"⚠️ Something went wrong: {err[:300]}")
+        except Exception:
+            pass  # never let the error handler itself raise
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 async def main() -> None:
@@ -217,6 +282,8 @@ async def main() -> None:
     # Group / supergroup chats — @mention or reply only, tools restricted to owner
     group = filters.ChatType.GROUP | filters.ChatType.SUPERGROUP
     app.add_handler(MessageHandler(group & filters.TEXT & ~filters.COMMAND, handle_group_message))
+
+    app.add_error_handler(on_error)
 
     logger.info("Bot starting, allowed users: %s", ALLOWED_USER_IDS)
 

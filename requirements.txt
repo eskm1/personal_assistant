@@ -1,21 +1,31 @@
+# Pinned to exact installed versions — the auto-deploy timer runs pip install on
+# every push, so loose pins risk an unattended breaking upgrade. Bump deliberately.
+
 # Telegram bot
 python-telegram-bot==21.9
 
 # LLM
-anthropic>=0.40.0
+anthropic==0.104.1
 
 # Voice transcription
-openai>=1.30.0
+openai==2.38.0
 
 # Config
-python-dotenv>=1.0.0
+python-dotenv==1.2.2
 
-# Phase 3: Gmail
-google-auth-oauthlib>=1.2.0
-google-auth-httplib2>=0.2.0
-google-api-python-client>=2.120.0
-# Phase 4: Microsoft Graph
-msal>=1.28.0
+# Gmail
+google-auth-oauthlib==1.4.0
+google-auth-httplib2==0.4.0
+google-api-python-client==2.196.0
 
-# Phase 6: Telethon (Telegram DMs as yourself)
-# telethon>=1.36.0
+# Microsoft Graph
+msal==1.36.0
+
+# HTTP (used directly by Graph + umcpm tools)
+requests==2.34.2
+
+# Timezone database — ZoneInfo("Asia/Singapore") needs this where the OS ships no tzdata
+tzdata==2026.2
+
+# Phase 7: Telethon (Telegram DMs as yourself) — not yet enabled
+# telethon==1.36.0

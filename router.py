@@ -9,17 +9,23 @@ from tools.calendar import TOOL_DEFS as CALENDAR_TOOLS, DISPATCH as CALENDAR_DIS
 from tools.todo import TOOL_DEFS as TODO_TOOLS, DISPATCH as TODO_DISPATCH
 from tools.maps import TOOL_DEFS as MAPS_TOOLS, DISPATCH as MAPS_DISPATCH
 from tools.umcpm import TOOL_DEFS as UMCPM_TOOLS, DISPATCH as UMCPM_DISPATCH
+from tools.pending import TOOL_DEFS as PENDING_TOOLS, DISPATCH as PENDING_DISPATCH
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 _SGT = ZoneInfo("Asia/Singapore")
 
-def _system_prompt() -> str:
+
+def _current_time() -> str:
     now = datetime.now(_SGT)
-    date_str = now.strftime("%A, %d %B %Y")   # e.g. "Monday, 02 June 2025"
-    time_str = now.strftime("%H:%M")           # e.g. "14:35"
+    return now.strftime("%A, %d %B %Y, %H:%M SGT (UTC+8)")
+
+
+# Date only (no minutes) so the cached system-prompt prefix stays stable all day.
+def _system_prompt() -> str:
+    date_str = datetime.now(_SGT).strftime("%A, %d %B %Y")
     return f"""\
-Today is {date_str}, {time_str} SGT (UTC+8).
+Today is {date_str} (Singapore, UTC+8). Call get_current_time if you need the exact time of day.
 
 You are Bryan's personal assistant on Telegram. You help with:
 - Voice messages: YES, fully supported — Telegram voice notes are automatically transcribed to text before reaching you, so you already handle them seamlessly
@@ -35,26 +41,47 @@ You are Bryan's personal assistant on Telegram. You help with:
 Keep replies concise — Bryan is on mobile.
 Do NOT use markdown formatting (no **bold**, no _italics_, no bullet points with *, no backticks). Use plain text only. You may use emoji sparingly.
 When a task needs a capability not yet available, say so clearly.
-IMPORTANT: Before sending any email or creating/cancelling any calendar event, always show Bryan the details and ask for explicit confirmation.
+
+CONFIRMATION FLOW for destructive actions (sending email, cancelling an event):
+The send/cancel tools do NOT act immediately — they STAGE the action and return a summary starting with "STAGED".
+When you get a STAGED result, show Bryan the summary and ask him to confirm.
+Only when he clearly confirms, call confirm_pending_action. If he declines, call cancel_pending_action.
+Never claim an email was sent or an event cancelled until confirm_pending_action reports success.
 """
+
+
+TIME_TOOL = {
+    "name": "get_current_time",
+    "description": "Get the current date and time in Singapore (SGT, UTC+8). Use when the exact time of day matters.",
+    "input_schema": {"type": "object", "properties": {}},
+}
 
 # Aggregate all tools — add new phases here
 TOOLS = [
+    TIME_TOOL,
     *GMAIL_TOOLS,
     *OUTLOOK_MAIL_TOOLS,
     *CALENDAR_TOOLS,
     *TODO_TOOLS,
     *MAPS_TOOLS,
     *UMCPM_TOOLS,
+    *PENDING_TOOLS,
 ]
 
+# Mark the end of the tools array as a prompt-cache breakpoint. The tools +
+# system prefix (~2-3k tokens) is then cached and reused across turns/tool loops.
+# Replace (not mutate) the last entry so the shared source dict is untouched.
+TOOLS[-1] = {**TOOLS[-1], "cache_control": {"type": "ephemeral"}}
+
 DISPATCH: dict = {
+    "get_current_time": lambda: _current_time(),
     **GMAIL_DISPATCH,
     **OUTLOOK_MAIL_DISPATCH,
     **CALENDAR_DISPATCH,
     **TODO_DISPATCH,
     **MAPS_DISPATCH,
     **UMCPM_DISPATCH,
+    **PENDING_DISPATCH,
 }
 
 
@@ -75,11 +102,18 @@ def chat(history: list[dict], is_owner: bool = True) -> str:
     """
     active_tools = TOOLS if is_owner else []
 
+    # System prompt as a cacheable content block (prefix reused across turns).
+    system = [{
+        "type": "text",
+        "text": _system_prompt(),
+        "cache_control": {"type": "ephemeral"},
+    }]
+
     while True:
         kwargs: dict = dict(
             model=CLAUDE_MODEL,
-            max_tokens=2048,
-            system=_system_prompt(),
+            max_tokens=4096,
+            system=system,
             messages=history,
         )
         if active_tools:

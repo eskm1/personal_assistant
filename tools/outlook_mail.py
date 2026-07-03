@@ -1,5 +1,6 @@
 import re
 from auth.ms_graph import graph_get, graph_post
+from tools import pending
 
 
 def search_outlook_mail(query: str, max_results: int = 10) -> str:
@@ -56,7 +57,7 @@ def read_outlook_mail(email_id: str) -> str:
         return f"Outlook mail read error: {e}"
 
 
-def send_outlook_mail(to: str, subject: str, body: str, cc: str = "") -> str:
+def _do_send_outlook_mail(to: str, subject: str, body: str, cc: str = "") -> str:
     try:
         to_recipients = [{"emailAddress": {"address": a.strip()}} for a in to.split(",") if a.strip()]
         cc_recipients = [{"emailAddress": {"address": a.strip()}} for a in cc.split(",") if a.strip()]
@@ -74,6 +75,13 @@ def send_outlook_mail(to: str, subject: str, body: str, cc: str = "") -> str:
 
     except Exception as e:
         return f"Outlook mail send error: {e}"
+
+
+def send_outlook_mail(to: str, subject: str, body: str, cc: str = "") -> str:
+    """Stage a work (Outlook) email send for confirmation (does not send immediately)."""
+    cc_line = f", cc {cc}" if cc else ""
+    summary = f"Send work (Outlook) email to {to}{cc_line} — subject: \"{subject}\""
+    return pending.stage(summary, lambda: _do_send_outlook_mail(to, subject, body, cc))
 
 
 TOOL_DEFS = [
@@ -103,8 +111,9 @@ TOOL_DEFS = [
     {
         "name": "send_outlook_mail",
         "description": (
-            "Send an email from the user's work Outlook account. "
-            "IMPORTANT: Always show the user the recipient, subject, and body and ask for confirmation before calling this."
+            "Stage a work (Outlook) email for sending. This does NOT send immediately — it stages the "
+            "email and returns a summary. Show Bryan the summary and, once he confirms, call "
+            "confirm_pending_action to actually send."
         ),
         "input_schema": {
             "type": "object",

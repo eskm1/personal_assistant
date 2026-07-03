@@ -4,6 +4,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from auth.google_oauth import get_gmail_service
+from tools import pending
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -89,8 +90,7 @@ def read_gmail(email_id: str) -> str:
         return f"Gmail read error: {e}"
 
 
-def send_gmail(to: str, subject: str, body: str, cc: str = "") -> str:
-    """Send an email from the personal Gmail account."""
+def _do_send_gmail(to: str, subject: str, body: str, cc: str = "") -> str:
     try:
         svc = get_gmail_service()
 
@@ -107,6 +107,13 @@ def send_gmail(to: str, subject: str, body: str, cc: str = "") -> str:
 
     except Exception as e:
         return f"Gmail send error: {e}"
+
+
+def send_gmail(to: str, subject: str, body: str, cc: str = "") -> str:
+    """Stage a personal Gmail send for confirmation (does not send immediately)."""
+    cc_line = f", cc {cc}" if cc else ""
+    summary = f"Send personal (Gmail) email to {to}{cc_line} — subject: \"{subject}\""
+    return pending.stage(summary, lambda: _do_send_gmail(to, subject, body, cc))
 
 
 # ── Tool definitions (Anthropic schema) ──────────────────────────────────────
@@ -146,8 +153,9 @@ TOOL_DEFS = [
     {
         "name": "send_gmail",
         "description": (
-            "Send an email from the user's personal Gmail account. "
-            "IMPORTANT: Always show the user the To, Subject, and body and ask for confirmation before calling this tool."
+            "Stage a personal (Gmail) email for sending. This does NOT send immediately — it stages "
+            "the email and returns a summary. Show Bryan the summary and, once he confirms, call "
+            "confirm_pending_action to actually send."
         ),
         "input_schema": {
             "type": "object",

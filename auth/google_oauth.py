@@ -5,6 +5,8 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+from config import HEADLESS
+
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.send",
@@ -24,6 +26,14 @@ def get_gmail_service():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            # A fresh browser consent is required. The headless server has no
+            # browser, so fail loudly with instructions instead of hanging.
+            if HEADLESS:
+                raise RuntimeError(
+                    "Gmail needs re-authentication. Run "
+                    "`python -c \"from auth.google_oauth import get_gmail_service; get_gmail_service()\"` "
+                    "locally, then scp auth/token_gmail.json to the server."
+                )
             if not os.path.exists(CREDS_FILE):
                 raise FileNotFoundError(
                     f"Missing {CREDS_FILE} — download OAuth credentials from Google Cloud Console "

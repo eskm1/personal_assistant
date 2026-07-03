@@ -1,7 +1,7 @@
 import os
 import msal
 import requests
-from config import MS_CLIENT_ID, MS_TENANT_ID
+from config import MS_CLIENT_ID, MS_TENANT_ID, HEADLESS
 
 SCOPES = [
     "Mail.ReadWrite",
@@ -47,6 +47,15 @@ def get_access_token() -> str:
             _save_cache()
             return result["access_token"]
 
+    # Interactive re-auth would be required. On the headless server there is no
+    # console to complete a device-code flow, so fail loudly with instructions.
+    if HEADLESS:
+        raise RuntimeError(
+            "Microsoft needs re-authentication. Run "
+            "`python -c \"from auth.ms_graph import get_access_token; get_access_token()\"` "
+            "locally, then scp auth/token_ms.json to the server."
+        )
+
     # First-time or expired — device code flow
     flow = app.initiate_device_flow(scopes=SCOPES)
     if "user_code" not in flow:
@@ -72,10 +81,10 @@ def _headers() -> dict:
     return {"Authorization": f"Bearer {get_access_token()}"}
 
 
-def graph_get(path: str, params: dict | None = None) -> dict:
+def graph_get(path: str, params: dict | None = None, headers: dict | None = None) -> dict:
     resp = requests.get(
         f"{GRAPH_BASE}/{path.lstrip('/')}",
-        headers=_headers(),
+        headers={**_headers(), **(headers or {})},
         params=params,
         timeout=15,
     )

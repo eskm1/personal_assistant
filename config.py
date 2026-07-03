@@ -26,5 +26,9 @@ MS_TENANT_ID = os.getenv("MS_TENANT_ID", "common")
 # IANA timezone name used for Outlook calendar events, e.g. "America/New_York"
 USER_TIMEZONE = os.getenv("USER_TIMEZONE", "UTC")
 
+# Set HEADLESS=1 on the server so interactive OAuth flows fail fast with
+# instructions instead of hanging on a machine with no browser/console.
+HEADLESS = os.getenv("HEADLESS", "") == "1"
+
 # How many message pairs (user + assistant) to keep per user
 MAX_HISTORY_PAIRS = 20
