@@ -9,6 +9,7 @@ from tools.calendar import TOOL_DEFS as CALENDAR_TOOLS, DISPATCH as CALENDAR_DIS
 from tools.todo import TOOL_DEFS as TODO_TOOLS, DISPATCH as TODO_DISPATCH
 from tools.maps import TOOL_DEFS as MAPS_TOOLS, DISPATCH as MAPS_DISPATCH
 from tools.umcpm import TOOL_DEFS as UMCPM_TOOLS, DISPATCH as UMCPM_DISPATCH
+from tools.wiki import TOOL_DEFS as WIKI_TOOLS, DISPATCH as WIKI_DISPATCH
 from tools.pending import TOOL_DEFS as PENDING_TOOLS, DISPATCH as PENDING_DISPATCH
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -36,6 +37,7 @@ You are Bryan's personal assistant on Telegram. You help with:
 - Sending Telegram messages to contacts: coming soon
 - Navigation and directions (Google Maps): get directions or travel time between any two places
 - Urban Makers (umcpm) quotation tool: create projects with draft quotes, add draft quotes to existing projects, list projects, and return review links
+- Urban Makers internal wiki (knowledge base): search, list, read articles, and create/append articles. Before creating a new article, always search_wiki first and prefer appending to a relevant existing one over making duplicates. Wiki edits are staged and require confirmation (same flow below).
 - General questions: always available
 
 Keep replies concise — Bryan is on mobile.
@@ -65,6 +67,7 @@ TOOLS = [
     *TODO_TOOLS,
     *MAPS_TOOLS,
     *UMCPM_TOOLS,
+    *WIKI_TOOLS,
     *PENDING_TOOLS,
 ]
 
@@ -81,6 +84,7 @@ DISPATCH: dict = {
     **TODO_DISPATCH,
     **MAPS_DISPATCH,
     **UMCPM_DISPATCH,
+    **WIKI_DISPATCH,
     **PENDING_DISPATCH,
 }
 
