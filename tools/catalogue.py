@@ -31,6 +31,17 @@ PRODUCT_OPS = {"add_product", "update_product", "delete_product"}
 ADDON_OPS = {"add_addon", "update_addon"}
 VALID_OPS = PRODUCT_OPS | ADDON_OPS
 
+# products.qty_basis CHECK admits only these four (NULL = auto-detect from unit).
+# Kept in lockstep with catalogue-apply.mjs / agent.mjs.
+QTY_BASES = {"area", "mrun", "ftrun", "each"}
+
+
+def _qty_basis(value):
+    """Return a valid qty_basis or None (auto). Never emit a value the DB CHECK
+    would reject, so an empty/unknown value normalises to None."""
+    v = (value or "").strip()
+    return v if v in QTY_BASES else None
+
 
 def _headers(extra: dict | None = None) -> dict:
     h = {
@@ -202,6 +213,7 @@ def propose_catalogue_edit(
     base_price: float | None = None,
     unit_price: float | None = None,
     item_id: str = "",
+    qty_basis: str = "",
 ) -> str:
     """Stage a catalogue change into the shared approval queue. Never applies it."""
     try:
@@ -214,6 +226,7 @@ def propose_catalogue_edit(
         unit = (unit or "").strip()
         description = (description or "").strip()
         item_id = (item_id or "").strip()
+        qb = _qty_basis(qty_basis)   # valid value or None (auto); never invalid
 
         # ── Products ──────────────────────────────────────────────────────────
         if op == "add_product":
@@ -227,6 +240,8 @@ def propose_catalogue_edit(
             }
             if description:
                 payload["description"] = description
+            if qb is not None:
+                payload["qty_basis"] = qb
             summary = f"Add product '{name}' [{payload['cat']}] — {payload['unit']} @ {payload['base_price']}"
             return _insert_request(op, payload, None, summary)
 
@@ -242,6 +257,7 @@ def propose_catalogue_edit(
             if unit:              payload["unit"] = unit
             if description:       payload["description"] = description
             if base_price is not None: payload["base_price"] = float(base_price)
+            if qb is not None:    payload["qty_basis"] = qb
             if len(payload) == 1:
                 return "update_product: give at least one field to change (name/category/unit/description/base_price)."
             changes = ", ".join(f"{k}={v}" for k, v in payload.items() if k != "id")
@@ -333,6 +349,17 @@ TOOL_DEFS = [
                 "name": {"type": "string", "description": "Item name (required for add_product/add_addon; optional new name on update)", "default": ""},
                 "category": {"type": "string", "description": "Category name (must match an existing category where possible)", "default": ""},
                 "unit": {"type": "string", "description": "Pricing unit, e.g. 'sqft', 'm run', 'lot', 'each'", "default": ""},
+                "qty_basis": {
+                    "type": "string",
+                    "enum": ["area", "mrun", "ftrun", "each"],
+                    "description": (
+                        "Optional pricing basis for the floorplan tool (add_product/update_product). "
+                        "OMIT to let the app auto-detect from the unit (sqm/sqft => area, 'm run'/'ft run' => run, "
+                        "each/piece/point => each). SET IT EXPLICITLY only when the unit would be misread: 'mrun' for a "
+                        "linear-metre unit written as 'lm'/'linear metre'/'lin m', 'ftrun' for a linear-foot unit "
+                        "written as 'rm'/'run'/'rft', 'area' for area, 'each' for per-unit. Empty/omitted means auto-detect."
+                    ),
+                },
                 "description": {"type": "string", "description": "Product description (products only)", "default": ""},
                 "base_price": {"type": "number", "description": "Product base price (products only)"},
                 "unit_price": {"type": "number", "description": "Add-on unit price (add-ons only)"},
