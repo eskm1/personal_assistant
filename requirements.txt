@@ -24,6 +24,9 @@ msal==1.36.0
 # HTTP (used directly by Graph + umcpm tools)
 requests==2.34.2
 
+# Web browsing tool (HTML parsing)
+beautifulsoup4==4.15.0
+
 # Timezone database — ZoneInfo("Asia/Singapore") needs this where the OS ships no tzdata
 tzdata==2026.2
 

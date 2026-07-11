@@ -11,6 +11,7 @@ from tools.maps import TOOL_DEFS as MAPS_TOOLS, DISPATCH as MAPS_DISPATCH
 from tools.umcpm import TOOL_DEFS as UMCPM_TOOLS, DISPATCH as UMCPM_DISPATCH
 from tools.catalogue import TOOL_DEFS as CATALOGUE_TOOLS, DISPATCH as CATALOGUE_DISPATCH
 from tools.wiki import TOOL_DEFS as WIKI_TOOLS, DISPATCH as WIKI_DISPATCH
+from tools.web import TOOL_DEFS as WEB_TOOLS, DISPATCH as WEB_DISPATCH
 from tools.inbox import TOOL_DEFS as INBOX_TOOLS, DISPATCH as INBOX_DISPATCH
 from tools.pending import TOOL_DEFS as PENDING_TOOLS, DISPATCH as PENDING_DISPATCH
 
@@ -38,6 +39,7 @@ You are Bryan's personal assistant on Telegram. You help with:
 - Tasks (Microsoft To Do): list, add, complete tasks
 - Sending Telegram messages to contacts: coming soon
 - Navigation and directions (Google Maps): get directions or travel time between any two places
+- Web browsing: fetch and read webpages with fetch_webpage when Bryan shares a link or asks about a site. Results include the page's links — you can follow them by calling fetch_webpage again, but stay focused: a few relevant hops, not a crawl. Pages are fetched without JavaScript, so if a page returns little text, say so rather than guessing its content.
 - Urban Makers (umcpm) quotation tool: create projects with draft quotes, add draft quotes to existing projects, list projects, and return review links
 - Urban Makers catalogue (products, categories, add-ons): read the catalogue and PROPOSE edits. read_catalogue shows every product (id, name, category, unit, base_price) and add-on (id, name, category, unit, unit_price). propose_catalogue_edit STAGES a change into the shared approval queue — it never applies it. The v1 operations are: add_product, update_product, delete_product, add_addon, update_addon (item name/category/unit/description/base_price for products; name/category/unit/unit_price for add-ons). ALWAYS call read_catalogue first so you use the real item id and current values; update_/delete_ ops REQUIRE the item_id. There is no AI editing of variant groups/options or category restructuring — a human uses the full editor for those. After a successful stage, show Bryan the summary and the /catalogue review link and make clear an editor must approve it in the app before it goes live; never say the catalogue was changed.
 - Urban Makers internal wiki (knowledge base): search, list, read articles, and create/append articles. Before creating a new article, always search_wiki first and prefer appending to a relevant existing one over making duplicates. Wiki edits are staged and require confirmation (same flow below).
@@ -73,6 +75,7 @@ TOOLS = [
     *UMCPM_TOOLS,
     *CATALOGUE_TOOLS,
     *WIKI_TOOLS,
+    *WEB_TOOLS,
     *INBOX_TOOLS,
     *PENDING_TOOLS,
 ]
@@ -92,6 +95,7 @@ DISPATCH: dict = {
     **UMCPM_DISPATCH,
     **CATALOGUE_DISPATCH,
     **WIKI_DISPATCH,
+    **WEB_DISPATCH,
     **INBOX_DISPATCH,
     **PENDING_DISPATCH,
 }
