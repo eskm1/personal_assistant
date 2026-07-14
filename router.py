@@ -137,7 +137,7 @@ def chat(history: list[dict], is_owner: bool = True) -> str:
     while True:
         kwargs: dict = dict(
             model=CLAUDE_MODEL,
-            max_tokens=4096,
+            max_tokens=16384,
             system=system,
             messages=history,
         )
@@ -147,6 +147,22 @@ def chat(history: list[dict], is_owner: bool = True) -> str:
         response = client.messages.create(**kwargs)
 
         assistant_content = response.content
+
+        if response.stop_reason == "max_tokens":
+            # The reply was cut off mid-generation. Keep only the text blocks in
+            # history: a half-finished tool_use with no tool_result would make the
+            # API reject every later call, wedging the conversation until /clear.
+            partial = "\n".join(
+                b.text for b in assistant_content if b.type == "text"
+            ).strip()
+            history.append({
+                "role": "assistant",
+                "content": [{"type": "text", "text": partial or "(reply cut off at the length limit)"}],
+            })
+            if partial:
+                return partial + "\n\n[⚠️ I hit my reply length limit and got cut off — ask me to continue or narrow the request.]"
+            return "⚠️ That reply hit my length limit before I could produce anything usable. Try narrowing the request or splitting it up."
+
         history.append({"role": "assistant", "content": assistant_content})
 
         if response.stop_reason == "end_turn":
