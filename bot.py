@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 import os
 import tempfile
@@ -53,8 +54,31 @@ def is_owner(user_id: int) -> bool:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _is_plain_user_message(msg: dict) -> bool:
-    """A safe history boundary: a user turn whose content is plain text (not tool_result blocks)."""
-    return msg.get("role") == "user" and isinstance(msg.get("content"), str)
+    """A safe history boundary: a user turn that is plain text or an image+text
+    message — anything except tool_result blocks (those must stay glued to the
+    assistant tool_use turn before them)."""
+    if msg.get("role") != "user":
+        return False
+    content = msg.get("content")
+    if isinstance(content, str):
+        return True
+    return isinstance(content, list) and not any(
+        isinstance(block, dict) and block.get("type") == "tool_result"
+        for block in content
+    )
+
+
+def _parse_note_command(raw: str) -> str | None:
+    """If raw starts with /note (or /note@bot), return the note text after it
+    (possibly empty). Return None when it isn't a /note command at all.
+    Splits only the first line's command so multi-line notes keep their newlines."""
+    raw = (raw or "").lstrip()
+    if not raw.startswith("/note"):
+        return None
+    command, _, rest = raw.partition(" ")
+    if command != "/note" and not command.startswith("/note@"):
+        return None
+    return rest.strip()
 
 
 def trim_history(history: list[dict]) -> None:
@@ -88,13 +112,14 @@ async def send_chunked(message, text: str) -> None:
 async def reply_from_claude(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
-    user_text: str,
+    user_content: str | list,
     owner: bool = True,
 ) -> None:
+    """user_content is either plain text or a list of content blocks (e.g. image + text)."""
     key = conv_key(update)
     history = histories[key]
 
-    history.append({"role": "user", "content": user_text})
+    history.append({"role": "user", "content": user_content})
     trim_history(history)
     turn_start = len(history) - 1  # index of the user message we just added
 
@@ -149,7 +174,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/note — capture a personal note to my second-brain inbox\n"
         "/help  — show this message\n\n"
         "You can also send voice notes and I'll transcribe them automatically, "
-        "and just say \"note that down\" to capture something to your vault."
+        "and just say \"note that down\" to capture something to your vault.\n"
+        "Photos work too: send one and I can look at it, or caption it /note "
+        "(plus any text) to save it straight into your vault inbox."
     )
 
 
@@ -168,9 +195,7 @@ async def cmd_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     # Take the raw text after the command so multi-line notes keep their newlines
     # (context.args would collapse them). Handles "/note ..." and "/note@bot ...".
-    raw = update.message.text or ""
-    parts = raw.split(maxsplit=1)
-    text = parts[1].strip() if len(parts) > 1 else ""
+    text = _parse_note_command(update.message.text) or ""
     if not text:
         await update.message.reply_text(
             "Send the note after the command, e.g.\n"
@@ -224,6 +249,48 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     await update.message.reply_text(f'Heard: "{transcript}"')
     await reply_from_claude(update, context, transcript, owner=True)
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Photos in private chat. Telegram delivers them as a separate message type
+    (photo + caption, not text), so neither the text handler nor CommandHandler
+    ever sees them — including a '/note' typed as the caption.
+
+    Two paths:
+    - caption starts with /note  -> save photo + caption into the vault inbox
+    - anything else              -> pass the image to Claude so the bot can see it
+    """
+    user_id = update.effective_user.id
+    if not is_owner(user_id):
+        logger.warning("Blocked unauthorized photo from user %s", user_id)
+        return
+
+    await context.bot.send_chat_action(update.effective_chat.id, "typing")
+
+    # Largest rendition Telegram offers for a compressed photo (~1280px JPEG),
+    # comfortably within the vision API's size limits.
+    tg_file = await update.message.photo[-1].get_file()
+    data = bytes(await tg_file.download_as_bytearray())
+
+    caption = update.message.caption or ""
+    note_text = _parse_note_command(caption)
+    if note_text is not None:
+        result = await asyncio.to_thread(append_to_inbox, note_text, data)
+        await update.message.reply_text(result)
+        return
+
+    content = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": base64.b64encode(data).decode("ascii"),
+            },
+        },
+        {"type": "text", "text": caption.strip() or "Bryan sent this photo with no caption."},
+    ]
+    await reply_from_claude(update, context, content, owner=True)
 
 
 # ── Group chat handler ────────────────────────────────────────────────────────
@@ -301,6 +368,7 @@ async def main() -> None:
     private = filters.ChatType.PRIVATE
     app.add_handler(MessageHandler(private & filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(private & filters.VOICE, handle_voice))
+    app.add_handler(MessageHandler(private & filters.PHOTO, handle_photo))
 
     # Group / supergroup chats — @mention or reply only, tools restricted to owner
     group = filters.ChatType.GROUP | filters.ChatType.SUPERGROUP

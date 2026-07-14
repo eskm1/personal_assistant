@@ -14,6 +14,7 @@ immediately with no confirmation gate - friction is the enemy of capture.
 """
 import base64
 import json
+import secrets
 from datetime import datetime
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -52,7 +53,29 @@ def _contents_url() -> str:
     return f"{_API}/repos/{SECOND_BRAIN_REPO}/contents/{quote(SECOND_BRAIN_INBOX_PATH, safe='/')}"
 
 
-def _append_once(text: str) -> str:
+def _attachments_dir() -> str:
+    """Folder for photo attachments, next to the inbox file: '00 Inbox/attachments'."""
+    folder = SECOND_BRAIN_INBOX_PATH.rsplit("/", 1)[0] if "/" in SECOND_BRAIN_INBOX_PATH else ""
+    return f"{folder}/attachments" if folder else "attachments"
+
+
+def _upload_attachment(data: bytes) -> str:
+    """Commit a photo into the vault's attachments folder. Returns the filename."""
+    now = datetime.now(_SGT)
+    filename = f"{now.strftime('%Y-%m-%d-%H%M')}-{secrets.token_hex(3)}.jpg"
+    path = f"{_attachments_dir()}/{filename}"
+    url = f"{_API}/repos/{SECOND_BRAIN_REPO}/contents/{quote(path, safe='/')}"
+    body = {
+        "message": f"inbox: photo attachment {filename}",
+        "content": base64.b64encode(data).decode("ascii"),
+        "branch": SECOND_BRAIN_BRANCH,
+    }
+    r = requests.put(url, headers=_headers(), data=json.dumps(body), timeout=30)
+    r.raise_for_status()
+    return filename
+
+
+def _append_once(text: str, attachment: str | None = None) -> str:
     """Fetch the inbox file, append one capture, and write it back. One attempt.
 
     Returns the HH:MM SGT stamp on success. Raises requests.HTTPError on a stale
@@ -79,8 +102,11 @@ def _append_once(text: str) -> str:
     body = content.rstrip("\n")
     if f"## {day}" not in body:
         body += f"\n\n## {day}"
-    entry = text.strip().replace("\r\n", "\n")
+    entry = text.strip().replace("\r\n", "\n") or ("(photo)" if attachment else "")
     body += f"\n- {stamp} {entry}"
+    if attachment:
+        # Path relative to the inbox file, so Obsidian renders it inline.
+        body += f"\n  ![](attachments/{attachment})"
     new_content = body + "\n"
 
     put_body = {
@@ -96,20 +122,24 @@ def _append_once(text: str) -> str:
     return stamp
 
 
-def append_to_inbox(text: str) -> str:
-    """Capture raw text into the vault inbox. Returns a user-facing status string."""
-    if not text or not text.strip():
+def append_to_inbox(text: str, photo: bytes | None = None) -> str:
+    """Capture raw text (and optionally a photo) into the vault inbox.
+    Returns a user-facing status string."""
+    if (not text or not text.strip()) and not photo:
         return "Nothing to capture - the note was empty."
     if not SECOND_BRAIN_GITHUB_TOKEN:
         return "⚠️ Capture is not set up yet - SECOND_BRAIN_GITHUB_TOKEN is missing on the server."
 
     try:
+        # Upload the photo first (its own commit); the note then embeds it.
+        attachment = _upload_attachment(photo) if photo else None
         # One retry: a 409 means another capture wrote between our GET and PUT, so
         # the sha we sent is stale. Re-fetch and try again.
         for attempt in range(2):
             try:
-                stamp = _append_once(text)
-                return f"✅ Captured to inbox at {stamp} SGT. File it at your weekly review."
+                stamp = _append_once(text, attachment)
+                what = "photo + note" if attachment and text.strip() else ("photo" if attachment else "note")
+                return f"✅ Captured {what} to inbox at {stamp} SGT. File it at your weekly review."
             except requests.HTTPError as e:
                 status = e.response.status_code if e.response is not None else None
                 if status == 409 and attempt == 0:
