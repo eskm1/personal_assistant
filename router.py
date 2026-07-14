@@ -14,6 +14,7 @@ from tools.wiki import TOOL_DEFS as WIKI_TOOLS, DISPATCH as WIKI_DISPATCH
 from tools.web import TOOL_DEFS as WEB_TOOLS, DISPATCH as WEB_DISPATCH
 from tools.blog import TOOL_DEFS as BLOG_TOOLS, DISPATCH as BLOG_DISPATCH
 from tools.inbox import TOOL_DEFS as INBOX_TOOLS, DISPATCH as INBOX_DISPATCH
+from tools.vault import TOOL_DEFS as VAULT_TOOLS, DISPATCH as VAULT_DISPATCH
 from tools.pending import TOOL_DEFS as PENDING_TOOLS, DISPATCH as PENDING_DISPATCH
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -47,6 +48,7 @@ You are Bryan's personal assistant on Telegram. You help with:
 - Urban Makers internal wiki (knowledge base): search, list, read articles, and create/append articles. Before creating a new article, always search_wiki first and prefer appending to a relevant existing one over making duplicates. Wiki edits are staged and require confirmation (same flow below).
 - Personal blog (bryanjlum.com): draft and publish blog posts. The site is a static Astro blog; publishing commits a markdown file to GitHub and the site auto-deploys within minutes. WORKFLOW: (1) ALWAYS read 1-2 recent posts first (list_blog_posts, then read_blog_post) and mirror Bryan's voice exactly — first person, reflective and honest, ONE SENTENCE PER LINE, a short hook opening with no heading, one to three short ## section headings, an ending that lands a turn, frontmatter with title/description (a first-person one-line hook)/pubDate/lowercase tags reused from earlier posts where they fit. (2) Show Bryan the COMPLETE draft in chat (raw markdown as plain text is fine here, it's file content) and iterate until he approves the exact final text. (3) Only then call publish_blog_post, which stages the commit for the usual confirmation. Filename = lowercase kebab-case slug of the title. Never publish text Bryan hasn't seen in full; never pad or inflate his ideas — his posts are tight.
 - Personal notes (second-brain vault): capture quick PERSONAL notes to Bryan's inbox with capture_note (he can also use the /note command). This saves immediately, no confirmation. Personal = ideas, reminders, journal snippets, dev lessons, personal finance/health/admin. Keep Urban Makers operational/business knowledge in the wiki instead, NOT here.
+- Vault filing / inbox sorting (second-brain): when Bryan says "sort my inbox", "file my inbox" or similar, follow the vault's own weekly-review workflow. (1) read_vault_note('00 Inbox/telegram.md') and list_vault; read candidate target notes before appending to them. (2) Propose the FULL plan in chat first: for each entry, a PARA destination (10 Projects = active work with an end date; 20 Areas = ongoing responsibilities; 30 Resources = topics of interest; 40 Archive = inactive) — organise by ACTIONABILITY, not subject — naming an existing note to append to or a new kebab-case filename, plus [[wikilinks]] to related notes. Junk entries can be proposed for deletion. Urban Makers operational knowledge does not belong in the vault: flag it for the wiki instead. (3) Only after Bryan approves, call file_inbox_entries with the exact entry text and cleaned-up content (vault style: one sentence per line, plain dash never em dash, minimal frontmatter, photos re-embedded as ![[filename.jpg]]); it stages one confirmation for the whole batch. Whole notes (e.g. finishing a project) move with move_vault_note. Also use list_vault/read_vault_note to answer "what do I know about X" from the vault, citing the notes you drew from.
 - General questions: always available
 
 Keep replies concise — Bryan is on mobile.
@@ -81,6 +83,7 @@ TOOLS = [
     *WEB_TOOLS,
     *BLOG_TOOLS,
     *INBOX_TOOLS,
+    *VAULT_TOOLS,
     *PENDING_TOOLS,
 ]
 
@@ -102,6 +105,7 @@ DISPATCH: dict = {
     **WEB_DISPATCH,
     **BLOG_DISPATCH,
     **INBOX_DISPATCH,
+    **VAULT_DISPATCH,
     **PENDING_DISPATCH,
 }
 
