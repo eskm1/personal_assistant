@@ -39,5 +39,15 @@ SECOND_BRAIN_REPO = os.getenv("SECOND_BRAIN_REPO", "eskm1/second-brain")
 SECOND_BRAIN_BRANCH = os.getenv("SECOND_BRAIN_BRANCH", "main")
 SECOND_BRAIN_INBOX_PATH = os.getenv("SECOND_BRAIN_INBOX_PATH", "00 Inbox/telegram.md")
 
+# ── Personal blog (bryanjlum.com) ─────────────────────────────────────────────
+# Static Astro site on Cloudflare Pages: publishing a post = committing a markdown
+# file to the site repo, which triggers a deploy. Token: a fine-grained GitHub PAT
+# with Contents read+write on the blog repo only.
+BLOG_GITHUB_TOKEN = os.getenv("BLOG_GITHUB_TOKEN", "")
+BLOG_REPO = os.getenv("BLOG_REPO", "eskm1/bryanjlum.com")
+BLOG_BRANCH = os.getenv("BLOG_BRANCH", "main")
+BLOG_POSTS_PATH = os.getenv("BLOG_POSTS_PATH", "src/content/blog")
+BLOG_BASE_URL = os.getenv("BLOG_BASE_URL", "https://bryanjlum.com")
+
 # How many message pairs (user + assistant) to keep per user
 MAX_HISTORY_PAIRS = 20

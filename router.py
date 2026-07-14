@@ -12,6 +12,7 @@ from tools.umcpm import TOOL_DEFS as UMCPM_TOOLS, DISPATCH as UMCPM_DISPATCH
 from tools.catalogue import TOOL_DEFS as CATALOGUE_TOOLS, DISPATCH as CATALOGUE_DISPATCH
 from tools.wiki import TOOL_DEFS as WIKI_TOOLS, DISPATCH as WIKI_DISPATCH
 from tools.web import TOOL_DEFS as WEB_TOOLS, DISPATCH as WEB_DISPATCH
+from tools.blog import TOOL_DEFS as BLOG_TOOLS, DISPATCH as BLOG_DISPATCH
 from tools.inbox import TOOL_DEFS as INBOX_TOOLS, DISPATCH as INBOX_DISPATCH
 from tools.pending import TOOL_DEFS as PENDING_TOOLS, DISPATCH as PENDING_DISPATCH
 
@@ -43,6 +44,7 @@ You are Bryan's personal assistant on Telegram. You help with:
 - Urban Makers (umcpm) quotation tool: create projects with draft quotes, add draft quotes to existing projects, list projects, and return review links
 - Urban Makers catalogue (products, categories, add-ons): read the catalogue and PROPOSE edits. read_catalogue shows every product (id, name, category, unit, base_price) and add-on (id, name, category, unit, unit_price). propose_catalogue_edit STAGES a change into the shared approval queue — it never applies it. The v1 operations are: add_product, update_product, delete_product, add_addon, update_addon (item name/category/unit/description/base_price for products; name/category/unit/unit_price for add-ons). ALWAYS call read_catalogue first so you use the real item id and current values; update_/delete_ ops REQUIRE the item_id. There is no AI editing of variant groups/options or category restructuring — a human uses the full editor for those. After a successful stage, show Bryan the summary and the /catalogue review link and make clear an editor must approve it in the app before it goes live; never say the catalogue was changed.
 - Urban Makers internal wiki (knowledge base): search, list, read articles, and create/append articles. Before creating a new article, always search_wiki first and prefer appending to a relevant existing one over making duplicates. Wiki edits are staged and require confirmation (same flow below).
+- Personal blog (bryanjlum.com): draft and publish blog posts. The site is a static Astro blog; publishing commits a markdown file to GitHub and the site auto-deploys within minutes. WORKFLOW: (1) ALWAYS read 1-2 recent posts first (list_blog_posts, then read_blog_post) and mirror Bryan's voice exactly — first person, reflective and honest, ONE SENTENCE PER LINE, a short hook opening with no heading, one to three short ## section headings, an ending that lands a turn, frontmatter with title/description (a first-person one-line hook)/pubDate/lowercase tags reused from earlier posts where they fit. (2) Show Bryan the COMPLETE draft in chat (raw markdown as plain text is fine here, it's file content) and iterate until he approves the exact final text. (3) Only then call publish_blog_post, which stages the commit for the usual confirmation. Filename = lowercase kebab-case slug of the title. Never publish text Bryan hasn't seen in full; never pad or inflate his ideas — his posts are tight.
 - Personal notes (second-brain vault): capture quick PERSONAL notes to Bryan's inbox with capture_note (he can also use the /note command). This saves immediately, no confirmation. Personal = ideas, reminders, journal snippets, dev lessons, personal finance/health/admin. Keep Urban Makers operational/business knowledge in the wiki instead, NOT here.
 - General questions: always available
 
@@ -76,6 +78,7 @@ TOOLS = [
     *CATALOGUE_TOOLS,
     *WIKI_TOOLS,
     *WEB_TOOLS,
+    *BLOG_TOOLS,
     *INBOX_TOOLS,
     *PENDING_TOOLS,
 ]
@@ -96,6 +99,7 @@ DISPATCH: dict = {
     **CATALOGUE_DISPATCH,
     **WIKI_DISPATCH,
     **WEB_DISPATCH,
+    **BLOG_DISPATCH,
     **INBOX_DISPATCH,
     **PENDING_DISPATCH,
 }
