@@ -22,11 +22,12 @@ import requests
 
 from config import UMCPM_SUPABASE_URL, UMCPM_SERVICE_KEY
 from tools import pending
+from tools.wiki import WRITE_TOOL_DEFS as WIKI_WRITE_TOOL_DEFS, WRITE_DISPATCH as WIKI_WRITE_DISPATCH
 
 _REST = f"{UMCPM_SUPABASE_URL.rstrip('/')}/rest/v1"
 _SGT = ZoneInfo("Asia/Singapore")
 
-CREATED_BY = "Bryan (via Blumbot)"
+CREATED_BY = "Bryan (via Ava)"
 
 
 def _headers(extra: dict | None = None) -> dict:
@@ -341,6 +342,8 @@ TOOL_DEFS = [
             "required": ["project", "task"],
         },
     },
+    # Wiki writes are Bob's domain — defined in tools/wiki.py, exposed here.
+    *WIKI_WRITE_TOOL_DEFS,
     {
         "name": "bob_project_brief",
         "description": (
@@ -363,4 +366,5 @@ DISPATCH = {
     "bob_list_tasks": bob_list_tasks,
     "bob_complete_task": bob_complete_task,
     "bob_project_brief": bob_project_brief,
+    **WIKI_WRITE_DISPATCH,
 }
