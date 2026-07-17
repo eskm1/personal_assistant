@@ -194,6 +194,75 @@ def bob_project_brief(project: str) -> str:
         return f"Bob brief error: {e}"
 
 
+def bob_updates(days: int = 2) -> str:
+    """What changed in Bob's world recently: done tasks, new tasks, overdue, report headlines."""
+    try:
+        days = max(1, min(int(days), 14))
+        now = datetime.now(_SGT)
+        since_iso = (now - timedelta(days=days)).isoformat()
+        since_date = (now - timedelta(days=days)).date().isoformat()
+        sel = "id,description,owner,due_date,status,created_by,created_at,done_at,projects(project_name)"
+        pname = lambda t: (t.get("projects") or {}).get("project_name") or "(unknown project)"
+
+        r = requests.get(f"{_REST}/wa_tasks", headers=_headers(), params={
+            "select": sel, "status": "eq.done", "done_at": f"gte.{since_iso}",
+            "order": "done_at.desc", "limit": "30",
+        }, timeout=15)
+        r.raise_for_status()
+        done = r.json()
+
+        r = requests.get(f"{_REST}/wa_tasks", headers=_headers(), params={
+            "select": sel, "created_at": f"gte.{since_iso}",
+            "order": "created_at.desc", "limit": "30",
+        }, timeout=15)
+        r.raise_for_status()
+        # Skip ones Bryan added himself — he knows about those.
+        added = [t for t in r.json() if t.get("created_by") != CREATED_BY]
+
+        r = requests.get(f"{_REST}/wa_tasks", headers=_headers(), params={
+            "select": sel, "status": "eq.open", "due_date": f"lt.{now.date().isoformat()}",
+            "order": "due_date.asc", "limit": "30",
+        }, timeout=15)
+        r.raise_for_status()
+        overdue = r.json()
+
+        r = requests.get(f"{_REST}/wa_daily_reports", headers=_headers(), params={
+            "select": "report_date,headline,projects(project_name)",
+            "report_date": f"gte.{since_date}",
+            "order": "report_date.desc", "limit": "15",
+        }, timeout=15)
+        r.raise_for_status()
+        reports = [x for x in r.json() if x.get("headline")]
+
+        out = [f"Bob's last {days} day(s):"]
+        if done:
+            out.append("\n✅ Completed:")
+            out.extend(f"• [{pname(t)}] {t['description']}" for t in done)
+        if added:
+            out.append("\n🆕 New tasks (added by the team / Bob):")
+            out.extend(
+                f"• [{pname(t)}] {t['description']}"
+                + (f" (due {t['due_date']}{_urgency(t['due_date'])})" if t.get("due_date") else "")
+                + (f" — added by {t['created_by']}" if t.get("created_by") else "")
+                for t in added
+            )
+        if overdue:
+            out.append("\n⏰ Overdue — needs attention:")
+            out.extend(
+                f"• [{pname(t)}] {t['description']} (due {t['due_date']})"
+                + (f" — {t['owner']}" if t.get("owner") else "")
+                for t in overdue
+            )
+        if reports:
+            out.append("\n📋 Daily report headlines:")
+            out.extend(f"• {x['report_date']} [{pname(x)}] {x['headline']}" for x in reports)
+        if len(out) == 1:
+            return f"Quiet — nothing completed, added, overdue, or reported in Bob's world in the last {days} day(s)."
+        return "\n".join(out)
+    except Exception as e:
+        return f"Bob updates error: {e}"
+
+
 # ── Write executors (run only after confirmation) ─────────────────────────────
 
 def _do_add_task(project: dict, description: str, due_date: str, owner: str) -> str:
@@ -342,6 +411,21 @@ TOOL_DEFS = [
             "required": ["project", "task"],
         },
     },
+    {
+        "name": "bob_updates",
+        "description": (
+            "What has changed in Bob's world recently, across ALL projects: tasks completed, new tasks "
+            "added by the team or Bob (not Bryan's own), overdue tasks needing attention, and daily report "
+            "headlines. Use for 'any updates from Bob?' / 'what has Bob done?' / 'anything I need to "
+            "resolve?'. Default window 2 days; up to 14."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "description": "Look-back window in days (1-14, default 2)", "default": 2},
+            },
+        },
+    },
     # Wiki writes are Bob's domain — defined in tools/wiki.py, exposed here.
     *WIKI_WRITE_TOOL_DEFS,
     {
@@ -366,5 +450,6 @@ DISPATCH = {
     "bob_list_tasks": bob_list_tasks,
     "bob_complete_task": bob_complete_task,
     "bob_project_brief": bob_project_brief,
+    "bob_updates": bob_updates,
     **WIKI_WRITE_DISPATCH,
 }
