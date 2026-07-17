@@ -149,9 +149,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     histories[conv_key(update)].clear()
     await update.message.reply_text(
-        "Hi! I'm Bryan's personal assistant.\n\n"
+        "Hi! I'm Blumbot, Bryan's personal assistant.\n\n"
         "You can talk to me normally or send a voice note. I can help with calendar, "
-        "email, tasks, directions, and general questions.\n\n"
+        "email, tasks, directions, and general questions — and I can pass project "
+        "work to Bob, the Urban Makers WhatsApp agent.\n\n"
         "Use /clear to reset the conversation."
     )
 
