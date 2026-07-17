@@ -9,6 +9,10 @@ Like the web app (which shows an Accept/Discard preview), edits here are NOT
 immediate: create/append STAGE the change via the confirmation gate and only write
 after Bryan confirms. Every write also appends a wiki_revisions snapshot, matching
 dbSaveWikiArticle in the app.
+
+Ava (the Telegram bot) only READS the wiki directly; writing is Bob's domain, so
+the write tools are exposed under Bob's namespace in tools/bob.py
+(bob_create_wiki_article / bob_append_wiki_article) and attributed to him.
 """
 import re
 import json
@@ -29,7 +33,7 @@ DOMAINS = [
     "Standards & specs", "General",
 ]
 
-EDITOR = "Bryan (Telegram)"
+EDITOR = "Bob (via Ava)"
 
 
 def _headers(extra: dict | None = None) -> dict:
@@ -241,8 +245,10 @@ def append_to_wiki_article(article_id: str, markdown: str) -> str:
 
 
 # ── Tool definitions (Anthropic schema) ──────────────────────────────────────
+# Read tools go straight into Ava's toolset; the write tools are picked up and
+# re-exposed by tools/bob.py under Bob's names.
 
-TOOL_DEFS = [
+READ_TOOL_DEFS = [
     {
         "name": "search_wiki",
         "description": (
@@ -279,12 +285,16 @@ TOOL_DEFS = [
             "required": ["article_id"],
         },
     },
+]
+
+WRITE_TOOL_DEFS = [
     {
-        "name": "create_wiki_article",
+        "name": "bob_create_wiki_article",
         "description": (
-            "Stage a NEW wiki article. Does NOT save immediately — it stages the article and returns a summary. "
-            "Show Bryan the summary and, once he confirms, call confirm_pending_action to save. "
-            "Prefer appending to an existing article (search_wiki first) over creating duplicates."
+            "Ask Bob to add a NEW article to the Urban Makers wiki. Does NOT save immediately — it stages the "
+            "article and returns a summary. Show Bryan the summary and, once he confirms, call "
+            "confirm_pending_action to save. Prefer appending to an existing article (search_wiki first) "
+            "over creating duplicates."
         ),
         "input_schema": {
             "type": "object",
@@ -299,10 +309,11 @@ TOOL_DEFS = [
         },
     },
     {
-        "name": "append_to_wiki_article",
+        "name": "bob_append_wiki_article",
         "description": (
-            "Stage an APPEND of Markdown to an existing wiki article. Does NOT save immediately — it stages the "
-            "change and returns a summary. Show Bryan the summary and, once he confirms, call confirm_pending_action."
+            "Ask Bob to APPEND Markdown to an existing Urban Makers wiki article. Does NOT save immediately — "
+            "it stages the change and returns a summary. Show Bryan the summary and, once he confirms, call "
+            "confirm_pending_action."
         ),
         "input_schema": {
             "type": "object",
@@ -315,10 +326,13 @@ TOOL_DEFS = [
     },
 ]
 
-DISPATCH = {
+READ_DISPATCH = {
     "search_wiki": search_wiki,
     "list_wiki_articles": list_wiki_articles,
     "read_wiki_article": read_wiki_article,
-    "create_wiki_article": create_wiki_article,
-    "append_to_wiki_article": append_to_wiki_article,
+}
+
+WRITE_DISPATCH = {
+    "bob_create_wiki_article": create_wiki_article,
+    "bob_append_wiki_article": append_to_wiki_article,
 }
