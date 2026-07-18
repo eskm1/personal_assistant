@@ -1,8 +1,8 @@
 # Pinned to exact installed versions — the auto-deploy timer runs pip install on
 # every push, so loose pins risk an unattended breaking upgrade. Bump deliberately.
 
-# Telegram bot
-python-telegram-bot==21.9
+# Telegram bot ([job-queue] adds APScheduler for Ava's daily morning push)
+python-telegram-bot[job-queue]==21.9
 
 # LLM
 anthropic==0.104.1

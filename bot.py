@@ -15,11 +15,15 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from config import TELEGRAM_BOT_TOKEN, ALLOWED_USER_IDS, MAX_HISTORY_PAIRS
+from datetime import time as dtime
+from zoneinfo import ZoneInfo
+
+from config import TELEGRAM_BOT_TOKEN, ALLOWED_USER_IDS, MAX_HISTORY_PAIRS, AVA_PUSH_HOUR
 from router import chat
 from voice import transcribe_voice
 from tools.umcpm import list_umcpm_projects
 from tools.inbox import append_to_inbox
+from tools.bob import morning_brief
 from tools.pending import current_conversation
 
 logging.basicConfig(
@@ -336,6 +340,38 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     await reply_from_claude(update, context, text, owner=owner)
 
 
+# ── Proactive push (Ava speaks first) ─────────────────────────────────────────
+
+async def push_morning_brief(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Daily job: DM the morning brief to every allowed user. Quiet days and
+    errors send nothing — a broken push must not page Bryan every morning."""
+    text = await asyncio.to_thread(morning_brief)
+    if not text:
+        logger.info("Morning brief: nothing to push today.")
+        return
+    for user_id in ALLOWED_USER_IDS:
+        try:
+            await context.bot.send_message(user_id, text[:MAX_MESSAGE_CHARS], disable_web_page_preview=True)
+        except Exception as e:
+            # A user who never opened a DM with the bot can't be pushed to.
+            logger.warning("Morning brief push to %s failed: %s", user_id, e)
+
+
+def schedule_push(app: Application) -> None:
+    if AVA_PUSH_HOUR < 0:
+        logger.info("Ava push disabled (AVA_PUSH_HOUR=-1).")
+        return
+    if app.job_queue is None:
+        logger.warning("JobQueue unavailable — install python-telegram-bot[job-queue] to enable the morning push.")
+        return
+    app.job_queue.run_daily(
+        push_morning_brief,
+        time=dtime(hour=AVA_PUSH_HOUR % 24, tzinfo=ZoneInfo("Asia/Singapore")),
+        name="morning_brief",
+    )
+    logger.info("Morning brief scheduled daily at %02d:00 SGT.", AVA_PUSH_HOUR % 24)
+
+
 # ── Global error handler ──────────────────────────────────────────────────────
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -376,6 +412,7 @@ async def main() -> None:
     app.add_handler(MessageHandler(group & filters.TEXT & ~filters.COMMAND, handle_group_message))
 
     app.add_error_handler(on_error)
+    schedule_push(app)
 
     logger.info("Bot starting, allowed users: %s", ALLOWED_USER_IDS)
 

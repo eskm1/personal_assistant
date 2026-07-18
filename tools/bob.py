@@ -263,6 +263,40 @@ def bob_updates(days: int = 2) -> str:
         return f"Bob updates error: {e}"
 
 
+def morning_brief() -> str | None:
+    """Ava's daily push: tasks due today + everything that changed in the last day.
+    Returns None when there is nothing worth waking Bryan up for (or on error —
+    the caller logs; a broken morning push must not page him daily)."""
+    try:
+        today = datetime.now(_SGT).date().isoformat()
+        r = requests.get(f"{_REST}/wa_tasks", headers=_headers(), params={
+            "select": "description,owner,projects(project_name)",
+            "status": "eq.open", "due_date": f"eq.{today}",
+            "order": "created_at.asc", "limit": "20",
+        }, timeout=15)
+        r.raise_for_status()
+        due_today = r.json()
+
+        sections = []
+        if due_today:
+            pname = lambda t: (t.get("projects") or {}).get("project_name") or "(unknown project)"
+            sections.append("🔴 Due today:\n" + "\n".join(
+                f"• [{pname(t)}] {t['description']}" + (f" — {t['owner']}" if t.get("owner") else "")
+                for t in due_today
+            ))
+
+        updates = bob_updates(days=1)
+        if not updates.startswith(("Quiet", "Bob updates error")):
+            # Drop the "Bob's last N day(s):" header — the brief has its own.
+            sections.append(updates.split("\n", 1)[1].strip())
+
+        if not sections:
+            return None
+        return "☀️ Morning brief — Bob's world\n\n" + "\n\n".join(sections)
+    except Exception:
+        return None
+
+
 # ── Write executors (run only after confirmation) ─────────────────────────────
 
 def _do_add_task(project: dict, description: str, due_date: str, owner: str) -> str:
