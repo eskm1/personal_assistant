@@ -49,5 +49,11 @@ BLOG_BRANCH = os.getenv("BLOG_BRANCH", "main")
 BLOG_POSTS_PATH = os.getenv("BLOG_POSTS_PATH", "src/content/blog")
 BLOG_BASE_URL = os.getenv("BLOG_BASE_URL", "https://bryanjlum.com")
 
+# ── Ava's proactive push ──────────────────────────────────────────────────────
+# SGT hour (0-23) when Ava DMs the morning brief (Bob's world: due today,
+# overdue, completed, new tasks, report headlines) to every allowed user.
+# Set AVA_PUSH_HOUR=-1 to disable. Quiet days send nothing.
+AVA_PUSH_HOUR = int(os.getenv("AVA_PUSH_HOUR", "7"))
+
 # How many message pairs (user + assistant) to keep per user
 MAX_HISTORY_PAIRS = 20
