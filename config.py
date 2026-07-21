@@ -39,6 +39,10 @@ SECOND_BRAIN_REPO = os.getenv("SECOND_BRAIN_REPO", "eskm1/second-brain")
 SECOND_BRAIN_BRANCH = os.getenv("SECOND_BRAIN_BRANCH", "main")
 SECOND_BRAIN_INBOX_PATH = os.getenv("SECOND_BRAIN_INBOX_PATH", "00 Inbox/telegram.md")
 
+# Vault folder holding the daily journal (one YYYY-MM-DD.md note per day).
+# A journal is an ongoing personal responsibility, so it lives under 20 Areas.
+JOURNAL_PATH = os.getenv("JOURNAL_PATH", "20 Areas/Journal")
+
 # ── Personal blog (bryanjlum.com) ─────────────────────────────────────────────
 # Static Astro site on Cloudflare Pages: publishing a post = committing a markdown
 # file to the site repo, which triggers a deploy. Token: a fine-grained GitHub PAT
@@ -54,6 +58,10 @@ BLOG_BASE_URL = os.getenv("BLOG_BASE_URL", "https://bryanjlum.com")
 # overdue, completed, new tasks, report headlines) to every allowed user.
 # Set AVA_PUSH_HOUR=-1 to disable. Quiet days send nothing.
 AVA_PUSH_HOUR = int(os.getenv("AVA_PUSH_HOUR", "7"))
+
+# SGT hour (0-23) when Ava DMs the nightly journal reminder (the three prompts,
+# usually answered with a voice note). Set AVA_JOURNAL_HOUR=-1 to disable.
+AVA_JOURNAL_HOUR = int(os.getenv("AVA_JOURNAL_HOUR", "21"))
 
 # How many message pairs (user + assistant) to keep per user
 MAX_HISTORY_PAIRS = 20

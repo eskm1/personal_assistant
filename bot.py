@@ -15,15 +15,22 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from datetime import time as dtime
+from datetime import datetime, time as dtime
 from zoneinfo import ZoneInfo
 
-from config import TELEGRAM_BOT_TOKEN, ALLOWED_USER_IDS, MAX_HISTORY_PAIRS, AVA_PUSH_HOUR
+from config import (
+    TELEGRAM_BOT_TOKEN,
+    ALLOWED_USER_IDS,
+    MAX_HISTORY_PAIRS,
+    AVA_PUSH_HOUR,
+    AVA_JOURNAL_HOUR,
+)
 from router import chat
 from voice import transcribe_voice
 from tools.umcpm import list_umcpm_projects
 from tools.inbox import append_to_inbox
 from tools.bob import morning_brief
+from tools.journal import reminder_text as journal_reminder_text, PROMPTS as JOURNAL_PROMPTS
 from tools.pending import current_conversation
 
 logging.basicConfig(
@@ -39,6 +46,16 @@ logger = logging.getLogger(__name__)
 # Conversation history, keyed by (chat_id, user_id) so DM and group threads
 # stay fully isolated. Cleared on /start or /clear.
 histories: dict[tuple[int, int], list[dict]] = defaultdict(list)
+
+# DM conversations that were pushed the nightly journal reminder and haven't
+# replied yet, mapping conv key -> the date line the reminder was for. Consumed
+# by the next message so the model knows the reply is (probably) the journal.
+# The push job must NOT touch `histories` directly: chat() appends to a history
+# from its worker thread, so a job firing mid-turn could split a tool_use from
+# its tool_result. A marker read on the event loop before the turn starts is
+# race-free — and if the bot restarts and the marker is lost, the system
+# prompt's journal section still lets the model recognise the answers.
+journal_prompted: dict[tuple[int, int], str] = {}
 
 # Telegram hard-caps a message at 4096 chars; leave headroom.
 MAX_MESSAGE_CHARS = 3900
@@ -123,6 +140,21 @@ async def reply_from_claude(
     key = conv_key(update)
     history = histories[key]
 
+    # First message after a journal reminder: hand the model the context it
+    # can't otherwise see (the pushed reminder never enters history). One-shot —
+    # from here the note lives in history, so follow-up turns keep the thread.
+    prompted_for = journal_prompted.pop(key, None)
+    if prompted_for:
+        note = (
+            f"[Context, not from Bryan: you pushed him the nightly journal reminder for {prompted_for} "
+            f'with the three prompts — "{JOURNAL_PROMPTS[0]}", "{JOURNAL_PROMPTS[1]}", "{JOURNAL_PROMPTS[2]}". '
+            "If his message below answers them, save it with save_journal_entry; otherwise just respond normally.]"
+        )
+        if isinstance(user_content, str):
+            user_content = f"{note}\n\n{user_content}"
+        else:
+            user_content = [{"type": "text", "text": note}, *user_content]
+
     history.append({"role": "user", "content": user_content})
     trim_history(history)
     turn_start = len(history) - 1  # index of the user message we just added
@@ -155,8 +187,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Hi! I'm Ava, Bryan's personal assistant and second brain.\n\n"
         "You can talk to me normally or send a voice note. I can help with calendar, "
-        "email, tasks, notes, blog posts, directions, and general questions — and I "
-        "can pass project work to Bob, the Urban Makers WhatsApp agent.\n\n"
+        "email, tasks, notes, blog posts, your nightly journal, directions, and general "
+        "questions — and I can pass project work to Bob, the Urban Makers WhatsApp agent.\n\n"
         "Use /clear to reset the conversation."
     )
 
@@ -181,7 +213,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "You can also send voice notes and I'll transcribe them automatically, "
         "and just say \"note that down\" to capture something to your vault.\n"
         "Photos work too: send one and I can look at it, or caption it /note "
-        "(plus any text) to save it straight into your vault inbox."
+        "(plus any text) to save it straight into your vault inbox.\n\n"
+        "Every evening I'll nudge you to journal — answer with one voice note "
+        "(how you're feeling, what happened, what you're looking forward to) and "
+        "I'll file it as that day's note in your vault. You can also just say "
+        "\"let's journal\" any time."
     )
 
 
@@ -357,19 +393,47 @@ async def push_morning_brief(context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.warning("Morning brief push to %s failed: %s", user_id, e)
 
 
+async def push_journal_prompt(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Daily job: DM the nightly journal reminder (the three fixed prompts) to
+    every allowed user. Unlike the brief there are no quiet days — the whole
+    point is a dependable ritual. Bryan answering is optional."""
+    text = journal_reminder_text()
+    today = datetime.now(ZoneInfo("Asia/Singapore")).strftime("%A, %d %B %Y")
+    for user_id in ALLOWED_USER_IDS:
+        try:
+            await context.bot.send_message(user_id, text)
+            # DM chat_id == user_id, so this is the DM conversation's key.
+            journal_prompted[(user_id, user_id)] = today
+        except Exception as e:
+            # A user who never opened a DM with the bot can't be pushed to.
+            logger.warning("Journal reminder push to %s failed: %s", user_id, e)
+
+
 def schedule_push(app: Application) -> None:
+    wanted = [h for h in (AVA_PUSH_HOUR, AVA_JOURNAL_HOUR) if h >= 0]
+    if wanted and app.job_queue is None:
+        logger.warning("JobQueue unavailable — install python-telegram-bot[job-queue] to enable the daily pushes.")
+        return
+
     if AVA_PUSH_HOUR < 0:
-        logger.info("Ava push disabled (AVA_PUSH_HOUR=-1).")
-        return
-    if app.job_queue is None:
-        logger.warning("JobQueue unavailable — install python-telegram-bot[job-queue] to enable the morning push.")
-        return
-    app.job_queue.run_daily(
-        push_morning_brief,
-        time=dtime(hour=AVA_PUSH_HOUR % 24, tzinfo=ZoneInfo("Asia/Singapore")),
-        name="morning_brief",
-    )
-    logger.info("Morning brief scheduled daily at %02d:00 SGT.", AVA_PUSH_HOUR % 24)
+        logger.info("Morning brief disabled (AVA_PUSH_HOUR=-1).")
+    else:
+        app.job_queue.run_daily(
+            push_morning_brief,
+            time=dtime(hour=AVA_PUSH_HOUR % 24, tzinfo=ZoneInfo("Asia/Singapore")),
+            name="morning_brief",
+        )
+        logger.info("Morning brief scheduled daily at %02d:00 SGT.", AVA_PUSH_HOUR % 24)
+
+    if AVA_JOURNAL_HOUR < 0:
+        logger.info("Journal reminder disabled (AVA_JOURNAL_HOUR=-1).")
+    else:
+        app.job_queue.run_daily(
+            push_journal_prompt,
+            time=dtime(hour=AVA_JOURNAL_HOUR % 24, tzinfo=ZoneInfo("Asia/Singapore")),
+            name="journal_prompt",
+        )
+        logger.info("Journal reminder scheduled daily at %02d:00 SGT.", AVA_JOURNAL_HOUR % 24)
 
 
 # ── Global error handler ──────────────────────────────────────────────────────
