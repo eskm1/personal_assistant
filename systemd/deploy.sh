@@ -14,6 +14,11 @@ before="$(runuser -u assistant -- git rev-parse HEAD)"
 runuser -u assistant -- git pull --quiet --ff-only
 after="$(runuser -u assistant -- git rev-parse HEAD)"
 
+# Sync submodules (vendor/last30days) to the commits this revision pins. Run on
+# every pass, not just on change: it's a no-op when already in sync, and it
+# self-heals a checkout where the submodule was never initialised.
+runuser -u assistant -- git submodule update --init --recursive --quiet
+
 if [ "$before" = "$after" ]; then
   echo "No changes (at ${after:0:8})."
   exit 0

@@ -1,0 +1,7 @@
+# Third-party research skill, pinned to a release tag (not tracking a branch).
+# The recorded commit is what deploys; bump it deliberately with:
+#   git -C vendor/last30days fetch --tags && git -C vendor/last30days checkout vX.Y.Z
+#   git add vendor/last30days && git commit -m "bump last30days to vX.Y.Z"
+[submodule "vendor/last30days"]
+	path = vendor/last30days
+	url = https://github.com/mvanhorn/last30days-skill.git

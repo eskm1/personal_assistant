@@ -63,5 +63,37 @@ AVA_PUSH_HOUR = int(os.getenv("AVA_PUSH_HOUR", "7"))
 # usually answered with a voice note). Set AVA_JOURNAL_HOUR=-1 to disable.
 AVA_JOURNAL_HOUR = int(os.getenv("AVA_JOURNAL_HOUR", "21"))
 
+# ── Research skillset (last30days) ────────────────────────────────────────────
+# The research engine is third-party code (vendor/last30days, pinned submodule)
+# that runs as a subprocess and calls out to a lot of external services. It is
+# handed ONLY the variables below - never the bot's own environment - so a bug
+# or a bad upstream bump can't reach the Telegram, Anthropic, Microsoft,
+# Supabase, blog or vault credentials.
+#
+# All of these are optional: with none set, the engine still searches Reddit,
+# Hacker News, GitHub, arXiv, Polymarket and Techmeme. Each key you add to .env
+# lights up another source (see vendor/last30days/CONFIGURATION.md).
+#
+# OPENAI_API_KEY is deliberately NOT here. It is the key that pays for voice
+# transcription, and the engine would happily spend it on reranking. Add the
+# string to this tuple if you decide you want that.
+RESEARCH_ENV_ALLOWLIST: tuple[str, ...] = (
+    # Social sources
+    "SCRAPECREATORS_API_KEY",   # TikTok + Instagram
+    "XAI_API_KEY",              # X/Twitter
+    "XQUIK_API_KEY",            # X/Twitter (alternative)
+    "AUTH_TOKEN", "CT0",        # X/Twitter session cookies
+    "BSKY_HANDLE", "BSKY_APP_PASSWORD",
+    "TRUTHSOCIAL_TOKEN",
+    "APIFY_API_TOKEN",
+    "GITHUB_TOKEN",             # raises GitHub's anonymous rate limit
+    # Grounded web search backends
+    "BRAVE_API_KEY", "EXA_API_KEY", "SERPER_API_KEY",
+    "PERPLEXITY_API_KEY", "PARALLEL_API_KEY",
+    # Engine tuning knobs, if you ever need to set one
+    "LAST30DAYS_DEFAULT_SEARCH", "LAST30DAYS_REDDIT_BACKEND",
+    "LAST30DAYS_X_BACKEND", "LAST30DAYS_DEBUG",
+)
+
 # How many message pairs (user + assistant) to keep per user
 MAX_HISTORY_PAIRS = 20

@@ -4,6 +4,9 @@ auth/credentials.json
 auth/token_gmail.json
 auth/token_ms.json
 
+# Scratch space for the research engine's query-plan files
+.tmp/
+
 # Python
 venv/
 __pycache__/
