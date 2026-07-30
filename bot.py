@@ -7,6 +7,7 @@ import traceback
 from collections import defaultdict
 
 from telegram import Update
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -145,11 +146,29 @@ async def send_chunked(message, text: str) -> None:
         await message.reply_text(chunk, disable_web_page_preview=True)
 
 
+async def keep_typing(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    """Re-send the typing indicator until cancelled.
+
+    Telegram expires 'typing' after ~5s. A one-shot call is fine for a normal
+    reply, but a /r research turn can run for a minute or more, and a silent bot
+    reads as a broken bot.
+    """
+    try:
+        while True:
+            await context.bot.send_chat_action(chat_id, "typing")
+            await asyncio.sleep(4)
+    except asyncio.CancelledError:
+        pass
+    except TelegramError:
+        pass  # a failed indicator must never take down the turn
+
+
 async def reply_from_claude(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     user_content: str | list,
     owner: bool = True,
+    research: bool = False,
 ) -> None:
     """user_content is either plain text or a list of content blocks (e.g. image + text)."""
     key = conv_key(update)
@@ -170,7 +189,7 @@ async def reply_from_claude(
     trim_history(history)
     turn_start = len(history) - 1  # index of the user message we just added
 
-    await context.bot.send_chat_action(update.effective_chat.id, "typing")
+    typing = asyncio.create_task(keep_typing(context, update.effective_chat.id))
 
     # Tell staged/destructive tools which conversation they belong to (for the
     # confirmation gate). Set before to_thread so the copied context carries it.
@@ -179,12 +198,16 @@ async def reply_from_claude(
     try:
         # chat() is blocking (network + tool loop); run it off the event loop so
         # other messages keep flowing. chat() appends the assistant turn in-place.
-        response = await asyncio.to_thread(chat, history, is_owner=owner)
+        response = await asyncio.to_thread(
+            chat, history, is_owner=owner, research=research
+        )
     except Exception:
         # Roll the whole failed turn back out of history (user msg + any partial
         # assistant/tool appends) so the next call isn't left with an orphan pair.
         del history[turn_start:]
         raise  # surfaced by the global error handler
+    finally:
+        typing.cancel()
 
     await send_chunked(update.message, response)
 
@@ -219,6 +242,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/n — capture a personal note to my second-brain inbox (/note also works)\n"
         "/j — journal today: I'll ask the three prompts, you reply by voice (/journal too)\n"
         "/projects — list Urban Makers projects\n"
+        "/r <question> — research it live across Reddit, HN, X, YouTube, TikTok, "
+        "GitHub and Polymarket instead of answering from memory (takes up to a minute)\n"
         "/clear — clear conversation history\n"
         "/start — reset and introduce myself\n"
         "/help  — show this message\n\n"
@@ -277,6 +302,32 @@ async def cmd_journal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Marker set above is consumed by reply_from_claude, which prefixes the
     # prompts so the model splits the text across the three fields.
     await reply_from_claude(update, context, text, owner=True)
+
+
+async def cmd_research(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/r <question> — answer from live evidence instead of from memory.
+
+    Runs the normal Claude loop with the research contract attached, which makes
+    a research_last30days call mandatory before answering. The question stays in
+    the conversation history, so follow-ups ("what about the pricing complaints?")
+    work without repeating /r.
+    """
+    if not is_owner(update.effective_user.id):
+        return
+    raw = update.message.text or ""
+    parts = raw.split(maxsplit=1)
+    question = parts[1].strip() if len(parts) > 1 else ""
+    if not question:
+        await update.message.reply_text(
+            "What should I research? e.g.\n"
+            "/r what people think of the new Dyson airwrap\n"
+            "/r sentiment on interior design leads in singapore\n\n"
+            "I search Reddit, Hacker News, X, YouTube, TikTok, GitHub and Polymarket "
+            "for the last 30 days and summarize what people actually said. "
+            "Takes up to a minute."
+        )
+        return
+    await reply_from_claude(update, context, question, owner=True, research=True)
 
 
 # ── Private chat handlers ─────────────────────────────────────────────────────
@@ -497,6 +548,7 @@ async def main() -> None:
     # Short aliases first — the long forms stay so old habits keep working.
     app.add_handler(CommandHandler(["n", "note"], cmd_note))
     app.add_handler(CommandHandler(["j", "journal"], cmd_journal))
+    app.add_handler(CommandHandler(["r", "research"], cmd_research))
 
     # Private chats — full access
     private = filters.ChatType.PRIVATE
