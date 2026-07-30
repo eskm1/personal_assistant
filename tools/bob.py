@@ -211,8 +211,11 @@ def bob_updates(days: int = 2) -> str:
         r.raise_for_status()
         done = r.json()
 
+        # status=open matters: without it a task created AND ticked off inside the
+        # window is listed here as outstanding, so ticking it in the app appears to
+        # do nothing. Completed ones are already covered by the section above.
         r = requests.get(f"{_REST}/wa_tasks", headers=_headers(), params={
-            "select": sel, "created_at": f"gte.{since_iso}",
+            "select": sel, "status": "eq.open", "created_at": f"gte.{since_iso}",
             "order": "created_at.desc", "limit": "30",
         }, timeout=15)
         r.raise_for_status()

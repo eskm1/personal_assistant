@@ -90,17 +90,32 @@ def _is_plain_user_message(msg: dict) -> bool:
     )
 
 
-def _parse_note_command(raw: str) -> str | None:
-    """If raw starts with /note (or /note@bot), return the note text after it
-    (possibly empty). Return None when it isn't a /note command at all.
-    Splits only the first line's command so multi-line notes keep their newlines."""
-    raw = (raw or "").lstrip()
-    if not raw.startswith("/note"):
+def _parse_command_text(raw: str, *names: str) -> str | None:
+    """If raw starts with any of these commands (/name or /name@bot), return the
+    text after it (possibly empty). Return None when it isn't one of them.
+    Splits on the first whitespace only, so multi-line bodies keep their newlines."""
+    parts = (raw or "").lstrip().split(None, 1)
+    if not parts:
         return None
-    command, _, rest = raw.partition(" ")
-    if command != "/note" and not command.startswith("/note@"):
+    if parts[0].split("@", 1)[0] not in {f"/{n}" for n in names}:
         return None
-    return rest.strip()
+    return parts[1].strip() if len(parts) > 1 else ""
+
+
+def _journal_context(day: str) -> str:
+    """Context prefix for a message that is probably a journal answer. The
+    reminder itself never enters chat history (pushes and command replies are
+    sent directly), so the model needs to be told the prompts are in play."""
+    return (
+        f"[Context, not from Bryan: he is journalling for {day} — either you pushed the nightly "
+        f'reminder or he ran /j. The three prompts are "{JOURNAL_PROMPTS[0]}", '
+        f'"{JOURNAL_PROMPTS[1]}", "{JOURNAL_PROMPTS[2]}". If his message below answers them, save '
+        "it with save_journal_entry; otherwise just respond normally.]"
+    )
+
+
+def _today_sgt() -> str:
+    return datetime.now(ZoneInfo("Asia/Singapore")).strftime("%A, %d %B %Y")
 
 
 def trim_history(history: list[dict]) -> None:
@@ -164,11 +179,7 @@ async def reply_from_claude(
     # from here the note lives in history, so follow-up turns keep the thread.
     prompted_for = journal_prompted.pop(key, None)
     if prompted_for:
-        note = (
-            f"[Context, not from Bryan: you pushed him the nightly journal reminder for {prompted_for} "
-            f'with the three prompts — "{JOURNAL_PROMPTS[0]}", "{JOURNAL_PROMPTS[1]}", "{JOURNAL_PROMPTS[2]}". '
-            "If his message below answers them, save it with save_journal_entry; otherwise just respond normally.]"
-        )
+        note = _journal_context(prompted_for)
         if isinstance(user_content, str):
             user_content = f"{note}\n\n{user_content}"
         else:
@@ -228,21 +239,22 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     await update.message.reply_text(
         "Commands:\n"
-        "/start — reset and introduce myself\n"
-        "/clear — clear conversation history\n"
+        "/n — capture a personal note to my second-brain inbox (/note also works)\n"
+        "/j — journal today: I'll ask the three prompts, you reply by voice (/journal too)\n"
         "/projects — list Urban Makers projects\n"
-        "/note — capture a personal note to my second-brain inbox\n"
         "/r <question> — research it live across Reddit, HN, X, YouTube, TikTok, "
         "GitHub and Polymarket instead of answering from memory (takes up to a minute)\n"
+        "/clear — clear conversation history\n"
+        "/start — reset and introduce myself\n"
         "/help  — show this message\n\n"
         "You can also send voice notes and I'll transcribe them automatically, "
         "and just say \"note that down\" to capture something to your vault.\n"
-        "Photos work too: send one and I can look at it, or caption it /note "
+        "Photos work too: send one and I can look at it, or caption it /n "
         "(plus any text) to save it straight into your vault inbox.\n\n"
-        "Every evening I'll nudge you to journal — answer with one voice note "
+        "Every evening I'll nudge you to journal anyway — answer with one voice note "
         "(how you're feeling, what happened, what you're looking forward to) and "
-        "I'll file it as that day's note in your vault. You can also just say "
-        "\"let's journal\" any time."
+        "I'll file it as that day's note in your vault. /j starts it early; "
+        "/j plus text files an entry straight away."
     )
 
 
@@ -260,17 +272,36 @@ async def cmd_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_owner(update.effective_user.id):
         return
     # Take the raw text after the command so multi-line notes keep their newlines
-    # (context.args would collapse them). Handles "/note ..." and "/note@bot ...".
-    text = _parse_note_command(update.message.text) or ""
+    # (context.args would collapse them). Handles "/n ...", "/note ...", "/n@bot ...".
+    text = _parse_command_text(update.message.text, "n", "note") or ""
     if not text:
         await update.message.reply_text(
             "Send the note after the command, e.g.\n"
-            "/note idea: telegram capture straight into my vault inbox"
+            "/n idea: telegram capture straight into my vault inbox"
         )
         return
     await context.bot.send_chat_action(update.effective_chat.id, "typing")
     result = await asyncio.to_thread(append_to_inbox, text)
     await update.message.reply_text(result)
+
+
+async def cmd_journal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/j — journal on demand, the same flow the nightly push uses.
+
+    Bare /j sends the three prompts and arms the journal context, so the next
+    message (usually a voice note) is saved as today's entry. /j <text> files
+    that text straight away.
+    """
+    if not is_owner(update.effective_user.id):
+        return
+    text = _parse_command_text(update.message.text, "j", "journal") or ""
+    journal_prompted[conv_key(update)] = _today_sgt()
+    if not text:
+        await update.message.reply_text(journal_reminder_text())
+        return
+    # Marker set above is consumed by reply_from_claude, which prefixes the
+    # prompts so the model splits the text across the three fields.
+    await reply_from_claude(update, context, text, owner=True)
 
 
 async def cmd_research(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -349,8 +380,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     ever sees them — including a '/note' typed as the caption.
 
     Two paths:
-    - caption starts with /note  -> save photo + caption into the vault inbox
-    - anything else              -> pass the image to Claude so the bot can see it
+    - caption starts with /n or /note -> save photo + caption into the vault inbox
+    - anything else                   -> pass the image to Claude so the bot can see it
     """
     user_id = update.effective_user.id
     if not is_owner(user_id):
@@ -365,7 +396,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     data = bytes(await tg_file.download_as_bytearray())
 
     caption = update.message.caption or ""
-    note_text = _parse_note_command(caption)
+    note_text = _parse_command_text(caption, "n", "note")
     if note_text is not None:
         result = await asyncio.to_thread(append_to_inbox, note_text, data)
         await update.message.reply_text(result)
@@ -514,7 +545,9 @@ async def main() -> None:
     app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("projects", cmd_projects))
-    app.add_handler(CommandHandler("note", cmd_note))
+    # Short aliases first — the long forms stay so old habits keep working.
+    app.add_handler(CommandHandler(["n", "note"], cmd_note))
+    app.add_handler(CommandHandler(["j", "journal"], cmd_journal))
     app.add_handler(CommandHandler(["r", "research"], cmd_research))
 
     # Private chats — full access
