@@ -53,6 +53,12 @@ BLOG_BRANCH = os.getenv("BLOG_BRANCH", "main")
 BLOG_POSTS_PATH = os.getenv("BLOG_POSTS_PATH", "src/content/blog")
 BLOG_BASE_URL = os.getenv("BLOG_BASE_URL", "https://bryanjlum.com")
 
+# ── Video-link transcription (yt-dlp) ─────────────────────────────────────────
+# Optional Netscape-format cookies file for yt-dlp. Only needed if Instagram
+# starts refusing the server's IP with a login wall; export cookies from a
+# logged-in browser session and point this at the file.
+YTDLP_COOKIES_FILE = os.getenv("YTDLP_COOKIES_FILE", "")
+
 # ── Ava's proactive push ──────────────────────────────────────────────────────
 # SGT hour (0-23) when Ava DMs the morning brief (Bob's world: due today,
 # overdue, completed, new tasks, report headlines) to every allowed user.
