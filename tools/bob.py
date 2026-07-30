@@ -267,9 +267,14 @@ def bob_updates(days: int = 2) -> str:
 
 
 def morning_brief() -> str | None:
-    """Ava's daily push: tasks due today + everything that changed in the last day.
-    Returns None when there is nothing worth waking Bryan up for (or on error —
-    the caller logs; a broken morning push must not page him daily)."""
+    """Project-side brief: tasks due today + everything that changed in the last day.
+
+    No longer the daily push — that is now the Outlook To Do brief
+    (tools.todo.morning_todo_brief). Kept so the project digest can be re-enabled
+    or asked for; day-to-day, bob_updates covers the same ground on demand.
+    Returns None when there is nothing worth reporting (or on error — the caller
+    logs; a broken brief must not page Bryan daily).
+    """
     try:
         today = datetime.now(_SGT).date().isoformat()
         r = requests.get(f"{_REST}/wa_tasks", headers=_headers(), params={

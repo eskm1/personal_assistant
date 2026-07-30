@@ -30,7 +30,7 @@ from router import chat
 from voice import transcribe_voice
 from tools.umcpm import list_umcpm_projects
 from tools.inbox import append_to_inbox
-from tools.bob import morning_brief
+from tools.todo import morning_todo_brief
 from tools.journal import reminder_text as journal_reminder_text, PROMPTS as JOURNAL_PROMPTS
 from tools.pending import current_conversation
 
@@ -461,11 +461,16 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
 # ── Proactive push (Ava speaks first) ─────────────────────────────────────────
 
 async def push_morning_brief(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Daily job: DM the morning brief to every allowed user. Quiet days and
-    errors send nothing — a broken push must not page Bryan every morning."""
-    text = await asyncio.to_thread(morning_brief)
+    """Daily job: DM the Outlook To Do brief to every allowed user.
+
+    An empty to-do list sends nothing. Read failures DO send a short warning —
+    this is the only daily push, so a silent failure would read as "nothing to
+    do today". Project tasks are no longer pushed; ask Ava for them instead
+    ("any updates from Bob?" → bob_updates).
+    """
+    text = await asyncio.to_thread(morning_todo_brief)
     if not text:
-        logger.info("Morning brief: nothing to push today.")
+        logger.info("Morning brief: to-do list is empty, nothing to push today.")
         return
     for user_id in ALLOWED_USER_IDS:
         try:
