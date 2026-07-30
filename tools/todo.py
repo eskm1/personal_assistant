@@ -1,4 +1,14 @@
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 from auth.ms_graph import graph_get, graph_post, graph_patch
+
+_SGT = ZoneInfo("Asia/Singapore")
+
+# Graph's To Do endpoint has no $filter on tasks, so everything is fetched and
+# filtered here. One page is plenty for a personal list; the brief says so
+# rather than silently truncating if it isn't.
+_PAGE = 100
 
 
 def _get_list_id(list_name: str = "Tasks") -> str | None:
@@ -89,6 +99,85 @@ def complete_task(task_id_prefix: str, list_name: str = "Tasks") -> str:
 
     except Exception as e:
         return f"Complete task error: {e}"
+
+
+# ── Ava's daily push ──────────────────────────────────────────────────────────
+
+def _due_date(task: dict) -> str | None:
+    """Graph returns dueDateTime as midnight on the due day; the date is the part
+    that matters, so the time-of-day and its timezone are ignored deliberately."""
+    dt = (task.get("dueDateTime") or {}).get("dateTime")
+    return dt[:10] if dt else None
+
+
+def morning_todo_brief(list_name: str = "Tasks") -> str | None:
+    """Ava's daily morning push: every open Microsoft To Do task, grouped by when
+    it's due, undated last.
+
+    Returns None only when the list is genuinely empty. Errors return a warning
+    instead of None because this is the ONLY daily push — if a broken brief were
+    silent it would be indistinguishable from a clear day, and a false all-clear
+    is worse than a nag.
+    """
+    try:
+        list_id = _get_list_id(list_name)
+        if not list_id:
+            return (
+                f"⚠️ Morning brief: To Do list '{list_name}' not found. "
+                "Ask me to list your To Do lists to see the available names."
+            )
+        data = graph_get(f"me/todo/lists/{list_id}/tasks", params={"$top": _PAGE})
+        raw = data.get("value", [])
+    except Exception as e:
+        return (
+            f"⚠️ Morning brief: couldn't read your To Do list ({str(e)[:120]}). "
+            "Your Microsoft sign-in may need refreshing."
+        )
+
+    tasks = [t for t in raw if t.get("status") != "completed"]
+    if not tasks:
+        return None
+
+    today = datetime.now(_SGT).date()
+    overdue, due_today, tomorrow, upcoming, undated = [], [], [], [], []
+
+    for t in tasks:
+        title = t.get("title") or "(untitled)"
+        if t.get("importance") == "high":
+            title += " (!)"
+        day = _due_date(t)
+        try:
+            dd = datetime.strptime(day, "%Y-%m-%d").date() if day else None
+        except ValueError:
+            dd = None
+        if dd is None:
+            undated.append((None, f"• {title}"))
+        elif dd < today:
+            overdue.append((dd, f"• {title} (due {day})"))
+        elif dd == today:
+            due_today.append((dd, f"• {title}"))
+        elif dd == today + timedelta(days=1):
+            tomorrow.append((dd, f"• {title}"))
+        else:
+            upcoming.append((dd, f"• {title} (due {day})"))
+
+    sections = []
+    for heading, group in (
+        ("⏰ Overdue", overdue),
+        ("🔴 Today", due_today),
+        ("🟠 Tomorrow", tomorrow),
+        ("📅 Upcoming", upcoming),
+        ("🗓 No due date", undated),
+    ):
+        if group:
+            group.sort(key=lambda x: x[0] or today)
+            sections.append(heading + "\n" + "\n".join(line for _, line in group))
+
+    n = len(tasks)
+    header = f"☀️ Morning brief — {n} open to-do{'' if n == 1 else 's'}"
+    if len(raw) >= _PAGE:
+        sections.append(f"(Only the first {_PAGE} tasks were read — there may be more.)")
+    return header + "\n\n" + "\n\n".join(sections)
 
 
 TOOL_DEFS = [
