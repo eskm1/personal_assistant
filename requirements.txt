@@ -27,6 +27,9 @@ requests==2.34.2
 # Web browsing tool (HTML parsing)
 beautifulsoup4==4.15.0
 
+# Video-link transcription (audio/caption download; Whisper reuses the openai pin above)
+yt-dlp==2026.7.4
+
 # Timezone database — ZoneInfo("Asia/Singapore") needs this where the OS ships no tzdata
 tzdata==2026.2
 
