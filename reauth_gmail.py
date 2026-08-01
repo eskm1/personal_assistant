@@ -1,5 +1,6 @@
 """
-One-off Gmail re-authentication helper. Run this on a machine with a browser
+One-off Google re-authentication helper (Gmail + Google Calendar — one token
+covers both; the name predates Calendar). Run this on a machine with a browser
 (your laptop), then copy the resulting token to the server.
 
     py -m pip install google-auth-oauthlib
@@ -18,6 +19,10 @@ auth/google_oauth.py's error message:
 
 SCOPES below must stay in sync with auth/google_oauth.py: a token minted with
 different scopes is rejected when the bot loads it.
+
+Enable BOTH the Gmail API and the Google Calendar API on the project in Google
+Cloud Console before running this, or consent succeeds and every calendar call
+then fails with "Google Calendar API has not been used in project ...".
 """
 import os
 import sys
@@ -25,6 +30,8 @@ import sys
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.readonly",
 ]
 
 _DIR = os.path.dirname(os.path.abspath(__file__))

@@ -13,7 +13,7 @@ openai==2.38.0
 # Config
 python-dotenv==1.2.2
 
-# Gmail
+# Gmail + Google Calendar
 google-auth-oauthlib==1.4.0
 google-auth-httplib2==0.4.0
 google-api-python-client==2.196.0
@@ -24,8 +24,11 @@ msal==1.36.0
 # HTTP (used directly by Graph + umcpm tools)
 requests==2.34.2
 
-# Web browsing tool (HTML parsing)
+# Web browsing tool (HTML parsing); also the HTML-email fallback in tools/gmail.py
 beautifulsoup4==4.15.0
+
+# Text extraction from PDF email attachments (flight e-tickets, invoices)
+pypdf==6.14.2
 
 # Video-link transcription (audio/caption download; Whisper reuses the openai pin above)
 yt-dlp==2026.7.4
