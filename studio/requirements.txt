@@ -1,0 +1,17 @@
+# Studio worker (runs on the Windows laptop at home, NOT on the bot's server).
+# Separate from the root requirements.txt on purpose: the server's auto-deploy
+# installs that file, and it must never pull in Whisper or CUDA libraries.
+# Exact pins for the same reason as the bot: no surprise upgrades. Bump deliberately.
+
+# Claude API (1.x needs Python 3.10+)
+anthropic==1.13.0
+
+# Local Whisper with word timestamps (CPU, or CUDA on an NVIDIA eGPU)
+faster-whisper==1.2.1
+
+# Config + Telegram send
+python-dotenv==1.2.2
+requests==2.34.2
+
+# NVIDIA eGPU only — the CUDA libraries faster-whisper needs on Windows. Install with:
+#   pip install -r requirements-gpu.txt

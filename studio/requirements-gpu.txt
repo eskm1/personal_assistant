@@ -1,0 +1,6 @@
+# CUDA 12 libraries for faster-whisper on an NVIDIA GPU (eGPU included).
+# The worker adds their DLL folders (site-packages/nvidia/*/bin) to the search
+# path itself, so no system-wide CUDA install is needed. Skip this file on a
+# machine without an NVIDIA card.
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cudnn-cu12==9.27.0.42

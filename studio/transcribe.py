@@ -1,0 +1,108 @@
+"""
+Local Whisper transcription with word-level timestamps (faster-whisper).
+
+Word timings matter beyond the transcript itself: later phases cut on them and
+animate captions word by word. Runs on the eGPU when an NVIDIA card is attached
+(CUDA) and on the CPU otherwise. The model stays loaded between clips; if the
+GPU disappears mid-run (eGPU unplugged), the next attempt reloads on the CPU.
+"""
+import logging
+import os
+import sys
+from pathlib import Path
+
+from settings import WHISPER_DEVICE, WHISPER_LANGUAGE, WHISPER_MODEL
+
+log = logging.getLogger("studio.transcribe")
+
+_model = None
+_device = None
+_gpu_load_failed = False
+
+
+def _add_cuda_dll_dirs() -> None:
+    """On Windows, the CUDA libraries come from pip wheels (nvidia-cublas-cu12,
+    nvidia-cudnn-cu12) whose DLLs sit in site-packages/nvidia/<lib>/bin — not on
+    the DLL search path. Add them so CTranslate2 can find cuBLAS and cuDNN."""
+    if os.name != "nt":
+        return
+    for base in map(Path, sys.path):
+        nvidia = base / "nvidia"
+        if not nvidia.is_dir():
+            continue
+        for bin_dir in nvidia.glob("*/bin"):
+            os.add_dll_directory(str(bin_dir))
+            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+
+
+def gpu_count() -> int:
+    _add_cuda_dll_dirs()
+    import ctranslate2
+    try:
+        return ctranslate2.get_cuda_device_count()
+    except Exception:
+        return 0
+
+
+def _load(force_cpu: bool = False):
+    global _model, _device, _gpu_load_failed
+    from faster_whisper import WhisperModel
+
+    use_gpu = not force_cpu and WHISPER_DEVICE != "cpu" and gpu_count() > 0
+    if WHISPER_DEVICE == "cuda" and not use_gpu and not force_cpu:
+        log.warning("WHISPER_DEVICE=cuda but no CUDA device found; using the CPU")
+    if use_gpu:
+        try:
+            name = WHISPER_MODEL or "large-v3-turbo"
+            _model, _device = WhisperModel(name, device="cuda", compute_type="float16"), "cuda"
+            log.info("Whisper %s loaded on the GPU", name)
+            return
+        except Exception as e:  # missing cuDNN/cuBLAS, out of VRAM, eGPU gone
+            _gpu_load_failed = True
+            log.warning("GPU load failed (%s); falling back to the CPU", e)
+    name = WHISPER_MODEL or "small"
+    _model, _device = WhisperModel(name, device="cpu", compute_type="int8"), "cpu"
+    log.info("Whisper %s loaded on the CPU", name)
+
+
+def device() -> str | None:
+    return _device
+
+
+def _transcribe_once(wav_path: Path) -> dict:
+    segments, info = _model.transcribe(
+        str(wav_path),
+        language=WHISPER_LANGUAGE,
+        word_timestamps=True,
+        vad_filter=True,  # skips silence, which also stops Whisper inventing words in it
+    )
+    out_segments, words = [], []
+    for seg in segments:  # a generator: decoding happens while iterating
+        out_segments.append({"start": round(seg.start, 2), "end": round(seg.end, 2), "text": seg.text.strip()})
+        for w in seg.words or []:
+            words.append({"start": round(w.start, 2), "end": round(w.end, 2), "word": w.word.strip()})
+    return {
+        "language": info.language,
+        "language_probability": round(info.language_probability, 3),
+        "device": _device,
+        "text": " ".join(s["text"] for s in out_segments).strip(),
+        "segments": out_segments,
+        "words": words,
+    }
+
+
+def transcribe(wav_path: Path) -> dict:
+    # Reload when there's no model yet, or when we're on the CPU only because the
+    # eGPU was unplugged and it is back now. A GPU that failed to load (missing
+    # CUDA libraries) is not retried every clip — restart the worker after fixing.
+    if _model is None or (_device == "cpu" and not _gpu_load_failed
+                          and WHISPER_DEVICE != "cpu" and gpu_count() > 0):
+        _load()
+    try:
+        return _transcribe_once(wav_path)
+    except Exception as e:
+        if _device != "cuda":
+            raise
+        log.warning("GPU transcription failed (%s); retrying on the CPU", e)
+        _load(force_cpu=True)
+        return _transcribe_once(wav_path)
