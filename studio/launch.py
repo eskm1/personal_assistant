@@ -26,7 +26,7 @@ URL = f"http://127.0.0.1:{settings.DASHBOARD_PORT}/"
 
 def dashboard_up() -> bool:
     try:
-        urllib.request.urlopen(URL, timeout=2)
+        urllib.request.urlopen(URL + "healthz", timeout=2)
         return True
     except urllib.error.HTTPError as e:
         return e.code == 401  # up, just password-protected

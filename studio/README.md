@@ -153,13 +153,14 @@ It's laid out like Reels: a grid of tiles you can filter by account, with tabs f
 
 | Tab | What's in it |
 | --- | --- |
+| Plan | Projects, content arcs, storyboards and shot lists, planned before filming (section 12) |
 | To review | Edited drafts waiting for you |
 | Ideas | Posts Claude planned from your library, waiting for Make this or Dismiss |
 | Being edited | Drafts in progress, including ones you sent back |
-| Library | Raw clips, tagged by Claude |
+| Library | Raw clips, tagged by Claude, each with a quality verdict (section 13) |
 | Ingesting | Clips being processed, or that failed and will be retried |
 | In the cloud | Uploads still in the OneDrive inbox |
-| Done | Approved, posted and rejected edits |
+| Done | Approved, posted and rejected edits (**Back to review** undoes an approve or reject) |
 
 Open a tile to watch it. Pause on a moment, type a note, and it's pinned to that time. Tick
 **Remember for future edits** and the note is also added to `Studio\playbook.md`, the rules
@@ -180,22 +181,14 @@ cents for a few dozen clips.
 Nate Herk's Edit Kit, and notes you mark **Remember for future edits** are added at the
 bottom. Ideas and the editor both follow it; edit it freely.
 
-The editor isn't built yet (phase 5), so ideas you make wait in Being edited and **To review**
-stays empty for now. To try the full review flow with sample videos, run
-`.\venv\Scripts\python demo.py`, which uses a separate throwaway folder, and open the
-address it prints.
+To try it with sample videos, run `.\venv\Scripts\python demo.py`, which uses a separate
+throwaway folder, and open the address it prints (sign in as `demo@studio.local` /
+`demo-password`).
 
-**From your phone or desktop when you're out:** install [Tailscale](https://tailscale.com) on
-the laptop and on your phone or desktop, signed in to the same account. Then set in `.env`:
-
-```
-STUDIO_DASHBOARD_HOST=0.0.0.0
-STUDIO_DASHBOARD_PASSWORD=pick-a-long-password
-STUDIO_DASHBOARD_URL=http://<laptop's Tailscale name>:8765
-```
-
-Restart the worker and open that address; any username works, with that password. The
-dashboard won't listen beyond the laptop without a password.
+**Signing in.** Everyone signs in, you included. The first time you open the dashboard on the
+laptop it asks you to make your owner account (this page only works on the laptop itself). Your
+browser stays signed in for 30 days. To reach it from your phone and let the team in, see
+section 11.
 
 Telegram is just for notifications: one summary per batch of uploads or edits, with a link
 to the right dashboard tab (set `STUDIO_DASHBOARD_URL` so the link works from your phone).
@@ -282,6 +275,107 @@ The folder, `Studio\Renders\production_<id>_v<n>_resolve`, holds:
 In Resolve: **File > Import > Timeline...**, pick `timeline.fcpxml`, keep "Automatically
 import source clips into media pool" ticked, press OK. Export from the **Deliver** page at
 1080x1920.
+
+## 11. Team logins and studio.theurbanmakers.com
+
+The dashboard stays on the laptop. A **Cloudflare Tunnel** gives it the address
+`https://studio.theurbanmakers.com`: the laptop makes an outgoing connection to Cloudflare, so no
+router ports are opened and nobody can reach the laptop directly. Everyone signs in with their own
+account.
+
+**Who can do what**
+
+| | Bryan (owner) | Team |
+| --- | --- | --- |
+| Plan: projects, arcs, ideas, storyboards, organise or refine with Claude, music shortlists, votes, comments, tick shots, attach footage | yes | yes |
+| Mark ideas **Go** / **Park** / **Dismiss** | yes | sees your call |
+| **Make this** (sends to the editor; costs an edit), Suggest posts | yes | no |
+| Request changes, Approve, Reject, Back to review, Retry edit, Resolve export | yes | no (they can leave notes) |
+| Notes on clips and drafts, fix tags, edit captions | yes | yes |
+| API costs, invites, removing people | yes | no |
+
+**1. Your account.** Open http://127.0.0.1:8765 on the laptop and make the owner account (or
+`.\venv\Scripts\python worker.py --add-user you@theurbanmakers.com "Bryan" --owner`).
+
+**2. The tunnel (one time, about 15 minutes).** This needs `theurbanmakers.com` to use Cloudflare
+for its DNS. If it doesn't yet, adding the site to a free Cloudflare account moves the DNS there:
+Cloudflare copies the existing records, but **check the website and email (MX) records it imports
+before switching the nameservers**, or ask whoever manages the domain.
+
+1. On the laptop: `winget install --id Cloudflare.cloudflared`
+2. In the Cloudflare dashboard: **Zero Trust > Networks > Tunnels > Create a tunnel**, type
+   *Cloudflared*, name it `studio`. Choose Windows; it shows a command like
+   `cloudflared.exe service install <long token>`. Run that in an **administrator** PowerShell.
+   The tunnel now runs as a Windows service and starts with the laptop.
+3. Add the route (called **Published application** or **Public hostname** depending on the
+   dashboard version): subdomain `studio`, domain `theurbanmakers.com`, service
+   **HTTP** `localhost:8765`. Cloudflare creates the DNS record.
+4. In `.env` set `STUDIO_DASHBOARD_URL=https://studio.theurbanmakers.com` (invite links and
+   Telegram links use it) and restart the worker. Leave `STUDIO_DASHBOARD_HOST` at `127.0.0.1`.
+5. Open https://studio.theurbanmakers.com on your phone and sign in.
+
+Optional extra lock: **Zero Trust > Access > Applications** can put Cloudflare's own email check
+in front of the site (free for up to 50 people), so only `@theurbanmakers.com` addresses even
+reach the sign-in page. It means signing in twice, so it's up to you.
+
+**3. Invite the team.** Account menu (top right) > **Team** > **Invite someone**. Send the link
+(WhatsApp is fine); it works once and expires after 7 days. Each person picks their own password.
+Remove someone there and they're signed out everywhere at once.
+
+The laptop has to be on and awake for anyone to reach Studio (section 1). If the team outgrows
+that, the planning board is the part to move to a server first.
+
+## 12. Planning: projects, arcs and shot lists
+
+The **Plan** tab is where the team plans content before going on site.
+
+- **Project**: a job, say *Kensington*, with a short brief (who the client is, what's being done,
+  what to show). Making one also makes an inbox subfolder, `Studio Inbox\Kensington`. Uploads
+  dropped there are filed to the project, and matched against its shots first.
+- **Throw ideas in.** Type or paste ideas, one per line or as a messy brain-dump. **Add as ideas**
+  just files them under Unsorted. **Organise with Claude** (a few cents) groups them into
+  **arcs** (content series such as *Waterproofing* or *The client's story*) and gives every idea:
+  a hook, who it's for, a call to action, a draft caption, a music direction, and a **storyboard**,
+  one frame per shot to film, with framing, what's said and any on-screen text. It follows the
+  playbook, so the structure and B-roll it plans are what the editor needs.
+- **Decide.** The team votes 👍/👎 and comments. Refine any idea with Claude ("make the hook
+  punchier", "add a before/after"). Filmed shots are kept. **Shortlist music** finds a few Epidemic
+  Sound tracks to play and pick (Urban Makers), or writes the brief for Instagram's music (personal).
+  You mark each idea **Go** or **Park**.
+- **On site**: open the **On-site checklist** on a phone and tick shots as you film them. Go ideas
+  come first.
+- **Footage comes back**: each new clip is matched to the shots it films, as a "take", with its
+  quality verdict. A shot shows *Needed*, *Filmed* (ticked, upload pending), *Got it* or *Retake*.
+  Anyone can attach or remove footage by hand.
+- **Make this**: when the shots have footage, you send the idea to the editor. It cuts from the
+  takes in storyboard order, uses the on-screen text and the call to action, and uses the music
+  track the team picked.
+
+Ideas Claude suggests from existing footage (Ideas tab) can be moved onto a project with **Add to
+plan**: their footage becomes shots that are already filmed, and the shots the editor wished it
+had become shots to film.
+
+## 13. Quality checks
+
+Every clip gets a verdict as it's ingested: **Good**, **Check** (usable, with issues) or
+**Retake**, with what's wrong and a tip for next time. It shows on the Library tile and in the
+clip's panel; Telegram summaries count the retakes.
+
+- Measured, no API cost: voice level, background noise between words, distortion, Whisper's
+  confidence in the speech; exposure (too dark, blown windows, hazy); resolution, frame rate,
+  orientation, HDR, length.
+- Judged by Claude while tagging: focus, stability, framing and light on the subject.
+
+Clips ingested before this existed: `.\venv\Scripts\python worker.py --check-quality`
+(add `--all` to redo every clip). That rerun only measures; the focus/stability/framing checks
+come with the next tagging (`--retry-failed` doesn't retag finished clips).
+
+**Mixing cameras** (iPhone, Z fc, GoPro): give each a job: iPhone for talking and anything
+vertical, Z fc for detail B-roll in 4K (subject centred, so the vertical crop works), GoPro for
+POV and hands-on, never for talking. Match settings on all of them: 4K 30 fps, 60 fps only for
+slow-motion; Z fc shutter 1/50 or 1/100 and GoPro anti-flicker 50 Hz under site lights; HDR off on
+the iPhone; fixed white balance; neutral colour (Z fc *Standard*/*Neutral*, GoPro *Natural*), no
+log; one wireless mic for speech.
 
 ## Day to day
 

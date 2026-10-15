@@ -8,8 +8,16 @@ The studio catalogue (SQLite), shared by the worker, the dashboard and the edito
   status 'ready'; Bryan reviews it on the dashboard.
 - feedback: Bryan's notes on a clip or a production version, optionally pinned
   to a moment in the video.
-- ideas: post ideas Claude proposes from the library (ideas.py). Approving one
-  creates a 'planned' production whose plan (segments, hook, beats) the editor follows.
+- ideas: post ideas. Either Claude proposes them from the library (ideas.py,
+  origin 'library'), or the team plans them before filming (plan.py, origin
+  'plan', inside a project and an arc). Making one creates a 'planned'
+  production whose plan (segments, hook, beats) the editor follows.
+- projects / arcs / shots / takes: the planning board. A project (say a client
+  job) holds content arcs (series), each holding planned ideas; each idea's
+  storyboard is a list of shots to film. Footage that lands in the library is
+  matched to shots as takes, so the board shows what's filmed and what's missing.
+- users / invites / votes: team logins, invite links, and the team's vote on
+  planned ideas. Bryan (owner) has the final say; the team plans and comments.
 
 The review contract between the dashboard and the editor:
   ready --(request changes)--> revising --(editor re-renders, version + 1,
@@ -100,11 +108,97 @@ CREATE TABLE IF NOT EXISTS ideas (
     production_id INTEGER,
     created_at    TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS projects (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,
+    brand       TEXT,                      -- the account most of it is for
+    folder      TEXT,                      -- inbox subfolder whose uploads belong to it
+    brief       TEXT,                      -- what the job is, who it's for, what to show
+    status      TEXT NOT NULL DEFAULT 'active', -- active | archived
+    created_by  INTEGER,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS arcs (
+    id          INTEGER PRIMARY KEY,
+    project_id  INTEGER NOT NULL,
+    title       TEXT NOT NULL,
+    purpose     TEXT,
+    position    REAL NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS shots (            -- one storyboard frame = one shot to film
+    id          INTEGER PRIMARY KEY,
+    idea_id     INTEGER NOT NULL,
+    position    REAL NOT NULL DEFAULT 0,
+    kind        TEXT,                      -- talking | broll | detail | before_after | reaction | screen
+    framing     TEXT,                      -- wide | medium | close | detail | pov | overhead
+    description TEXT NOT NULL,             -- what the camera sees
+    line        TEXT,                      -- what's said over it, if anything
+    on_screen   TEXT,                      -- text on screen, if any
+    seconds     REAL,
+    why         TEXT,
+    filmed_at   TEXT,                      -- ticked off on site
+    filmed_by   INTEGER,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS shots_idea ON shots (idea_id, position);
+
+CREATE TABLE IF NOT EXISTS takes (            -- footage that fulfils a shot
+    id          INTEGER PRIMARY KEY,
+    shot_id     INTEGER NOT NULL,
+    clip_id     INTEGER NOT NULL,
+    start       REAL,
+    end         REAL,
+    source      TEXT NOT NULL,             -- auto (matched on ingest) | manual
+    note        TEXT,
+    created_at  TEXT NOT NULL,
+    UNIQUE (shot_id, clip_id)
+);
+CREATE INDEX IF NOT EXISTS takes_clip ON takes (clip_id);
+
+CREATE TABLE IF NOT EXISTS users (
+    id              INTEGER PRIMARY KEY,
+    email           TEXT UNIQUE NOT NULL,
+    name            TEXT NOT NULL,
+    role            TEXT NOT NULL,         -- owner | team
+    password_hash   TEXT NOT NULL,
+    session_version INTEGER NOT NULL DEFAULT 1, -- bumped to sign a user out everywhere
+    disabled        INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL,
+    last_login_at   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS invites (
+    id          INTEGER PRIMARY KEY,
+    token_hash  TEXT UNIQUE NOT NULL,
+    role        TEXT NOT NULL,
+    note        TEXT,
+    created_by  INTEGER,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    used_by     INTEGER,
+    used_at     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS votes (
+    idea_id     INTEGER NOT NULL,
+    user_id     INTEGER NOT NULL,
+    vote        INTEGER NOT NULL,          -- 1 = pursue, -1 = skip
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (idea_id, user_id)
+);
 """
 
 # Columns added after the first release, applied to existing databases on connect.
 _ADDED_COLUMNS = {
-    "clips": {"reviewed_at": "TEXT"},
+    "clips": {
+        "reviewed_at": "TEXT",
+        "quality": "TEXT",      # JSON: quality.assess() — verdict, flags with tips, measurements
+        "project_id": "INTEGER",
+    },
     "productions": {
         "plan": "TEXT",   # JSON: the approved idea the editor follows
         "edl": "TEXT",    # JSON: the latest draft's cut list, hook text and music brief
@@ -112,7 +206,21 @@ _ADDED_COLUMNS = {
         "music": "TEXT",  # JSON: the Epidemic track used, or the note for Instagram music
         "error": "TEXT",  # why the last edit failed, if it did
     },
-    "ideas": {"wishlist": "TEXT"},  # JSON: shots Bryan could film to make the idea stronger
+    "ideas": {
+        "wishlist": "TEXT",     # JSON: shots Bryan could film to make the idea stronger
+        "origin": "TEXT",       # library (from footage) | plan (planned before filming)
+        "project_id": "INTEGER",
+        "arc_id": "INTEGER",
+        "purpose": "TEXT",
+        "cta": "TEXT",
+        "music_plan": "TEXT",   # JSON: {mood, tempo_bpm, search, note, shortlist: [...], chosen}
+        "decision": "TEXT",     # proposed | go | parked (Bryan's call on a planned idea)
+        "position": "REAL",
+        "created_by": "INTEGER",
+        "updated_at": "TEXT",
+    },
+    "feedback": {"author": "TEXT"},
+    "shots": {"camera": "TEXT"},  # iphone | zfc | gopro | any: which of the team's cameras films it
 }
 
 
@@ -179,6 +287,11 @@ def save_tags(conn: sqlite3.Connection, clip_id: int, meta: dict, transcript: di
     conn.commit()
 
 
+def save_quality(conn: sqlite3.Connection, clip_id: int, quality: dict) -> None:
+    conn.execute("UPDATE clips SET quality = ? WHERE id = ?", (json.dumps(quality), clip_id))
+    conn.commit()
+
+
 def mark_failed(conn: sqlite3.Connection, clip_id: int, error: str) -> None:
     conn.execute("UPDATE clips SET status = 'failed', error = ? WHERE id = ?", (error[:2000], clip_id))
     conn.commit()
@@ -195,15 +308,15 @@ def unfinished(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 # ── Review (dashboard) ────────────────────────────────────────────────────────
 
 def add_feedback(conn: sqlite3.Connection, target: str, target_id: int, body: str,
-                 at_seconds: float | None = None, remember: bool = False) -> int:
+                 at_seconds: float | None = None, remember: bool = False, author: str | None = None) -> int:
     version = 0
     if target == "production":
         row = conn.execute("SELECT version FROM productions WHERE id = ?", (target_id,)).fetchone()
         version = row["version"] if row else 0
     cur = conn.execute(
-        """INSERT INTO feedback (target, target_id, version, at_seconds, body, remember, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (target, target_id, version, at_seconds, body, int(remember), now()),
+        """INSERT INTO feedback (target, target_id, version, at_seconds, body, remember, author, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (target, target_id, version, at_seconds, body, int(remember), author, now()),
     )
     conn.commit()
     return cur.lastrowid
@@ -258,13 +371,16 @@ def make_production(conn: sqlite3.Connection, idea_id: int, caption: str | None 
     segments = json.loads(idea["segments"] or "[]")
     plan = {k: idea[k] for k in ("title", "brand", "format", "hook", "angle", "est_seconds")}
     plan.update(beats=json.loads(idea["beats"] or "[]"), segments=segments, idea_id=idea_id,
-                wishlist=json.loads(idea["wishlist"] or "[]"))
+                wishlist=json.loads(idea["wishlist"] or "[]"), cta=idea["cta"] or "",
+                music_plan=json.loads(idea["music_plan"] or "{}"))
+    if not plan["angle"] and idea["purpose"]:
+        plan["angle"] = idea["purpose"]
     clip_ids = list(dict.fromkeys(seg["clip_id"] for seg in segments))
     stamp = now()
     cur = conn.execute(
         """INSERT INTO productions (title, brand, format, status, version, idea, source_clips, caption,
                plan, created_at, updated_at) VALUES (?, ?, ?, 'planned', 0, ?, ?, ?, ?, ?, ?)""",
-        (idea["title"], idea["brand"], idea["format"], f"{idea['hook']}\n\n{idea['angle']}",
+        (idea["title"], idea["brand"], idea["format"], f"{idea['hook']}\n\n{idea['angle'] or idea['purpose'] or ''}",
          json.dumps(clip_ids), caption if caption is not None else idea["caption"], json.dumps(plan),
          stamp, stamp),
     )

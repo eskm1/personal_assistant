@@ -7,7 +7,8 @@ Watches the inbox folder the phone uploads into. For each new video:
   3. extracts audio and frames with ffmpeg
   4. transcribes locally with Whisper (word timestamps; eGPU when attached)
   5. has Claude tag brand, format, topics and best moments
-  6. saves everything to the SQLite catalogue and pings Bryan on Telegram
+  6. quality-checks it (quality.py), matches it to planned shots (plan.py),
+     saves everything to the SQLite catalogue and pings Bryan on Telegram
 It also serves the review dashboard (dashboard.py) and runs the editor queue
 (editor.py: planned and sent-back productions become drafts) while it runs.
 
@@ -20,6 +21,9 @@ Usage (from the studio folder, inside its venv):
   python worker.py --rebuild-previews  remake missing dashboard previews (also done at start)
   python worker.py --edit 12       edit production 12 now (normally the editor queue does this)
   python worker.py --trial "talking head"  ideas -> one edited draft, with footage advice and costs
+  python worker.py --resolve 12     make a DaVinci Resolve project of production 12's draft
+  python worker.py --check-quality  quality-check clips from before the check existed (--all: every clip)
+  python worker.py --add-user a@b.com "Name" [--owner]  make a dashboard account
   add --no-claude to transcribe and catalogue without tagging (no API calls)
   add --no-dashboard to skip the review site (http://127.0.0.1:8765 by default)
 """
@@ -94,14 +98,24 @@ def is_ready(path: Path) -> bool:
         return False
 
 
-def inbox_videos() -> list[Path]:
+def inbox_files() -> list[Path]:
+    """Videos in the inbox and one level of subfolders (one per project), synced or not."""
     if not INBOX.exists():
         return []
-    return sorted(
-        p for p in INBOX.iterdir()
-        if p.is_file() and p.suffix.lower() in VIDEO_EXTS and not p.name.startswith((".", "~"))
-        and is_ready(p)
-    )
+    found = []
+    for p in INBOX.iterdir():
+        if p.is_dir() and not p.name.startswith((".", "~")):
+            try:
+                found += [q for q in p.iterdir() if q.is_file()]
+            except OSError:
+                continue
+        elif p.is_file():
+            found.append(p)
+    return [p for p in found if p.suffix.lower() in VIDEO_EXTS and not p.name.startswith((".", "~"))]
+
+
+def inbox_videos() -> list[Path]:
+    return sorted((p for p in inbox_files() if is_ready(p)), key=lambda p: (p.parent.name, p.name))
 
 
 def fingerprint(path: Path) -> str:
@@ -152,6 +166,8 @@ def tag_clip(conn, clip_id: int, clip_dir: Path, video: Path, source_name: str,
     import catalog
     import extract
     import notify
+    import plan
+    import quality
     import transcribe
 
     meta = extract.probe(video)
@@ -161,10 +177,11 @@ def tag_clip(conn, clip_id: int, clip_dir: Path, video: Path, source_name: str,
     except RuntimeError as e:  # the dashboard falls back to the original
         log.warning("No preview for %s: %s", source_name, e)
 
-    transcript = None
+    transcript, samples = None, None
     if meta["has_audio"]:
         wav = extract.extract_audio(video, clip_dir / "audio.wav")
         try:
+            samples = transcribe._load_wav(wav)
             transcript = transcribe.transcribe(wav)
         finally:
             wav.unlink(missing_ok=True)  # big and easy to regenerate
@@ -173,15 +190,28 @@ def tag_clip(conn, clip_id: int, clip_dir: Path, video: Path, source_name: str,
         log.info("Transcribed %s on %s: %d words", source_name, transcript["device"],
                  len(transcript["words"]))
 
+    project_id = conn.execute("SELECT project_id FROM clips WHERE id = ?", (clip_id,)).fetchone()[0]
     analysis = None
     if use_claude:
         import classify
-        analysis = classify.classify(meta, frames, transcript, source_name, ref=f"clip:{clip_id}")
+        shots_text, shot_ids = plan.open_shots_text(conn, project_id)
+        analysis = classify.classify(meta, frames, transcript, source_name, ref=f"clip:{clip_id}",
+                                     shot_list=shots_text)
         (clip_dir / "analysis.json").write_text(json.dumps(analysis, indent=2, ensure_ascii=False),
                                                 encoding="utf-8")
 
     catalog.save_tags(conn, clip_id, meta, transcript, analysis)
+    report = quality.check_clip(video, meta, transcript, samples, (analysis or {}).get("checks"))
+    catalog.save_quality(conn, clip_id, report)
+    if analysis:
+        matched = plan.save_matches(conn, clip_id, analysis.get("shot_matches", []), shot_ids, meta["duration"])
+        if matched:
+            notify.digest.add("matched", matched)
+    log.info("Quality of %s: %s%s", source_name, report["verdict"],
+             "".join(f"; {f['text']}" for f in report["flags"]))
     notify.digest.add("processed")
+    if report["verdict"] == "retake":
+        notify.digest.add("retake")
 
 
 def ingest(conn, path: Path, use_claude: bool) -> None:
@@ -211,6 +241,13 @@ def ingest(conn, path: Path, use_claude: bool) -> None:
     video = clip_dir / path.name
     shutil.move(str(path), str(video))  # copy + delete when the inbox is on another drive
     clip_id = catalog.start(conn, fp, source_name, clip_dir, video)
+    # Uploads in an inbox subfolder named after a project (Studio Inbox\Kensington\...) belong to it.
+    if path.parent != INBOX:
+        import plan
+        project_id = plan.project_for_folder(conn, path.parent.name)
+        if project_id:
+            conn.execute("UPDATE clips SET project_id = ? WHERE id = ?", (project_id, clip_id))
+            conn.commit()
     log.info("Ingesting %s -> %s", source_name, clip_dir)
 
     try:
@@ -235,6 +272,25 @@ def retry_failed(conn, use_claude: bool) -> None:
         except Exception as e:
             log.exception("Retry failed on %s", row["source_name"])
             catalog.mark_failed(conn, row["id"], f"{type(e).__name__}: {e}")
+
+
+def check_quality(conn, everything: bool = False) -> None:
+    """Quality-check library clips (those from before the check existed, or all)."""
+    import catalog
+    import quality
+    rows = conn.execute("SELECT * FROM clips WHERE status IN ('tagged', 'transcribed')"
+                        + ("" if everything else " AND quality IS NULL") + " ORDER BY id").fetchall()
+    for i, row in enumerate(rows, 1):
+        if not Path(row["video_path"]).exists():
+            continue
+        try:
+            report = quality.recheck(row)
+        except Exception as e:
+            log.warning("Quality check failed for %s: %s", row["source_name"], e)
+            continue
+        catalog.save_quality(conn, row["id"], report)
+        print(f"{i}/{len(rows)} {row['title'] or row['source_name']}: {report['verdict'].upper()}"
+              + "".join(f"\n     - {f['text']}" for f in report["flags"]), flush=True)
 
 
 def rebuild_previews(conn) -> None:
@@ -419,6 +475,12 @@ def main() -> int:
     mode.add_argument("--rebuild-previews", action="store_true", help="remake missing dashboard previews")
     mode.add_argument("--edit", type=int, metavar="ID", help="edit one production now (by its id)")
     mode.add_argument("--resolve", type=int, metavar="ID", help="make a DaVinci Resolve project of a draft")
+    mode.add_argument("--check-quality", action="store_true",
+                      help="quality-check clips that haven't been (no API cost); add --all to redo every clip")
+    parser.add_argument("--all", action="store_true", help="with --check-quality: recheck every clip")
+    mode.add_argument("--add-user", nargs=2, metavar=("EMAIL", "NAME"),
+                      help="make a dashboard account (asks for the password); add --owner for Bryan")
+    parser.add_argument("--owner", action="store_true", help="with --add-user: an owner account")
     mode.add_argument("--trial", metavar="FOCUS", help="ideas -> one edited draft, with advice and costs")
     parser.add_argument("--no-claude", action="store_true", help="skip Claude tagging")
     parser.add_argument("--no-dashboard", action="store_true", help="don't serve the review dashboard")
@@ -451,6 +513,21 @@ def main() -> int:
         return 0
     if args.trial:
         return trial(conn, args.trial)
+    if args.check_quality:
+        check_quality(conn, args.all)
+        return 0
+    if args.add_user:
+        import getpass
+        import auth
+        password = getpass.getpass("Password (10+ characters): ")
+        try:
+            auth.create_user(conn, args.add_user[0], args.add_user[1], password,
+                             auth.OWNER if args.owner else auth.TEAM)
+        except ValueError as e:
+            print(f"Not created: {e}")
+            return 1
+        print(f"Account made for {args.add_user[1]} ({'owner' if args.owner else 'team'}).")
+        return 0
     if args.resolve:
         import resolve_export
         folder = resolve_export.build(conn, args.resolve)

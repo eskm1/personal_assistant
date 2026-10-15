@@ -35,6 +35,31 @@ SCHEMA = {
         "usable": {"type": "boolean"},
         "quality_notes": {"type": "string"},
         "suggested_hook": {"type": "string"},
+        "checks": {
+            "type": "object",
+            "properties": {name: {
+                "type": "object",
+                "properties": {"rating": {"type": "string", "enum": ["good", "fix", "retake"]},
+                               "note": {"type": "string"}},
+                "required": ["rating", "note"], "additionalProperties": False,
+            } for name in ("focus", "stability", "framing", "lighting")},
+            "required": ["focus", "stability", "framing", "lighting"],
+            "additionalProperties": False,
+        },
+        "shot_matches": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "shot_id": {"type": "integer"},
+                    "start": {"type": "number"},
+                    "end": {"type": "number"},
+                    "note": {"type": "string"},
+                },
+                "required": ["shot_id", "start", "end", "note"],
+                "additionalProperties": False,
+            },
+        },
         "moments": {
             "type": "array",
             "items": {
@@ -51,7 +76,7 @@ SCHEMA = {
         },
     },
     "required": ["brand", "brand_reason", "format", "title", "summary", "topics", "setting",
-                 "usable", "quality_notes", "suggested_hook", "moments"],
+                 "usable", "quality_notes", "checks", "shot_matches", "suggested_hook", "moments"],
     "additionalProperties": False,
 }
 
@@ -75,6 +100,13 @@ Field guidance:
 - usable: false only if the clip is unusable (accidental recording, black screen, \
 unwatchable shake, inaudible speech that matters).
 - quality_notes: lighting, audio, stability, framing — one line; "fine" if nothing stands out.
+- checks: rate focus, stability, framing (vertical-friendly, subject and action in view) and \
+lighting on the subject. "good" when fine for a Reel; "fix" when usable but noticeably off; \
+"retake" only when it should be filmed again. note: what's wrong, in a few words ("" when good). \
+Audio and exposure are measured separately; don't guess at them.
+- shot_matches: if the clip films any shot on the shot list below, the shot id and the \
+start/end seconds in this clip where it does. Only clear matches: the clip must actually show \
+(or say) what the shot asks for. Empty when there's no shot list or nothing matches.
 - suggested_hook: the strongest opening line or visual for a Reel, quoted from the \
 transcript when possible.
 - moments: up to 6 segments worth cutting to, with start/end in seconds within the \
@@ -99,7 +131,7 @@ def _transcript_text(transcript: dict | None) -> str:
 
 
 def build_content(meta: dict, frames: list[tuple[float, Path]], transcript: dict | None,
-                  source_name: str) -> list[dict]:
+                  source_name: str, shot_list: str = "") -> list[dict]:
     content: list[dict] = [{
         "type": "text",
         "text": (f"Clip: {source_name}\nDuration: {meta['duration']:.1f}s, {meta['orientation']} "
@@ -110,11 +142,14 @@ def build_content(meta: dict, frames: list[tuple[float, Path]], transcript: dict
         content.append({"type": "text", "text": f"Frame at {t:.1f}s"})
         content.append(_image_block(jpg))
     content.append({"type": "text", "text": "Transcript:\n" + _transcript_text(transcript)})
+    content.append({"type": "text", "text": "Shot list (shots still needed for planned posts):\n"
+                    + (shot_list or "(none)")})
     return content
 
 
 def classify(meta: dict, frames: list[tuple[float, Path]], transcript: dict | None,
-             source_name: str, client: anthropic.Anthropic | None = None, ref: str = "") -> dict:
+             source_name: str, client: anthropic.Anthropic | None = None, ref: str = "",
+             shot_list: str = "") -> dict:
     client = client or anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or None)
     response = client.beta.messages.create(
         model=CLAUDE_MODEL,
@@ -128,7 +163,7 @@ def classify(meta: dict, frames: list[tuple[float, Path]], transcript: dict | No
             "format": {"type": "json_schema", "schema": SCHEMA},
         },
         system=_SYSTEM.replace("{brands}", _brands_text()),  # not .format: brands.md may hold braces
-        messages=[{"role": "user", "content": build_content(meta, frames, transcript, source_name)}],
+        messages=[{"role": "user", "content": build_content(meta, frames, transcript, source_name, shot_list)}],
     )
     import usage
     usage.record("tag", ref, response)

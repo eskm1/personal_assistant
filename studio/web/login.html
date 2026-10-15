@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Studio sign-in</title>
+  <link rel="icon" href="/static/studio.ico">
+  <style>
+    :root { --bg: #0b0b0d; --surface: #16161a; --line: #2c2c34; --text: #f2f2f5; --muted: #9a9aa6; --accent: #ff4d6d; --bad: #ff5c5c;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text); padding: 16px; }
+    main { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 28px 24px; }
+    h1 { margin: 0 0 4px; font-size: 22px; } p { color: var(--muted); line-height: 1.5; margin: 0 0 18px; }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+    input { width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; }
+    input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+    button { width: 100%; margin-top: 20px; font: inherit; font-weight: 700; color: #fff; background: var(--accent); border: 0; border-radius: 10px; padding: 12px; cursor: pointer; }
+    .error { color: var(--bad); background: rgba(255, 92, 92, .08); border: 1px solid rgba(255, 92, 92, .3); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+<main>
+  {% if mode == "login" %}
+    <h1>Studio</h1><p>Sign in to plan, review and comment.</p>
+  {% elif mode == "setup" %}
+    <h1>Welcome to Studio</h1><p>Make the owner account. You'll use it to sign in here and from your phone, and to invite your team.</p>
+  {% elif mode == "invite" %}
+    <h1>Join Studio</h1><p>You've been invited to plan content with the Urban Makers team. Make your account.</p>
+  {% elif mode == "expired" %}
+    <h1>Invite link expired</h1><p>This link was already used or is more than a week old. Ask Bryan for a new one.</p>
+  {% else %}
+    <h1>Set up on the laptop</h1><p>The first account can only be made on the Studio laptop itself: open http://127.0.0.1:8765 there.</p>
+  {% endif %}
+
+  {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+
+  {% if mode in ("login", "setup", "invite") %}
+  <form method="post" action="{{ '/login' if mode == 'login' else ('/setup' if mode == 'setup' else '/invite/' ~ token) }}">
+    {% if mode != "login" %}
+      <label for="name">Your name</label>
+      <input id="name" name="name" autocomplete="name" required maxlength="80" value="{{ request.form.get('name', '') }}">
+    {% endif %}
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="email" required value="{{ request.form.get('email', '') }}">
+    <label for="password">Password{% if mode != "login" %} (10+ characters){% endif %}</label>
+    <input id="password" name="password" type="password" required
+           autocomplete="{{ 'current-password' if mode == 'login' else 'new-password' }}" {% if mode != "login" %}minlength="10"{% endif %}>
+    {% if mode == "login" %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+    <button type="submit">{{ "Sign in" if mode == "login" else "Create account" }}</button>
+  </form>
+  {% endif %}
+</main>
+</body>
+</html>

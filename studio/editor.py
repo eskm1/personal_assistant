@@ -200,7 +200,14 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None) -> di
                   "telling Bryan what to pick, so keep the edit working without music.")
     user = (f"Post: {plan.get('title')} ({production['brand']}, {plan.get('format')}, about "
             f"{plan.get('est_seconds') or 30:.0f}s)\nHook: {plan.get('hook')}\nWhy it works: {plan.get('angle')}\n"
-            "Structure: " + " → ".join(plan.get("beats", [])) + "\n\nFootage:\n\n"
+            "Structure: " + " → ".join(plan.get("beats", []))
+            + (f"\nCall to action: {plan['cta']}" if plan.get("cta") else "")
+            + ("\nStoryboard the team planned (follow its order, on-screen text and lines where the "
+               "footage allows):\n" + "\n".join(
+                   f"  {i}. {s['description']}" + (f" | says: {s['line']}" if s.get("line") else "")
+                   + (f" | on screen: {s['on_screen']}" if s.get("on_screen") else "")
+                   for i, s in enumerate(plan["storyboard"], 1)) if plan.get("storyboard") else "")
+            + "\n\nFootage:\n\n"
             + "\n\n".join(_clip_block(c, segments) for c in clips.values())
             + _revision_block(conn, production))
     client = client or anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or None)
@@ -510,11 +517,14 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
                            ACCENT.get(production["brand"], "#ff4d6d"))
 
         music_info, music_file = {"mood": edl["music"]["mood"], "tempo_bpm": edl["music"]["tempo_bpm"]}, None
+        chosen = (plan.get("music_plan") or {}).get("chosen")
         if music.allowed_for(production["brand"]) and settings.EPIDEMIC_SOUND_API_KEY:
+            brief = (f"Use exactly this track the team picked: \"{chosen['title']}\" by {chosen['artist']} "
+                     f"(recording id {chosen['recording_id']})" if chosen else
+                     f"{edl['music']['mood']}; search: {edl['music']['search']}; about {edl['music']['tempo_bpm']:.0f} BPM")
             try:
                 music_file, track = (find_track or music.find_track)(
-                    f"{edl['music']['mood']}; search: {edl['music']['search']}; about {edl['music']['tempo_bpm']:.0f} BPM",
-                    total, ROOT / "Music", ref=f"production:{production_id}")
+                    brief, total, ROOT / "Music", ref=f"production:{production_id}")
                 music_info.update(source="epidemic", title=track["title"], artist=track["artist"],
                                   recording_id=track["recording_id"], file=str(music_file))
             except Exception as e:  # a draft without music beats no draft

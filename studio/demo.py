@@ -21,7 +21,6 @@ DEMO_ROOT = Path(tempfile.gettempdir()) / "studio-demo"
 os.environ["STUDIO_ROOT"] = str(DEMO_ROOT)
 os.environ["STUDIO_INBOX"] = str(DEMO_ROOT / "Inbox")
 os.environ.setdefault("STUDIO_DASHBOARD_HOST", "127.0.0.1")
-os.environ["STUDIO_DASHBOARD_PASSWORD"] = ""
 
 import catalog  # noqa: E402
 import extract  # noqa: E402
@@ -166,6 +165,8 @@ def build() -> None:
     _video(settings.INBOX / "IMG_2401.MOV", "testsrc2", 300, seconds=3)
     os.utime(settings.INBOX / "IMG_2401.MOV", (0, 0))
     _video(settings.INBOX / "IMG_2402.MOV", "mandelbrot", 60, seconds=3)
+    import auth
+    auth.create_user(conn, "demo@studio.local", "Demo", "demo-password", auth.OWNER)
     print("Demo ready.")
 
 
@@ -177,7 +178,8 @@ def main() -> int:
         build()
     import logging
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    print(f"Open http://127.0.0.1:{settings.DASHBOARD_PORT}  (Ctrl+C to stop)")
+    print(f"Open http://127.0.0.1:{settings.DASHBOARD_PORT} and sign in as demo@studio.local / demo-password"
+          "  (Ctrl+C to stop)")
     import dashboard
     dashboard.run()
     return 0

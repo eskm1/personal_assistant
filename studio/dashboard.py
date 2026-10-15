@@ -8,9 +8,9 @@ then moves straight on to the next while the editor works in the background.
 Runs inside the worker process (worker.py starts it on a thread) or on its own:
   python dashboard.py
 
-Media is only ever served for files the catalogue points at, never by raw path.
+Everyone signs in (auth.py): Bryan as owner, colleagues by invite. Media is only
+ever served for files the catalogue points at, never by raw path.
 """
-import hmac
 import json
 import logging
 import mimetypes
@@ -20,21 +20,38 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from flask import Flask, Response, abort, g, jsonify, request, send_file
+from datetime import timedelta
 
+from flask import Flask, abort, g, jsonify, redirect, render_template_string, request, send_file, session
+from flask.sessions import SecureCookieSessionInterface
+
+import auth
 import settings
 import playbook
 import usage
-from settings import DASHBOARD_HOST, DASHBOARD_PASSWORD, DASHBOARD_PORT, INBOX, VIDEO_EXTS
+from settings import DASHBOARD_HOST, DASHBOARD_PORT, INBOX, VIDEO_EXTS
+from webutil import LOOPBACK, body, client_ip, db, is_local, is_owner, owner_only, text
 
 log = logging.getLogger("studio.dashboard")
 
 WEB = Path(__file__).resolve().parent / "web"
 app = Flask(__name__, static_folder=str(WEB), static_url_path="/static")
 
+
+class _SessionInterface(SecureCookieSessionInterface):
+    """Mark the cookie Secure when the page came over HTTPS (via the tunnel), so
+    plain http://127.0.0.1 on the laptop keeps working too."""
+    def get_cookie_secure(self, app):
+        return request.is_secure or request.headers.get("X-Forwarded-Proto") == "https"
+
+
+app.session_interface = _SessionInterface()
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
+                  SESSION_COOKIE_NAME="studio_session", PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+                  MAX_CONTENT_LENGTH=2 * 1024 * 1024)
+
 BRANDS = ("personal", "urban_makers", "unsure")
 FORMATS = ("talking_head", "day_in_the_life", "compilation", "other")
-LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
 # Where each catalogue status shows up on the board.
 CLIP_STAGE = {"processing": "ingesting", "transcribed": "ingesting", "failed": "ingesting",
@@ -46,13 +63,6 @@ PRODUCTION_STAGE = {"planned": "producing", "producing": "producing", "revising"
 
 # ── Plumbing ──────────────────────────────────────────────────────────────────
 
-def db() -> sqlite3.Connection:
-    if "db" not in g:
-        import catalog
-        g.db = catalog.connect()
-    return g.db
-
-
 @app.teardown_appcontext
 def _close_db(_exc):
     conn = g.pop("db", None)
@@ -60,15 +70,178 @@ def _close_db(_exc):
         conn.close()
 
 
+_PUBLIC = ("/login", "/setup", "/invite/", "/healthz", "/static/")
+
+
 @app.before_request
 def _auth():
-    """HTTP Basic auth (any username) whenever a password is set."""
-    if not DASHBOARD_PASSWORD:
+    """Signed-in users only, everywhere except the sign-in pages themselves."""
+    if not app.secret_key:
+        app.secret_key = auth.secret_key()
+    if request.method == "POST":
+        # Refuse cross-site form posts: a browser always sends Origin on POST.
+        origin = request.headers.get("Origin")
+        if origin and origin.split("://", 1)[-1] != request.host:
+            return jsonify({"error": "cross-site request refused"}), 403
+    if request.path.startswith(_PUBLIC):
         return None
-    given = request.authorization.password if request.authorization else ""
-    if given and hmac.compare_digest(given.encode(), DASHBOARD_PASSWORD.encode()):
+    g.user = auth.current(db(), session)
+    if g.user:
         return None
-    return Response("Password required", 401, {"WWW-Authenticate": 'Basic realm="Studio"'})
+    if request.path.startswith(("/api/", "/media/")):
+        return jsonify({"error": "signed out"}), 401
+    if not auth.users_exist(db()):
+        return redirect("/setup")
+    return redirect("/login?next=" + request.full_path.rstrip("?") if request.path != "/" else "/login")
+
+
+@app.after_request
+def _headers(response):
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    return response
+
+
+# ── Sign-in pages ─────────────────────────────────────────────────────────────
+
+_FORM = (WEB / "login.html")
+
+
+def _page(mode: str, error: str = "", **extra):
+    return render_template_string(_FORM.read_text(encoding="utf-8"), mode=mode, error=error, **extra)
+
+
+def _start_session(user_row: dict):
+    session.clear()
+    session.permanent = True
+    session.update(uid=user_row["id"], sv=user_row["session_version"])
+
+
+def _safe_next(target: str | None) -> str:
+    # Same-site paths only: "//host" and "/\\host" are read by browsers as other sites.
+    return target if target and target.startswith("/") and not target.startswith(("//", "/\\")) else "/"
+
+
+@app.get("/healthz")
+def healthz():
+    return "ok"
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    if not auth.users_exist(db()):
+        return redirect("/setup")
+    if request.method == "GET":
+        return _page("login", next=_safe_next(request.args.get("next")))
+    try:
+        user_row = auth.login(db(), request.form.get("email", ""), request.form.get("password", ""), client_ip())
+    except ValueError as e:
+        return _page("login", str(e), next=_safe_next(request.form.get("next"))), 401
+    _start_session(user_row)
+    log.info("%s signed in from %s", user_row["email"], client_ip())
+    return redirect(_safe_next(request.form.get("next")))
+
+
+@app.route("/setup", methods=["GET", "POST"])
+def setup_page():
+    """The owner's account, made once, from the laptop itself."""
+    if auth.users_exist(db()):
+        return redirect("/login")
+    if not is_local():
+        return _page("blocked"), 403
+    if request.method == "GET":
+        return _page("setup")
+    try:
+        uid = auth.create_user(db(), request.form.get("email", ""), request.form.get("name", ""),
+                               request.form.get("password", ""), auth.OWNER)
+    except ValueError as e:
+        return _page("setup", str(e)), 400
+    _start_session(dict(db().execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()))
+    return redirect("/")
+
+
+@app.route("/invite/<token>", methods=["GET", "POST"])
+def invite_page(token: str):
+    if auth.open_invite(db(), token) is None:
+        return _page("expired"), 404
+    if request.method == "GET":
+        return _page("invite", token=token)
+    try:
+        uid = auth.accept_invite(db(), token, request.form.get("email", ""), request.form.get("name", ""),
+                                 request.form.get("password", ""))
+    except ValueError as e:
+        return _page("invite", str(e), token=token), 400
+    _start_session(dict(db().execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()))
+    return redirect("/#/tab/plan")
+
+
+@app.post("/logout")
+def logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/me")
+def me():
+    u = g.user
+    return jsonify({"id": u["id"], "name": u["name"], "email": u["email"], "role": u["role"],
+                    "local": is_local()})
+
+
+@app.post("/api/me/password")
+def change_password():
+    data = body()
+    u = db().execute("SELECT * FROM users WHERE id = ?", (g.user["id"],)).fetchone()
+    from werkzeug.security import check_password_hash
+    if not check_password_hash(u["password_hash"], str(data.get("current", ""))):
+        return jsonify({"error": "your current password is wrong"}), 400
+    try:
+        auth.set_password(db(), u["id"], str(data.get("new", "")))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    _start_session(dict(db().execute("SELECT * FROM users WHERE id = ?", (u["id"],)).fetchone()))
+    return jsonify({"ok": True})
+
+
+@app.get("/api/team")
+@owner_only
+def team():
+    users = [{k: r[k] for k in ("id", "name", "email", "role", "created_at", "last_login_at")}
+             for r in db().execute("SELECT * FROM users WHERE disabled = 0 ORDER BY id")]
+    invites = [{"id": r["id"], "note": r["note"], "expires_at": r["expires_at"]} for r in db().execute(
+        "SELECT * FROM invites WHERE used_at IS NULL AND expires_at > ? ORDER BY id DESC", (_now(),))]
+    return jsonify({"users": users, "invites": invites})
+
+
+@app.post("/api/team/invite")
+@owner_only
+def invite():
+    token = auth.create_invite(db(), g.user["id"], auth.TEAM, text(body(), "note", 200))
+    base = settings.DASHBOARD_URL or request.host_url.rstrip("/")
+    return jsonify({"link": f"{base}/invite/{token}", "days": auth.INVITE_DAYS})
+
+
+@app.post("/api/team/invite/<int:invite_id>/cancel")
+@owner_only
+def cancel_invite(invite_id: int):
+    db().execute("UPDATE invites SET expires_at = ? WHERE id = ? AND used_at IS NULL", (_now(), invite_id))
+    db().commit()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/team/<int:user_id>/remove")
+@owner_only
+def remove_member(user_id: int):
+    if user_id == g.user["id"]:
+        return jsonify({"error": "you can't remove yourself"}), 400
+    auth.remove_user(db(), user_id)
+    return jsonify({"ok": True})
+
+
+def _now() -> str:
+    import catalog
+    return catalog.now()
 
 
 def _file_response(path: str | None):
@@ -104,19 +277,16 @@ def _open_notes(target: str) -> dict[int, int]:
 # ── Board ─────────────────────────────────────────────────────────────────────
 
 def _inbox_items() -> list[dict]:
-    from worker import is_ready
-    if not INBOX.exists():
-        return []
+    from worker import inbox_files, is_ready
     items = []
-    for p in INBOX.iterdir():
-        if not (p.suffix.lower() in VIDEO_EXTS) or p.name.startswith((".", "~")):
-            continue
+    for p in inbox_files():
         try:  # the worker may move it out of the inbox while we look
             stat = p.stat()
         except OSError:
             continue
         items.append({
-            "kind": "inbox", "id": p.name, "stage": "cloud", "title": p.name,
+            "kind": "inbox", "id": p.name, "stage": "cloud",
+            "title": p.name if p.parent == INBOX else f"{p.parent.name} / {p.name}",
             "status": "queued" if is_ready(p) else "uploading", "mtime": stat.st_mtime,
             "size_mb": round(stat.st_size / 1e6, 1), "thumb": None, "video": None,
         })
@@ -130,6 +300,8 @@ def _clip_item(row: sqlite3.Row, open_notes: dict[int, int]) -> dict:
         "status": row["status"], "title": row["title"] or row["source_name"],
         "brand": row["brand"], "format": row["format"], "duration": row["duration"],
         "orientation": row["orientation"], "usable": row["usable"], "reviewed": bool(row["reviewed_at"]),
+        "verdict": json.loads(row["quality"]).get("verdict") if row["quality"] else None,
+        "project_id": row["project_id"],
         "error": row["error"], "open_notes": open_notes.get(row["id"], 0),
         "thumb": f"/media/clip/{row['id']}/thumb" if files["thumb"] else None,
         "video": f"/media/clip/{row['id']}/video" if row["status"] != "processing" else None,
@@ -184,14 +356,15 @@ def board():
     clip_notes, production_notes = _open_notes("clip"), _open_notes("production")
     clips = db().execute("SELECT * FROM clips ORDER BY ingested_at DESC").fetchall()
     productions = db().execute("SELECT * FROM productions ORDER BY updated_at").fetchall()
-    ideas = db().execute("SELECT * FROM ideas WHERE status = 'new' ORDER BY id DESC").fetchall()
+    ideas = db().execute("""SELECT * FROM ideas WHERE status = 'new' AND COALESCE(origin, 'library') = 'library'
+                            ORDER BY id DESC""").fetchall()
     return jsonify({
         "items": [*_inbox_items(),
                   *(_clip_item(r, clip_notes) for r in clips),
                   *(_production_item(r, production_notes) for r in productions),
                   *(_idea_item(r) for r in ideas)],
         "ideas_job": dict(_ideas_job),
-        "costs": usage.month_summary(db()),
+        "costs": usage.month_summary(db()) if is_owner() else None,
     })
 
 
@@ -214,7 +387,12 @@ def clip_detail(clip_id: int):
         "suggested_hook": row["suggested_hook"], "quality_notes": row["quality_notes"],
         "transcript": row["transcript"], "source_name": row["source_name"],
         "notes": _notes("clip", clip_id), "brands": BRANDS, "formats": FORMATS,
-        "cost": usage.total_for(db(), f"clip:{clip_id}"),
+        "cost": usage.total_for(db(), f"clip:{clip_id}") if is_owner() else None,
+        "quality": json.loads(row["quality"]) if row["quality"] else None,
+        "shots": [dict(r) for r in db().execute(
+            """SELECT t.id AS take_id, t.shot_id, t.source, t.start, t.end, s.description, i.id AS idea_id,
+                      i.title AS idea_title FROM takes t JOIN shots s ON s.id = t.shot_id
+                      JOIN ideas i ON i.id = s.idea_id WHERE t.clip_id = ? ORDER BY t.id""", (clip_id,))],
     })
     return jsonify(item)
 
@@ -238,7 +416,7 @@ def production_detail(production_id: int):
                  "missing_shots": (edl or {}).get("missing_shots", []),
                  "graphics": len((edl or {}).get("graphics", [])),
                  "wishlist": json.loads(row["plan"] or "{}").get("wishlist", []),
-                 "cost": usage.total_for(db(), f"production:{production_id}"),
+                 "cost": usage.total_for(db(), f"production:{production_id}") if is_owner() else None,
                  "music": json.loads(row["music"]) if row["music"] else None,
                  "qa": json.loads(row["qa"]) if row["qa"] else None,
                  "resolve": _resolve_state(dict(row)) if edl else None})
@@ -285,6 +463,7 @@ def _run_ideas(focus: str) -> None:
 
 
 @app.post("/api/ideas/generate")
+@owner_only
 def generate_ideas():
     focus = str((request.json or {}).get("focus", ""))[:500]
     with _ideas_lock:
@@ -296,14 +475,20 @@ def generate_ideas():
 
 
 @app.post("/api/idea/<int:idea_id>/decision")
+@owner_only
 def decide_idea(idea_id: int):
     import catalog
+    import plan
     data = request.json or {}
     row = db().execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
     if row is None:
         abort(404)
     if data.get("decision") == "make":
-        production_id = catalog.make_production(db(), idea_id, data.get("caption"))
+        try:
+            production_id = (plan.make(db(), idea_id, data.get("caption")) if row["origin"] == "plan"
+                             else catalog.make_production(db(), idea_id, data.get("caption")))
+        except RuntimeError as e:
+            return jsonify({"error": str(e)}), 400
         return jsonify({"ok": True, "production_id": production_id})
     if data.get("decision") == "dismiss":
         db().execute("UPDATE ideas SET status = 'dismissed' WHERE id = ?", (idea_id,))
@@ -315,17 +500,17 @@ def decide_idea(idea_id: int):
 @app.post("/api/<target>/<int:target_id>/notes")
 def add_note(target: str, target_id: int):
     import catalog
-    if target not in ("clip", "production"):
+    if target not in ("clip", "production", "idea"):
         abort(404)
     body = (request.json or {}).get("body", "").strip()
     if not body:
         return jsonify({"error": "empty note"}), 400
     at = (request.json or {}).get("at_seconds")
-    remember = bool((request.json or {}).get("remember"))
+    remember = bool((request.json or {}).get("remember")) and is_owner()
     note_id = catalog.add_feedback(db(), target, target_id, body,
-                                   None if at is None else round(float(at), 2), remember)
+                                   None if at is None else round(float(at), 2), remember, g.user["name"])
     if remember:
-        table = "clips" if target == "clip" else "productions"
+        table = {"clip": "clips", "production": "productions", "idea": "ideas"}[target]
         row = db().execute(f"SELECT brand, format FROM {table} WHERE id = ?", (target_id,)).fetchone()
         playbook.remember(body, " / ".join(filter(None, [row["brand"], row["format"]])) if row else target)
     return jsonify({"id": note_id})
@@ -362,6 +547,7 @@ def _run_resolve(production_id: int) -> None:
 
 
 @app.post("/api/production/<int:production_id>/resolve")
+@owner_only
 def build_resolve(production_id: int):
     row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
     if row is None:
@@ -377,6 +563,7 @@ def build_resolve(production_id: int):
 
 
 @app.post("/api/production/<int:production_id>/resolve/open")
+@owner_only
 def open_resolve(production_id: int):
     import resolve_export
     row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
@@ -384,7 +571,7 @@ def open_resolve(production_id: int):
     if folder is None:
         abort(404)
     # Explorer can only open on the laptop itself, i.e. when the browser is on it too.
-    opened = os.name == "nt" and request.remote_addr in ("127.0.0.1", "::1")
+    opened = os.name == "nt" and is_local()
     if opened:
         os.startfile(folder)  # noqa: S606 - a folder Studio wrote, opened in Explorer
     return jsonify({"opened": opened, "folder": str(folder)})
@@ -398,7 +585,13 @@ def decide(production_id: int):
     row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
     if row is None:
         abort(404)
-    if decision == "changes":
+    if decision != "caption" and not is_owner():
+        return jsonify({"error": "only Bryan can do this"}), 403
+    if decision == "reopen":  # undo an approve or reject by mistake
+        if row["status"] not in ("approved", "rejected") or not row["video_path"]:
+            return jsonify({"error": "only an approved or rejected draft can go back to review"}), 400
+        catalog.set_production_status(db(), production_id, "ready", caption)
+    elif decision == "changes":
         open_notes = db().execute(
             "SELECT COUNT(*) FROM feedback WHERE target = 'production' AND target_id = ? AND status = 'open'",
             (production_id,)).fetchone()[0]
@@ -459,13 +652,28 @@ def production_media(production_id: int, what: str):
     return _file_response(row["thumb_path"] if what == "thumb" else row["video_path"])
 
 
+# ── Planning board ────────────────────────────────────────────────────────────
+
+from plan_routes import bp as _plan_bp  # noqa: E402 - its own module; shares webutil, not this file
+
+app.register_blueprint(_plan_bp)
+
+
 # ── Serve ─────────────────────────────────────────────────────────────────────
 
 def run() -> None:
-    if DASHBOARD_HOST not in LOOPBACK and not DASHBOARD_PASSWORD:
-        log.error("Dashboard not started: STUDIO_DASHBOARD_HOST=%s needs STUDIO_DASHBOARD_PASSWORD "
-                  "so nobody else on the network can open it.", DASHBOARD_HOST)
+    import catalog
+    conn = catalog.connect()
+    try:
+        no_users = not auth.users_exist(conn)
+    finally:
+        conn.close()
+    if DASHBOARD_HOST not in LOOPBACK and no_users:
+        log.error("Dashboard not started on %s: make your account first (open it on the laptop at "
+                  "http://127.0.0.1:%s with STUDIO_DASHBOARD_HOST unset, or run worker.py --add-user).",
+                  DASHBOARD_HOST, DASHBOARD_PORT)
         return
+    app.secret_key = auth.secret_key()
     from waitress import serve
     log.info("Dashboard on http://%s:%s", DASHBOARD_HOST, DASHBOARD_PORT)
     serve(app, host=DASHBOARD_HOST, port=DASHBOARD_PORT, threads=8, _quiet=True)

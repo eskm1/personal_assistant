@@ -57,7 +57,7 @@ class Digest:
         self._first = self._last = 0.0
 
     def add(self, kind: str, n: int = 1) -> None:
-        """kind: processed | duplicate | unreadable | failed | draft | edit_failed"""
+        """kind: processed | retake | matched | duplicate | unreadable | failed | draft | edit_failed"""
         with self._lock:
             now = time.time()
             if not self._counts:
@@ -72,13 +72,16 @@ class Digest:
         lines = []
         if counts["processed"]:
             extras = [x for x in (
+                counts["retake"] and n("retake", "flagged for a retake", "flagged for a retake"),
                 counts["duplicate"] and n("duplicate", "duplicate skipped", "duplicates skipped"),
                 counts["unreadable"] and n("unreadable", "file couldn't be read", "files couldn't be read"),
                 counts["failed"] and n("failed", "will be retried", "will be retried"),
             ) if x]
             lines.append(f"{n('processed', 'new video', 'new videos')} processed"
                          + (f" ({', '.join(extras)})" if extras else "") + ".")
-            lines.append(f"See categories and transcripts: {dashboard_link('library')}")
+            lines.append(f"See categories, quality and transcripts: {dashboard_link('library')}")
+            if counts["matched"]:
+                lines.append(f"{n('matched', 'planned shot', 'planned shots')} got footage: {dashboard_link('plan')}")
         elif counts["duplicate"] or counts["unreadable"] or counts["failed"]:
             lines.append("Uploads need a look: " + ", ".join(x for x in (
                 counts["duplicate"] and n("duplicate", "duplicate skipped", "duplicates skipped"),

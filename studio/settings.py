@@ -93,7 +93,6 @@ TELEGRAM_CHAT_ID = _env("TELEGRAM_CHAT_ID")
 # listen beyond this machine without one.
 DASHBOARD_HOST = _env("STUDIO_DASHBOARD_HOST", "127.0.0.1")
 DASHBOARD_PORT = int(_env("STUDIO_DASHBOARD_PORT", "8765"))
-DASHBOARD_PASSWORD = _env("STUDIO_DASHBOARD_PASSWORD")
 # Optional: the address you open it at (e.g. your Tailscale name); added to
 # Telegram pings so a notification links straight to the review.
 DASHBOARD_URL = _env("STUDIO_DASHBOARD_URL").rstrip("/")

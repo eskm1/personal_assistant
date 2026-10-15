@@ -124,11 +124,36 @@ def _tool_text(result: dict) -> str:
     return text
 
 
-def find_track(brief: str, seconds: float, out_dir, client=None, es: "EpidemicSound | None" = None,
-               ref: str = ""):
-    """Pick and download a music track for a post. Returns (path, track info)."""
+SHORTLIST_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "tracks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "recording_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "artist": {"type": "string"},
+                    "bpm": {"type": "number"},
+                    "preview_url": {"type": "string"},
+                    "page_url": {"type": "string"},
+                    "why": {"type": "string"},
+                },
+                "required": ["recording_id", "title", "artist", "bpm", "preview_url", "page_url", "why"],
+                "additionalProperties": False,
+            },
+        },
+        "reason": {"type": "string"},
+    },
+    "required": ["tracks", "reason"],
+    "additionalProperties": False,
+}
+
+
+def _tool_loop(task: str, schema: dict, ref: str, kind: str, client=None, es: "EpidemicSound | None" = None) -> dict:
+    """Let Claude use Epidemic Sound's tools until it can answer in the given schema."""
     import anthropic
-    from pathlib import Path
 
     from settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
 
@@ -138,31 +163,20 @@ def find_track(brief: str, seconds: float, out_dir, client=None, es: "EpidemicSo
     tools = [{"name": t["name"], "description": t.get("description", "")[:1024],
               "input_schema": t.get("inputSchema") or {"type": "object", "properties": {}}} for t in listed]
     client = client or anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or None)
-    messages = [{"role": "user", "content": (
-        f"Find one Epidemic Sound music track for a {seconds:.0f}-second Instagram Reel. Brief: {brief}\n\n"
-        "Search the catalogue, pick the best fit (instrumental, works under speech), and get a download "
-        "link for an MP3 of it. If the tools can make a version edited to the Reel's length, use that "
-        "version. When done, answer with the track's details and the download URL exactly as the tools "
-        "returned it. If nothing suitable is available, answer with found=false and say why.")}]
+    messages = [{"role": "user", "content": task}]
     for _ in range(_MAX_TOOL_ROUNDS):
         response = client.beta.messages.create(
             model=CLAUDE_MODEL, max_tokens=16000, tools=tools, messages=messages,
             betas=["server-side-fallback-2026-07-01"], fallbacks="default",
-            output_config={"effort": "low", "format": {"type": "json_schema", "schema": TRACK_SCHEMA}},
+            output_config={"effort": "low", "format": {"type": "json_schema", "schema": schema}},
         )
         import usage
-        usage.record("music", ref, response)
+        usage.record(kind, ref, response)
         if response.stop_reason == "refusal":
             raise RuntimeError("Claude declined the music search")
         calls = [b for b in response.content if b.type == "tool_use"]
         if not calls:
-            text = next((b.text for b in response.content if b.type == "text"), "")
-            track = json.loads(text)
-            if not track["found"]:
-                raise RuntimeError(f"no suitable track: {track['reason']}")
-            path = Path(out_dir) / f"epidemic_{re.sub(r'[^A-Za-z0-9_-]', '', track['recording_id'])[:40] or 'track'}.mp3"
-            _download(track["download_url"], path)
-            return path, track
+            return json.loads(next((b.text for b in response.content if b.type == "text"), "{}"))
         messages.append({"role": "assistant", "content": response.content})
         results = []
         for call in calls:
@@ -174,6 +188,38 @@ def find_track(brief: str, seconds: float, out_dir, client=None, es: "EpidemicSo
                                 "content": f"{type(e).__name__}: {e}"})
         messages.append({"role": "user", "content": results})
     raise RuntimeError("music search took too many steps")
+
+
+def find_track(brief: str, seconds: float, out_dir, client=None, es: "EpidemicSound | None" = None,
+               ref: str = ""):
+    """Pick and download a music track for a post. Returns (path, track info)."""
+    from pathlib import Path
+
+    track = _tool_loop(
+        f"Find one Epidemic Sound music track for a {seconds:.0f}-second Instagram Reel. Brief: {brief}\n\n"
+        "Search the catalogue, pick the best fit (instrumental, works under speech), and get a download "
+        "link for an MP3 of it. If the tools can make a version edited to the Reel's length, use that "
+        "version. When done, answer with the track's details and the download URL exactly as the tools "
+        "returned it. If nothing suitable is available, answer with found=false and say why.",
+        TRACK_SCHEMA, ref, "music", client, es)
+    if not track["found"]:
+        raise RuntimeError(f"no suitable track: {track['reason']}")
+    path = Path(out_dir) / f"epidemic_{re.sub(r'[^A-Za-z0-9_-]', '', track['recording_id'])[:40] or 'track'}.mp3"
+    _download(track["download_url"], path)
+    return path, track
+
+
+def shortlist(brief: str, seconds: float, count: int = 4, client=None, es: "EpidemicSound | None" = None,
+              ref: str = "") -> dict:
+    """A few candidate tracks for the team to listen to and pick from (nothing downloaded)."""
+    return _tool_loop(
+        f"Shortlist {count} Epidemic Sound tracks for a planned {seconds:.0f}-second Instagram Reel. "
+        f"Brief: {brief}\n\nSearch the catalogue and pick {count} different options that fit "
+        "(instrumental, works under speech; vary them a little so the team has a real choice). For each, "
+        "give a preview or stream URL and the track's Epidemic Sound page URL exactly as the tools "
+        "returned them (\"\" if the tools give none), its BPM (0 if unknown), and one line on why it fits. "
+        "Don't download anything. If nothing fits, return no tracks and say why in reason.",
+        SHORTLIST_SCHEMA, ref, "music", client, es)
 
 
 def _download(url: str, path) -> None:

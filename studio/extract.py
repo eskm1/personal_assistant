@@ -75,8 +75,18 @@ def probe(path: Path) -> dict:
         or tags.get("creation_time")
         or video.get("tags", {}).get("creation_time")
     )
+    try:
+        num, den = (video.get("avg_frame_rate") or "0/1").split("/")
+        fps = round(float(num) / float(den), 3) if float(den) else 0.0
+    except ValueError:
+        fps = 0.0
     return {
         "duration": float(raw.get("format", {}).get("duration") or video.get("duration") or 0),
+        "fps": fps,
+        # HLG / PQ: iPhone "HDR Video" (Dolby Vision) and other HDR modes.
+        "hdr": video.get("color_transfer") in ("arib-std-b67", "smpte2084"),
+        "camera": " ".join(filter(None, (tags.get("com.apple.quicktime.make"), tags.get("com.apple.quicktime.model"))))
+                  or None,
         "width": width,
         "height": height,
         "orientation": "vertical" if height > width else "horizontal" if width > height else "square",

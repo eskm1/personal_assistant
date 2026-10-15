@@ -100,7 +100,8 @@ def _transcribe_once(wav_path: Path) -> dict:
     )
     out_segments, words = [], []
     for seg in segments:  # a generator: decoding happens while iterating
-        out_segments.append({"start": round(seg.start, 2), "end": round(seg.end, 2), "text": seg.text.strip()})
+        out_segments.append({"start": round(seg.start, 2), "end": round(seg.end, 2), "text": seg.text.strip(),
+                             "logprob": round(seg.avg_logprob, 3)})  # Whisper's confidence, for quality.py
         for w in seg.words or []:
             words.append({"start": round(w.start, 2), "end": round(w.end, 2), "word": w.word.strip()})
     return {
