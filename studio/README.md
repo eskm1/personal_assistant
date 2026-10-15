@@ -195,7 +195,8 @@ STUDIO_DASHBOARD_URL=http://<laptop's Tailscale name>:8765
 ```
 
 Restart the worker and open that address; any username works, with that password. The
-dashboard won't listen beyond the laptop without a password. With `STUDIO_DASHBOARD_URL` set,
+dashboard won't listen beyond the laptop without a password.
+
 Telegram is just for notifications: one summary per batch of uploads or edits, with a link
 to the right dashboard tab (set `STUDIO_DASHBOARD_URL` so the link works from your phone).
 The dashboard is where you give feedback.
