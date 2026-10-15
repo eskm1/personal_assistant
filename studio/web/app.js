@@ -273,12 +273,35 @@ async function refreshOpenItem() {
   const before = state.detail;
   const fresh = await api(`/api/${state.current.kind}/${state.current.id}`).catch(() => null);
   if (!fresh || !before) return;
+  const resolveChanged = (fresh.resolve || {}).state !== (before.resolve || {}).state;
+  if (resolveChanged && fresh.status === before.status && fresh.version === before.version) {
+    state.detail = fresh;
+    renderPanel();
+    if (fresh.resolve.state === "ready") toast("The DaVinci Resolve project is ready");
+    return;
+  }
   if (fresh.status !== before.status || fresh.version !== before.version) {
     state.detail = fresh;
     if (fresh.video !== before.video) renderPlayer(fresh);
     renderPanel();
     if (fresh.status === "ready") toast(`v${fresh.version} is ready to review`);
   }
+}
+
+function resolveHTML(d) {
+  const r = d.resolve;
+  if (!r) return "";
+  const body = {
+    none: `<p class="muted">Finish this by hand in the free DaVinci Resolve: the cut from your original clips, with captions, graphics and music on their own layers.</p>
+      <div class="row" style="margin-top:10px"><button class="btn" id="resolve-build">Make Resolve project</button></div>`,
+    building: `<p class="muted">Building the project (captions and graphics render as their own layers; a minute or two)…</p>`,
+    ready: `<p class="muted">In <code>${esc(r.folder)}</code>. In Resolve: File &gt; Import &gt; Timeline &gt; <strong>timeline.fcpxml</strong>.</p>
+      <div class="row" style="margin-top:10px"><button class="btn" id="resolve-open">Show folder</button>
+      <button class="btn" id="resolve-build">Rebuild</button></div>`,
+    failed: `<p><strong>Couldn't build it:</strong> ${esc(r.error || "")}</p>
+      <div class="row" style="margin-top:10px"><button class="btn" id="resolve-build">Try again</button></div>`,
+  }[r.state];
+  return `<div class="box"><h3>Open in DaVinci Resolve</h3>${body}</div>`;
 }
 
 function notesHTML(notes, currentVersion, isProduction) {
@@ -376,6 +399,7 @@ function renderPanel() {
       ${shotsHTML("The editor wished it had", d.missing_shots)}
       ${d.idea ? `<div><h3>Brief</h3><p>${esc(d.idea)}</p></div>` : ""}
       ${d.cost ? `<p class="muted">API cost so far: ${money(d.cost)}${d.graphics ? ` · ${d.graphics} graphic${d.graphics > 1 ? "s" : ""}` : ""}</p>` : ""}
+      ${resolveHTML(d)}
       ${d.sources.length ? `<div><h3>Made from</h3><p class="muted">${d.sources.map((s) => esc(s.title)).join(", ")}</p></div>` : ""}
       ${canDecide || d.status === "failed" ? "" : `<div class="box"><p>${d.status === "revising" || d.status === "producing" || d.status === "planned"
         ? "The editor is working on this. It comes back to To review when the new version renders."
@@ -502,6 +526,15 @@ $("#panel").addEventListener("click", async (e) => {
       toast("Queued for the editor again.");
       await loadDetail();
       sync();
+    } else if (id === "resolve-build") {
+      await api(`/api/production/${d.id}/resolve`, {});
+      await loadDetail();
+    } else if (id === "resolve-open") {
+      const res = await api(`/api/production/${d.id}/resolve/open`, {});
+      if (!res.opened) {
+        navigator.clipboard?.writeText(res.folder).catch(() => {});
+        toast("Folder path copied. It's on the Studio laptop.");
+      }
     } else if (id === "caption-save") {
       await api(`/api/production/${d.id}/decision`, { decision: "caption", caption: $("#caption").value });
       toast("Caption saved.");

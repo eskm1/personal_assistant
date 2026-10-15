@@ -264,6 +264,25 @@ list to `Studio\logs\epidemic_tools.json`, which is useful when the music step m
 Each draft costs one Claude call to plan the cut plus a few short calls to pick music,
 typically tens of cents.
 
+### Finishing a draft by hand in DaVinci Resolve
+
+Any draft can be opened in the free [DaVinci Resolve](https://www.blackmagicdesign.com/products/davinciresolve)
+for finishing touches. On the draft's review screen press **Make Resolve project** (a minute
+or two; no API cost), then **Show folder**. Or from PowerShell: `worker.py --resolve <id>`.
+The folder, `Studio\Renders\production_<id>_v<n>_resolve`, holds:
+
+- `timeline.fcpxml`: the cut, pointing at your **original** clips (full quality, and you can
+  drag any cut's edge to get back footage the draft trimmed)
+- `graphics.mov` and `captions.mov`: the hook, B-roll cards and captions as transparent
+  layers on V2 and V3 (ProRes 4444)
+- `captions.srt`: the caption text, if you'd rather retype captions as a subtitle track
+- `music.mp3`: the Epidemic Sound track on A2 (Urban Makers only)
+- `HOW TO OPEN.txt`: the steps below and what to do about black bars or offline media
+
+In Resolve: **File > Import > Timeline...**, pick `timeline.fcpxml`, keep "Automatically
+import source clips into media pool" ticked, press OK. Export from the **Deliver** page at
+1080x1920.
+
 ## Day to day
 
 | Task | Command (from `studio`, with `.\venv\Scripts\python`) |

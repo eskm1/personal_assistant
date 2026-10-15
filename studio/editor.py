@@ -377,8 +377,9 @@ def _graphic_html(i: int, g: dict) -> tuple[str, str]:
 
 
 def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
-                   graphics: list[dict] = (), accent: str = "#ff4d6d") -> None:
-    """Captions, hook and B-roll graphics as a transparent WebM (HyperFrames, headless Chrome)."""
+                   graphics: list[dict] = (), accent: str = "#ff4d6d", fmt: str = "webm") -> None:
+    """Captions, hook and B-roll graphics as a transparent video (HyperFrames, headless Chrome):
+    VP9 WebM for the draft, ProRes 4444 MOV (fmt="mov") for DaVinci Resolve."""
     with tempfile.TemporaryDirectory(prefix="studio-overlay-") as tmp:
         project = Path(tmp) / "overlay"
         project.mkdir()
@@ -405,7 +406,7 @@ def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
             encoding="utf-8")
         (project / "meta.json").write_text(json.dumps({"id": "overlay", "name": "overlay", "width": W,
                                                        "height": H, "fps": FPS}), encoding="utf-8")
-        result = render.hyperframes(["render", str(project), "--format", "webm", "--quality", "standard",
+        result = render.hyperframes(["render", str(project), "--format", fmt, "--quality", "standard",
                                      "--fps", str(FPS), "--output", str(out)])
         if result.returncode != 0 or not out.exists():
             raise RuntimeError("caption render failed: " + ((result.stderr or "") + (result.stdout or "")).strip()[-400:])
@@ -515,7 +516,7 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
                     f"{edl['music']['mood']}; search: {edl['music']['search']}; about {edl['music']['tempo_bpm']:.0f} BPM",
                     total, ROOT / "Music", ref=f"production:{production_id}")
                 music_info.update(source="epidemic", title=track["title"], artist=track["artist"],
-                                  recording_id=track["recording_id"])
+                                  recording_id=track["recording_id"], file=str(music_file))
             except Exception as e:  # a draft without music beats no draft
                 log.warning("Music step failed for production %s: %s", production_id, e)
                 music_info.update(source="none", error=f"{type(e).__name__}: {e}")

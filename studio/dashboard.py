@@ -14,6 +14,7 @@ import hmac
 import json
 import logging
 import mimetypes
+import os
 import re
 import sqlite3
 import threading
@@ -239,7 +240,8 @@ def production_detail(production_id: int):
                  "wishlist": json.loads(row["plan"] or "{}").get("wishlist", []),
                  "cost": usage.total_for(db(), f"production:{production_id}"),
                  "music": json.loads(row["music"]) if row["music"] else None,
-                 "qa": json.loads(row["qa"]) if row["qa"] else None})
+                 "qa": json.loads(row["qa"]) if row["qa"] else None,
+                 "resolve": _resolve_state(dict(row)) if edl else None})
     return jsonify(item)
 
 
@@ -327,6 +329,65 @@ def add_note(target: str, target_id: int):
         row = db().execute(f"SELECT brand, format FROM {table} WHERE id = ?", (target_id,)).fetchone()
         playbook.remember(body, " / ".join(filter(None, [row["brand"], row["format"]])) if row else target)
     return jsonify({"id": note_id})
+
+
+# "Open in DaVinci Resolve": built on request, in the background (it renders the
+# caption and graphics layers again, a minute or two), one at a time.
+_resolve_jobs: dict[int, dict] = {}
+_resolve_lock = threading.Lock()
+
+
+def _resolve_state(production: dict) -> dict:
+    import resolve_export
+    job = _resolve_jobs.get(production["id"])
+    if job and job["version"] == production["version"] and job["state"] in ("building", "failed"):
+        return {"state": job["state"], "error": job.get("error")}
+    folder = resolve_export.existing(production)
+    return {"state": "ready", "folder": str(folder)} if folder else {"state": "none"}
+
+
+def _run_resolve(production_id: int) -> None:
+    import catalog
+    import resolve_export
+    conn = catalog.connect()
+    try:
+        with _resolve_lock:
+            resolve_export.build(conn, production_id)
+        _resolve_jobs.pop(production_id, None)
+    except Exception as e:  # shown on the dashboard; details in worker.log
+        log.exception("Resolve export failed for production %s", production_id)
+        _resolve_jobs[production_id].update(state="failed", error=f"{type(e).__name__}: {e}")
+    finally:
+        conn.close()
+
+
+@app.post("/api/production/<int:production_id>/resolve")
+def build_resolve(production_id: int):
+    row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    if row is None:
+        abort(404)
+    if not row["edl"]:
+        return jsonify({"error": "there's no finished draft to export yet"}), 400
+    job = _resolve_jobs.get(production_id)
+    if job and job["state"] == "building":
+        return jsonify({"error": "already building"}), 409
+    _resolve_jobs[production_id] = {"state": "building", "version": row["version"]}
+    threading.Thread(target=_run_resolve, args=(production_id,), name="resolve", daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/production/<int:production_id>/resolve/open")
+def open_resolve(production_id: int):
+    import resolve_export
+    row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    folder = resolve_export.existing(dict(row)) if row else None
+    if folder is None:
+        abort(404)
+    # Explorer can only open on the laptop itself, i.e. when the browser is on it too.
+    opened = os.name == "nt" and request.remote_addr in ("127.0.0.1", "::1")
+    if opened:
+        os.startfile(folder)  # noqa: S606 - a folder Studio wrote, opened in Explorer
+    return jsonify({"opened": opened, "folder": str(folder)})
 
 
 @app.post("/api/production/<int:production_id>/decision")

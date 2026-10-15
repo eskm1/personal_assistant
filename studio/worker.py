@@ -418,6 +418,7 @@ def main() -> int:
     mode.add_argument("--check", action="store_true", help="check the setup, then exit")
     mode.add_argument("--rebuild-previews", action="store_true", help="remake missing dashboard previews")
     mode.add_argument("--edit", type=int, metavar="ID", help="edit one production now (by its id)")
+    mode.add_argument("--resolve", type=int, metavar="ID", help="make a DaVinci Resolve project of a draft")
     mode.add_argument("--trial", metavar="FOCUS", help="ideas -> one edited draft, with advice and costs")
     parser.add_argument("--no-claude", action="store_true", help="skip Claude tagging")
     parser.add_argument("--no-dashboard", action="store_true", help="don't serve the review dashboard")
@@ -450,6 +451,11 @@ def main() -> int:
         return 0
     if args.trial:
         return trial(conn, args.trial)
+    if args.resolve:
+        import resolve_export
+        folder = resolve_export.build(conn, args.resolve)
+        print(f"Resolve project: {folder}\nIn Resolve: File > Import > Timeline > timeline.fcpxml")
+        return 0
     if args.edit:
         conn.execute("UPDATE productions SET status = 'planned' WHERE id = ? AND status NOT IN ('revising')",
                      (args.edit,))
