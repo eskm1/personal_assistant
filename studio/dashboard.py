@@ -14,13 +14,16 @@ import hmac
 import json
 import logging
 import mimetypes
+import re
 import sqlite3
+import threading
 from pathlib import Path
 
 from flask import Flask, Response, abort, g, jsonify, request, send_file
 
 import settings
-from settings import DASHBOARD_HOST, DASHBOARD_PASSWORD, DASHBOARD_PORT, INBOX, PLAYBOOK, VIDEO_EXTS
+import playbook
+from settings import DASHBOARD_HOST, DASHBOARD_PASSWORD, DASHBOARD_PORT, INBOX, VIDEO_EXTS
 
 log = logging.getLogger("studio.dashboard")
 
@@ -144,6 +147,30 @@ def _production_item(row: sqlite3.Row, open_notes: dict[int, int]) -> dict:
     }
 
 
+def _frame_near(clip_dir: Path, t: float) -> Path | None:
+    """The extracted frame closest to t seconds (frame names carry their time)."""
+    best = None
+    for f in (clip_dir / "frames").glob("*.jpg"):
+        m = re.search(r"_(\d+\.\d+)s\.jpg$", f.name)
+        if m and (best is None or abs(float(m.group(1)) - t) < best[0]):
+            best = (abs(float(m.group(1)) - t), f)
+    return best[1] if best else None
+
+
+def _idea_item(row: sqlite3.Row) -> dict:
+    segments = json.loads(row["segments"] or "[]")
+    first = segments[0] if segments else None
+    return {
+        "kind": "idea", "id": row["id"], "stage": "ideas", "status": row["status"],
+        "title": row["title"], "brand": row["brand"], "format": row["format"],
+        "duration": row["est_seconds"], "segments_count": len(segments),
+        "thumb": f"/media/idea/{row['id']}/thumb" if first else None,
+        # #t= starts the hover preview at the idea's first segment.
+        "video": f"/media/clip/{first['clip_id']}/video#t={first['start']}" if first else None,
+        "updated": row["created_at"],
+    }
+
+
 @app.get("/")
 def index():
     return send_file(WEB / "index.html")
@@ -154,10 +181,13 @@ def board():
     clip_notes, production_notes = _open_notes("clip"), _open_notes("production")
     clips = db().execute("SELECT * FROM clips ORDER BY ingested_at DESC").fetchall()
     productions = db().execute("SELECT * FROM productions ORDER BY updated_at").fetchall()
+    ideas = db().execute("SELECT * FROM ideas WHERE status = 'new' ORDER BY id DESC").fetchall()
     return jsonify({
         "items": [*_inbox_items(),
                   *(_clip_item(r, clip_notes) for r in clips),
-                  *(_production_item(r, production_notes) for r in productions)],
+                  *(_production_item(r, production_notes) for r in productions),
+                  *(_idea_item(r) for r in ideas)],
+        "ideas_job": dict(_ideas_job),
     })
 
 
@@ -201,16 +231,70 @@ def production_detail(production_id: int):
     return jsonify(item)
 
 
+@app.get("/api/idea/<int:idea_id>")
+def idea_detail(idea_id: int):
+    row = db().execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
+    if row is None:
+        abort(404)
+    item = _idea_item(row)
+    titles = {r["id"]: r["title"] or r["source_name"]
+              for r in db().execute("SELECT id, title, source_name FROM clips")}
+    segments = [{**seg, "clip_title": titles.get(seg["clip_id"], f"Clip {seg['clip_id']}"),
+                 "video": f"/media/clip/{seg['clip_id']}/video"}
+                for seg in json.loads(row["segments"] or "[]")]
+    item.update({"hook": row["hook"], "angle": row["angle"], "beats": json.loads(row["beats"] or "[]"),
+                 "segments": segments, "caption": row["caption"] or "", "production_id": row["production_id"]})
+    return jsonify(item)
+
+
 # ── Actions ───────────────────────────────────────────────────────────────────
 
-def _remember(note: str, context: str) -> None:
-    """Append a note to the playbook the editor reads, so it's never needed twice."""
-    from datetime import date
-    if not PLAYBOOK.exists():
-        PLAYBOOK.write_text("# Studio playbook\n\nRules the editor follows on every edit. "
-                            "Edit freely.\n\n## Notes from reviews\n", encoding="utf-8")
-    with PLAYBOOK.open("a", encoding="utf-8") as f:
-        f.write(f"- {note.strip()} ({context}, {date.today().isoformat()})\n")
+# One "Suggest posts" run at a time, in the background; the board reports progress.
+_ideas_job = {"running": False, "error": None, "count": None, "finished": None}
+_ideas_lock = threading.Lock()
+
+
+def _run_ideas(focus: str) -> None:
+    import catalog
+    import ideas
+    conn = catalog.connect()
+    try:
+        _, count = ideas.generate(conn, focus)
+        _ideas_job.update(count=count, error=None)
+    except Exception as e:  # shown on the dashboard; details in worker.log
+        log.exception("Idea generation failed")
+        _ideas_job.update(error=f"{type(e).__name__}: {e}", count=None)
+    finally:
+        conn.close()
+        _ideas_job.update(running=False, finished=catalog.now())
+
+
+@app.post("/api/ideas/generate")
+def generate_ideas():
+    focus = str((request.json or {}).get("focus", ""))[:500]
+    with _ideas_lock:
+        if _ideas_job["running"]:
+            return jsonify({"error": "already suggesting ideas"}), 409
+        _ideas_job.update(running=True, error=None, count=None)
+    threading.Thread(target=_run_ideas, args=(focus,), name="ideas", daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/idea/<int:idea_id>/decision")
+def decide_idea(idea_id: int):
+    import catalog
+    data = request.json or {}
+    row = db().execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
+    if row is None:
+        abort(404)
+    if data.get("decision") == "make":
+        production_id = catalog.make_production(db(), idea_id, data.get("caption"))
+        return jsonify({"ok": True, "production_id": production_id})
+    if data.get("decision") == "dismiss":
+        db().execute("UPDATE ideas SET status = 'dismissed' WHERE id = ?", (idea_id,))
+        db().commit()
+        return jsonify({"ok": True})
+    return jsonify({"error": "unknown decision"}), 400
 
 
 @app.post("/api/<target>/<int:target_id>/notes")
@@ -228,7 +312,7 @@ def add_note(target: str, target_id: int):
     if remember:
         table = "clips" if target == "clip" else "productions"
         row = db().execute(f"SELECT brand, format FROM {table} WHERE id = ?", (target_id,)).fetchone()
-        _remember(body, " / ".join(filter(None, [row["brand"], row["format"]])) if row else target)
+        playbook.remember(body, " / ".join(filter(None, [row["brand"], row["format"]])) if row else target)
     return jsonify({"id": note_id})
 
 
@@ -276,6 +360,17 @@ def clip_media(clip_id: int, what: str):
     if row is None or what not in ("thumb", "video", "original"):
         abort(404)
     return _file_response(_clip_files(row)[what])
+
+
+@app.get("/media/idea/<int:idea_id>/thumb")
+def idea_thumb(idea_id: int):
+    row = db().execute("SELECT segments FROM ideas WHERE id = ?", (idea_id,)).fetchone()
+    segments = json.loads(row["segments"] or "[]") if row else []
+    if not segments:
+        abort(404)
+    clip = db().execute("SELECT clip_dir FROM clips WHERE id = ?", (segments[0]["clip_id"],)).fetchone()
+    frame = _frame_near(Path(clip["clip_dir"]), segments[0]["start"]) if clip else None
+    return _file_response(str(frame) if frame else None)
 
 
 @app.get("/media/production/<int:production_id>/<what>")

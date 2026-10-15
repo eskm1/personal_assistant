@@ -4,6 +4,7 @@
 
 const STAGES = [
   { key: "review", label: "To review", hint: "Drafts waiting for you. Leave notes on the moments that need work, then approve it or send it back. The next draft opens straight away." },
+  { key: "ideas", label: "Ideas", hint: "Posts Claude planned from your library. Open one to play its segments, edit the caption, then choose Make this to send it to the editor." },
   { key: "producing", label: "Being edited", hint: "Edits in progress, including drafts you sent back. They return to To review when the new version renders." },
   { key: "library", label: "Library", hint: "Raw clips, tagged by Claude. Fix a wrong account or format, or leave a note on how a clip should be used." },
   { key: "ingesting", label: "Ingesting", hint: "Clips being transcribed and tagged right now, plus any that failed and will be retried." },
@@ -22,7 +23,7 @@ const STATUS_SHORT = { ready: "Ready", transcribed: "Untagged" };
 const POLL_MS = 10000;
 
 const $ = (sel, root = document) => root.querySelector(sel);
-const state = { items: [], stage: null, brand: "", list: [], current: null, detail: null, lastSync: 0 };
+const state = { items: [], stage: null, brand: "", list: [], current: null, detail: null, lastSync: 0, ideasJob: {} };
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -79,13 +80,23 @@ function renderTabs() {
     return `<button data-stage="${s.key}" class="${s.key === state.stage ? "on" : ""}">${s.label}<span class="count${hot}">${n}</span></button>`;
   }).join("");
   $("#stage-hint").textContent = STAGES.find((s) => s.key === state.stage).hint;
+  renderToolbar();
+}
+
+function renderToolbar() {
+  $("#toolbar").hidden = state.stage !== "ideas";
+  const job = state.ideasJob || {};
+  $("#suggest").disabled = !!job.running;
+  $("#ideas-status").textContent = job.running
+    ? "Claude is reading your library and planning posts. This takes a minute or two."
+    : job.error ? `Last run failed: ${job.error}` : "";
 }
 
 function tileHTML(item, index) {
   const media = item.thumb
     ? `<img src="${esc(item.thumb)}" alt="" loading="lazy">`
     : `<div class="placeholder">${item.kind === "inbox" ? `${esc(item.size_mb)} MB<br>in OneDrive` : "No preview yet"}</div>`;
-  const meta = [item.format && FORMAT[item.format], item.duration && mmss(item.duration)].filter(Boolean);
+  const meta = [item.format && FORMAT[item.format], item.duration && `${item.kind === "idea" ? "~" : ""}${mmss(item.duration)}`].filter(Boolean);
   return `<button class="tile" data-index="${index}" aria-label="${esc(item.title)}">
     ${media}
     <div class="chips">${chips(item, true)}</div>
@@ -112,7 +123,13 @@ async function sync() {
     const data = await api("/api/board");
     state.lastSync = Date.now();
     const signature = JSON.stringify(data.items);
+    const wasRunning = state.ideasJob?.running;
     state.items = data.items;
+    state.ideasJob = data.ideas_job || {};
+    if (wasRunning && !state.ideasJob.running && state.ideasJob.count != null) {
+      toast(state.ideasJob.count ? `${state.ideasJob.count} new idea${state.ideasJob.count > 1 ? "s" : ""}` : "No new ideas this time. Try a different focus or add more clips.");
+    }
+    renderToolbar();
     if (!state.stage) {
       // First load: open on whatever needs attention.
       const saved = recall("studio.stage");
@@ -296,6 +313,21 @@ function renderPanel() {
     return;
   }
 
+  if (d.kind === "idea") {
+    panel.innerHTML = `${head}
+      <div><h3>Hook</h3><p>${esc(d.hook)}</p></div>
+      <div><h3>Why it works</h3><p>${esc(d.angle)}</p></div>
+      ${d.beats.length ? `<div><h3>Structure</h3><ol class="beats">${d.beats.map((b) => `<li>${esc(b)}</li>`).join("")}</ol></div>` : ""}
+      <div><h3>Footage (${d.segments.length} segment${d.segments.length > 1 ? "s" : ""})</h3><ul class="moments">${d.segments.map((s, i) =>
+        `<li><button data-segment="${i}"><strong>${esc(s.clip_title)} · ${mmss(s.start)}–${mmss(s.end)}</strong> ${esc(s.purpose)}</button></li>`).join("")}</ul></div>
+      <div><h3>Caption</h3><textarea id="caption">${esc(d.caption)}</textarea></div>
+      ${d.status === "new" ? `<div class="decision row">
+        <button class="btn primary" id="idea-make">Make this</button>
+        <button class="btn" id="idea-dismiss">Dismiss</button>
+      </div>` : `<div class="box"><p>Already sent to the editor.</p></div>`}`;
+    return;
+  }
+
   if (d.kind === "production") {
     const canDecide = d.status === "ready";
     const openNow = d.notes.filter((n) => n.status === "open").length;
@@ -362,23 +394,33 @@ function step(delta) {
   if (i >= 0 && state.list[i + delta]) openItem(state.list[i + delta]);
 }
 
-async function nextForReview() {
+async function nextIn(stage) {
   const done = state.current;
   await sync();
-  const next = state.items.find((it) => it.stage === "review" && (!state.brand || it.brand === state.brand)
+  const next = state.items.find((it) => it.stage === stage && (!state.brand || it.brand === state.brand)
     && !(it.kind === done.kind && String(it.id) === String(done.id)));
   if (next) {
-    state.stage = "review";
+    state.stage = stage;
     render();
     openItem(next);
   } else {
     closeViewer();
-    toast("All caught up. Nothing else to review.");
+    render();
+    toast(stage === "ideas" ? "That's every idea. Suggest more any time." : "All caught up. Nothing else to review.");
   }
 }
+const nextForReview = () => nextIn("review");
 
 // Panel actions (event delegation, so re-rendering the panel keeps them working).
 $("#panel").addEventListener("click", async (e) => {
+  const segment = e.target.closest("[data-segment]");
+  if (segment && state.detail?.segments) {
+    // Play just that segment: the #t=start,end media fragment stops at the end.
+    const s = state.detail.segments[Number(segment.dataset.segment)];
+    player().src = `${s.video}#t=${s.start},${s.end}`;
+    player().play().catch(() => {});
+    return;
+  }
   const seek = e.target.closest("[data-seek]");
   if (seek && player()) {
     player().currentTime = Number(seek.dataset.seek);
@@ -389,6 +431,15 @@ $("#panel").addEventListener("click", async (e) => {
   const d = state.detail;
   try {
     if (id === "note-add") await addNote();
+    else if (id === "idea-make") {
+      await api(`/api/idea/${d.id}/decision`, { decision: "make", caption: $("#caption").value });
+      toast("Sent to the editor. It's in Being edited.");
+      await nextIn("ideas");
+    } else if (id === "idea-dismiss") {
+      await api(`/api/idea/${d.id}/decision`, { decision: "dismiss" });
+      toast("Dismissed.");
+      await nextIn("ideas");
+    }
     else if (id === "decide-changes") {
       await api(`/api/production/${d.id}/decision`, { decision: "changes", caption: $("#caption").value });
       toast("Sent back for changes. Opening the next one.");
@@ -450,12 +501,21 @@ document.addEventListener("keydown", (e) => {
 });
 
 $("#close").addEventListener("click", closeViewer);
+$("#suggest").addEventListener("click", async () => {
+  try {
+    await api("/api/ideas/generate", { focus: $("#idea-focus").value });
+    state.ideasJob = { running: true };
+    renderToolbar();
+  } catch (err) {
+    toast(`Couldn't start: ${err.message}`);
+  }
+});
 $("#prev").addEventListener("click", () => step(-1));
 $("#next").addEventListener("click", () => step(1));
 
 // Deep links (#/production/12) and the browser's back button.
 async function routeFromHash() {
-  const m = location.hash.match(/^#\/(clip|production|inbox)\/(.+)$/);
+  const m = location.hash.match(/^#\/(clip|production|inbox|idea)\/(.+)$/);
   if (!m) { if (!$("#viewer").hidden) closeViewer(); return; }
   const id = decodeURIComponent(m[2]);
   const item = state.items.find((i) => i.kind === m[1] && String(i.id) === id);

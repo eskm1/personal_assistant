@@ -140,6 +140,28 @@ def build() -> None:
                    VALUES ('production', ?, ?, ?, ?, ?, ?)""", (cur.lastrowid, v, at, body, note_status, now))
     conn.commit()
 
+    # Two ideas waiting on the Ideas tab, built from the sample clips.
+    catalog.save_ideas(conn, "demo", [
+        {"brand": "urban_makers", "format": "talking_head", "title": "Why we waterproof before we tile",
+         "hook": "Watch what we do before a single tile goes up.",
+         "angle": "Homeowners rarely see this step, and skipping it is the most expensive mistake in a bathroom.",
+         "beats": ["Hook on the bare wall", "What waterproofing is", "Membrane close-ups", "Tiles going on",
+                   "Payoff: a dry wall for years"],
+         "segments": [{"clip_id": clip_ids[0], "start": 1.0, "end": 4.0, "purpose": "Hook line to camera"},
+                      {"clip_id": clip_ids[1], "start": 0.5, "end": 3.5, "purpose": "Membrane being rolled on"},
+                      {"clip_id": clip_ids[0], "start": 4.5, "end": 7.5, "purpose": "Explains why it matters"}],
+         "caption": "The step nobody sees but everybody pays for if it's skipped. #waterproofing #renovation #urbanmakers",
+         "est_seconds": 24},
+        {"brand": "personal", "format": "day_in_the_life", "title": "Three sites before 9 a.m.",
+         "hook": "Three sites before 9 a.m.",
+         "angle": "A fast look at what running a renovation company actually feels like.",
+         "beats": ["Early start", "Site walk", "Workshop", "Coffee and planning"],
+         "segments": [{"clip_id": clip_ids[2], "start": 0.5, "end": 3.0, "purpose": "Opening walk"},
+                      {"clip_id": clip_ids[5], "start": 1.0, "end": 3.0, "purpose": "Workshop close-up"},
+                      {"clip_id": clip_ids[4], "start": 2.0, "end": 5.0, "purpose": "Coffee, planning the week"}],
+         "caption": "Most mornings look like this. #dayinthelife #founder", "est_seconds": 18},
+    ])
+
     # Inbox: one synced upload waiting, one still "uploading" (modified just now).
     _video(settings.INBOX / "IMG_2401.MOV", "testsrc2", 300, seconds=3)
     os.utime(settings.INBOX / "IMG_2401.MOV", (0, 0))

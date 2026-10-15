@@ -84,6 +84,14 @@ main { padding: 16px 24px 48px; }
 .chip.revising, .chip.producing, .chip.planned, .chip.processing, .chip.uploading, .chip.transcribed { color: var(--warn); }
 .chip.failed, .chip.rejected { color: var(--bad); }
 .chip.notes { color: var(--text); background: var(--accent); border-color: transparent; }
+.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 16px; }
+.toolbar input {
+  flex: 1 1 320px; max-width: 520px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 10px; padding: 9px 12px;
+}
+.toolbar .muted { color: var(--muted); }
+.toolbar[hidden] { display: none; }
+.beats { margin: 0; padding-left: 20px; line-height: 1.5; }
 .empty { grid-column: 1 / -1; color: var(--muted); padding: 48px 0; text-align: center; }
 
 /* ── Viewer ─────────────────────────────────────────── */

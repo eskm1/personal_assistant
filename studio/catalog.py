@@ -8,6 +8,8 @@ The studio catalogue (SQLite), shared by the worker, the dashboard and the edito
   status 'ready'; Bryan reviews it on the dashboard.
 - feedback: Bryan's notes on a clip or a production version, optionally pinned
   to a moment in the video.
+- ideas: post ideas Claude proposes from the library (ideas.py). Approving one
+  creates a 'planned' production whose plan (segments, hook, beats) the editor follows.
 
 The review contract between the dashboard and the editor:
   ready --(request changes)--> revising --(editor re-renders, version + 1,
@@ -81,11 +83,29 @@ CREATE TABLE IF NOT EXISTS feedback (
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS feedback_target ON feedback (target, target_id);
+
+CREATE TABLE IF NOT EXISTS ideas (
+    id            INTEGER PRIMARY KEY,
+    batch         TEXT NOT NULL,           -- one "Suggest posts" run
+    status        TEXT NOT NULL DEFAULT 'new', -- new | made | dismissed
+    brand         TEXT,
+    format        TEXT,
+    title         TEXT NOT NULL,
+    hook          TEXT,
+    angle         TEXT,                    -- why it should work
+    beats         TEXT,                    -- JSON array: the post's structure, in order
+    segments      TEXT,                    -- JSON array of {clip_id, start, end, purpose}
+    caption       TEXT,
+    est_seconds   REAL,
+    production_id INTEGER,
+    created_at    TEXT NOT NULL
+);
 """
 
 # Columns added after the first release, applied to existing databases on connect.
 _ADDED_COLUMNS = {
     "clips": {"reviewed_at": "TEXT"},
+    "productions": {"plan": "TEXT"},  # JSON: the approved idea the editor follows
 }
 
 
@@ -206,3 +226,40 @@ def update_clip_review(conn: sqlite3.Connection, clip_id: int, brand: str, fmt: 
     conn.execute("UPDATE clips SET brand = ?, format = ?, usable = ?, reviewed_at = ? WHERE id = ?",
                  (brand, fmt, int(usable), now(), clip_id))
     conn.commit()
+
+
+# ── Ideas ─────────────────────────────────────────────────────────────────────
+
+def save_ideas(conn: sqlite3.Connection, batch: str, ideas: list[dict]) -> None:
+    for i in ideas:
+        conn.execute(
+            """INSERT INTO ideas (batch, brand, format, title, hook, angle, beats, segments, caption,
+                   est_seconds, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (batch, i["brand"], i["format"], i["title"], i["hook"], i["angle"], json.dumps(i["beats"]),
+             json.dumps(i["segments"]), i["caption"], i["est_seconds"], now()),
+        )
+    conn.commit()
+
+
+def make_production(conn: sqlite3.Connection, idea_id: int, caption: str | None = None) -> int:
+    """Approve an idea: a 'planned' production the editor will pick up."""
+    idea = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
+    if idea is None:
+        raise KeyError(idea_id)
+    if idea["production_id"]:
+        return idea["production_id"]
+    segments = json.loads(idea["segments"] or "[]")
+    plan = {k: idea[k] for k in ("title", "brand", "format", "hook", "angle", "est_seconds")}
+    plan.update(beats=json.loads(idea["beats"] or "[]"), segments=segments, idea_id=idea_id)
+    clip_ids = list(dict.fromkeys(seg["clip_id"] for seg in segments))
+    stamp = now()
+    cur = conn.execute(
+        """INSERT INTO productions (title, brand, format, status, version, idea, source_clips, caption,
+               plan, created_at, updated_at) VALUES (?, ?, ?, 'planned', 0, ?, ?, ?, ?, ?, ?)""",
+        (idea["title"], idea["brand"], idea["format"], f"{idea['hook']}\n\n{idea['angle']}",
+         json.dumps(clip_ids), caption if caption is not None else idea["caption"], json.dumps(plan),
+         stamp, stamp),
+    )
+    conn.execute("UPDATE ideas SET status = 'made', production_id = ? WHERE id = ?", (cur.lastrowid, idea_id))
+    conn.commit()
+    return cur.lastrowid

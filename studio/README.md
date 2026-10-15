@@ -131,7 +131,20 @@ powershell -ExecutionPolicy Bypass -File .\install_task.ps1   # start at sign-in
 Drop one short clip in the inbox before `--once`. It's picked up after it has been
 unchanged for 20 seconds, and you should get a Telegram message within a minute or two.
 
-## 7. The dashboard (where you review)
+## 7. The Studio desktop icon
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_shortcut.ps1
+```
+
+This puts a **Studio** icon on your desktop. Double-click it any time: if the worker isn't
+running it starts it in the background (no window), waits for the dashboard, and opens it in
+your browser. If it's already running, it just opens the browser. With `install_task.ps1`
+also set up, the worker is always running after you sign in and the icon is simply the way
+in. To stop the worker: Task Scheduler → Studio Worker → End, or end `pythonw.exe` in Task
+Manager.
+
+## 8. The dashboard (where you review)
 
 While the worker runs, it serves a review site at **http://127.0.0.1:8765** on the laptop.
 It's laid out like Reels: a grid of tiles you can filter by account, with tabs for each stage.
@@ -139,6 +152,7 @@ It's laid out like Reels: a grid of tiles you can filter by account, with tabs f
 | Tab | What's in it |
 | --- | --- |
 | To review | Edited drafts waiting for you |
+| Ideas | Posts Claude planned from your library, waiting for Make this or Dismiss |
 | Being edited | Drafts in progress, including ones you sent back |
 | Library | Raw clips, tagged by Claude |
 | Ingesting | Clips being processed, or that failed and will be retried |
@@ -152,8 +166,20 @@ draft opens straight away while the editor revises the last one in the backgroun
 write or approve the post caption here. Keyboard: J / K for next and previous, Space to play,
 Esc to close, Ctrl+Enter to add a note.
 
-Editing isn't built yet (phase 4), so for now **To review** stays empty, and the Library is
-where you check Claude's tags. To try the full review flow with sample videos, run
+**Ideas:** on the Ideas tab, press **Suggest posts** (optionally with a focus such as "kitchen
+projects this month"). Claude reads your tagged clips, their timestamped transcripts and best
+moments, `brands.md` and the playbook, and proposes posts built only from footage you have:
+a hook, why it works, the structure, the exact clip segments, and a draft caption. Open one
+to play each segment, edit the caption, then **Make this** (it moves to Being edited for the
+editor) or **Dismiss**. One run costs one Claude call over your library, roughly tens of
+cents for a few dozen clips.
+
+**The playbook** lives at `Studio\playbook.md`. It starts with editing rules adapted from
+Nate Herk's Edit Kit, and notes you mark **Remember for future edits** are added at the
+bottom. Ideas and the editor both follow it; edit it freely.
+
+The editor isn't built yet (phase 5), so ideas you make wait in Being edited and **To review**
+stays empty for now. To try the full review flow with sample videos, run
 `.\venv\Scripts\python demo.py`, which uses a separate throwaway folder, and open the
 address it prints.
 

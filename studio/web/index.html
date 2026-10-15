@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Studio</title>
-  <link rel="icon" href="data:,">
+  <link rel="icon" href="/static/studio.ico">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -23,6 +23,11 @@
 
   <main>
     <p class="stage-hint" id="stage-hint"></p>
+    <div class="toolbar" id="toolbar" hidden>
+      <input id="idea-focus" type="text" maxlength="500" placeholder="Focus (optional), e.g. kitchen projects this month">
+      <button class="btn primary" id="suggest">Suggest posts</button>
+      <span class="muted" id="ideas-status"></span>
+    </div>
     <section class="grid" id="grid" aria-live="polite"></section>
   </main>
 
