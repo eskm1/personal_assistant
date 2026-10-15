@@ -4,8 +4,8 @@
 # Remove it again with:
 #   Unregister-ScheduledTask -TaskName "Studio Worker" -Confirm:$false
 #
-# A logon task (not a Windows service) on purpose: Google Drive for desktop only
-# mounts the inbox drive inside your signed-in session.
+# A logon task (not a Windows service) on purpose: OneDrive (or Google Drive) only
+# syncs the inbox folder inside your signed-in session.
 
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path

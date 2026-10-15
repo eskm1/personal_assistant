@@ -83,7 +83,7 @@ def is_ready(path: Path) -> bool:
         stat = path.stat()
         if stat.st_size == 0 or time.time() - stat.st_mtime < STABLE_SECONDS:
             return False
-        with open(path, "rb") as f:  # Drive holds a lock while it's still writing
+        with open(path, "rb") as f:  # the sync client holds a lock while still writing
             f.read(1)
         return True
     except OSError:
@@ -207,7 +207,7 @@ def ingest(conn, path: Path, use_claude: bool) -> None:
     clip_dir = _unique(LIBRARY / when.strftime("%Y-%m") / f"{when:%Y-%m-%d_%H%M}_{path.stem}")
     clip_dir.mkdir(parents=True)
     video = clip_dir / path.name
-    shutil.move(str(path), str(video))  # copy + delete when the inbox is on the Drive
+    shutil.move(str(path), str(video))  # copy + delete when the inbox is on another drive
     clip_id = catalog.start(conn, fp, source_name, clip_dir, video)
     log.info("Ingesting %s -> %s", source_name, clip_dir)
 

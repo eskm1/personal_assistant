@@ -7,7 +7,7 @@ const STAGES = [
   { key: "producing", label: "Being edited", hint: "Edits in progress, including drafts you sent back. They return to To review when the new version renders." },
   { key: "library", label: "Library", hint: "Raw clips, tagged by Claude. Fix a wrong account or format, or leave a note on how a clip should be used." },
   { key: "ingesting", label: "Ingesting", hint: "Clips being transcribed and tagged right now, plus any that failed and will be retried." },
-  { key: "cloud", label: "In the cloud", hint: "Uploads sitting in the Google Drive inbox. The laptop picks each one up once it finishes syncing." },
+  { key: "cloud", label: "In the cloud", hint: "Uploads sitting in the OneDrive inbox. The laptop picks each one up once it finishes syncing." },
   { key: "done", label: "Done", hint: "Approved, posted and rejected edits." },
 ];
 const BRAND = { personal: "Personal", urban_makers: "Urban Makers", unsure: "Brand unsure" };
@@ -84,7 +84,7 @@ function renderTabs() {
 function tileHTML(item, index) {
   const media = item.thumb
     ? `<img src="${esc(item.thumb)}" alt="" loading="lazy">`
-    : `<div class="placeholder">${item.kind === "inbox" ? `${esc(item.size_mb)} MB<br>in Google Drive` : "No preview yet"}</div>`;
+    : `<div class="placeholder">${item.kind === "inbox" ? `${esc(item.size_mb)} MB<br>in OneDrive` : "No preview yet"}</div>`;
   const meta = [item.format && FORMAT[item.format], item.duration && mmss(item.duration)].filter(Boolean);
   return `<button class="tile" data-index="${index}" aria-label="${esc(item.title)}">
     ${media}
@@ -206,7 +206,7 @@ function renderPlayer(item) {
     frame.innerHTML = `<video controls autoplay playsinline src="${esc(item.video)}" ${item.thumb ? `poster="${esc(item.thumb)}"` : ""}></video>`;
     player().addEventListener("timeupdate", updatePinLabel);
   } else {
-    const why = item.kind === "inbox" ? "Still in Google Drive. It plays here once it's ingested." : "Being processed. It plays here once a preview is ready.";
+    const why = item.kind === "inbox" ? "Still in OneDrive. It plays here once it's ingested." : "Being processed. It plays here once a preview is ready.";
     frame.innerHTML = `<div class="placeholder">${why}</div>`;
   }
 }
@@ -267,7 +267,7 @@ function renderPanel() {
   const head = `<div><h2>${esc(d.title)}</h2></div><div class="chips">${chips(d)}${d.format ? `<span class="chip">${esc(FORMAT[d.format] || d.format)}</span>` : ""}</div>`;
 
   if (d.kind === "inbox") {
-    panel.innerHTML = `${head}<div class="box"><p>${esc(d.size_mb)} MB in the Google Drive inbox.
+    panel.innerHTML = `${head}<div class="box"><p>${esc(d.size_mb)} MB in the OneDrive inbox.
       ${d.status === "uploading" ? "Still syncing to the laptop." : "Synced; the worker picks it up on its next pass (within a minute)."}</p></div>`;
     return;
   }

@@ -22,9 +22,9 @@ def _path(name: str, default: Path) -> Path:
 
 # ── Folders ───────────────────────────────────────────────────────────────────
 # ROOT holds everything the worker owns. INBOX is where the phone's uploads land —
-# usually a Google Drive folder synced by Drive for desktop, so it can live
+# usually a OneDrive (or Google Drive) folder synced to this laptop, so it can live
 # outside ROOT. Processed clips are MOVED out of the inbox into the library, which
-# also frees the Drive space they used.
+# also frees the cloud space they used.
 ROOT = _path("STUDIO_ROOT", Path.home() / "Studio")
 INBOX = _path("STUDIO_INBOX", ROOT / "Inbox")
 LIBRARY = ROOT / "Library"

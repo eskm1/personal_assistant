@@ -1,6 +1,6 @@
 # Studio worker and dashboard
 
-Film on your phone and the video lands in a Google Drive folder. Your Windows laptop at
+Film on your phone and upload the video to a OneDrive folder. Your Windows laptop at
 home picks it up, transcribes it, and has Claude tag it as Personal or Urban Makers.
 It also labels the format (talking head, day in the life or compilation footage) and the
 best moments, then files it in a searchable library. Every video shows up on the
@@ -10,7 +10,7 @@ This covers phase 1 of the Content Studio plan (capture and understand) plus the
 dashboard. Ideas and auto-editing come next and feed drafts into the dashboard's To review tab.
 
 ```
-Phone ──share──► Google Drive "Studio Inbox" ──sync──► laptop
+Phone ──upload──► OneDrive "Studio Inbox" ──sync──► laptop
                                                        │  ffmpeg: audio + frames
                                                        │  Whisper: transcript (CPU; NVIDIA GPU if present)
                                                        │  Claude: brand, format, moments
@@ -30,7 +30,7 @@ ignores this folder.
 
 ## 1. Keep the laptop awake at home
 
-The laptop is the server now. When you take it out, uploads queue in Drive and are
+The laptop is the server now. When you take it out, uploads queue in OneDrive and are
 processed once it's back home and awake.
 
 1. **Settings → System → Power**, when plugged in: Screen off after 10 minutes,
@@ -58,7 +58,6 @@ In **PowerShell**:
 winget install Python.Python.3.12
 winget install Gyan.FFmpeg
 winget install Git.Git
-winget install Google.GoogleDrive
 ```
 
 Close and reopen PowerShell so the new commands are on PATH, then confirm with
@@ -83,19 +82,30 @@ noticeably slower on the CPU, which is usually fine for a background worker.
 
 ## 4. Set up the inbox
 
-1. Sign in to **Google Drive for desktop** and create a folder in My Drive called
-   `Studio Inbox`. On the laptop it appears as `G:\My Drive\Studio Inbox` (the drive
-   letter may differ).
-2. On your **iPhone**, either:
-   - In the Drive app, tap **+ → Upload** and pick videos, or
+OneDrive is built into Windows, so there's nothing to install.
+
+1. In File Explorer, open **OneDrive** (signed in with the account that has your 1 TB) and
+   create a folder called `Studio Inbox`. It's usually `C:\Users\<you>\OneDrive\Studio Inbox`,
+   or `OneDrive - <company>` for a work account.
+2. Right-click the folder → **Always keep on this device**, so new uploads download as soon
+   as they arrive instead of staying cloud-only.
+3. On your **iPhone**, either:
+   - In the OneDrive app, open `Studio Inbox`, tap **+ → Upload** and pick videos, or
    - Make a one-tap share action. In **Shortcuts → +**, turn on **Show in Share Sheet**
      and set it to receive **Media**. Add **Save File** with the destination
-     `Google Drive › Studio Inbox` and **Ask Where to Save** off, and name it
+     `OneDrive › Studio Inbox` and **Ask Where to Save** off, and name it
      "Send to Studio". From Photos, select clips, tap **Share → Send to Studio**.
-   - On Android, share to Drive and choose the `Studio Inbox` folder.
+   - On Android, share to OneDrive and choose the `Studio Inbox` folder.
 
 Upload the original files, not compressed copies. Processed clips are moved out of
-Drive into the library, so Drive storage only holds the queue.
+OneDrive into the library on the laptop, so OneDrive only holds the queue.
+
+**Don't point the inbox at OneDrive's camera-backup folder** (Pictures › Camera Roll).
+The worker moves every video it processes out of the inbox, which would take them out of
+your phone's backup. Keep `Studio Inbox` for clips you send on purpose.
+
+Google Drive for desktop works the same way if you ever switch: point `STUDIO_INBOX` at
+`G:\My Drive\Studio Inbox`.
 
 ## 5. Configure
 
@@ -130,7 +140,7 @@ It's laid out like Reels: a grid of tiles you can filter by account, with tabs f
 | Being edited | Drafts in progress, including ones you sent back |
 | Library | Raw clips, tagged by Claude |
 | Ingesting | Clips being processed, or that failed and will be retried |
-| In the cloud | Uploads still in the Google Drive inbox |
+| In the cloud | Uploads still in the OneDrive inbox |
 | Done | Approved, posted and rejected edits |
 
 Open a tile to watch it. Pause on a moment, type a note, and it's pinned to that time. Tick
