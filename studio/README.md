@@ -68,7 +68,9 @@ Close and reopen PowerShell so the new commands are on PATH, then confirm with
 ```powershell
 cd $env:USERPROFILE
 git clone https://github.com/eskm1/personal_assistant.git
-cd personal_assistant\studio
+cd personal_assistant
+git checkout claude/sleepy-thompson-iewk09   # until this branch is merged into main
+cd studio
 python -m venv venv
 .\venv\Scripts\pip install -r requirements.txt
 # Only with an NVIDIA card (skip for Intel Arc / AMD):
@@ -116,7 +118,7 @@ notepad .env
 
 Fill in `STUDIO_INBOX`, `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN` and
 `TELEGRAM_CHAT_ID`. Then edit **`brands.md`**: it tells Claude what belongs on each
-account, and the clearer it is, the better the sorting. Fill in the two TODO lines.
+account. The defaults are a good start; sharpen them whenever a clip lands on the wrong account.
 
 ## 6. Check, test, and leave it running
 
