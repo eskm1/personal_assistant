@@ -545,6 +545,14 @@ $("#next").addEventListener("click", () => step(1));
 
 // Deep links (#/production/12) and the browser's back button.
 async function routeFromHash() {
+  // #/tab/library etc.: links in Telegram digests open a tab directly.
+  const tab = location.hash.match(/^#\/tab\/(\w+)$/);
+  if (tab && STAGES.some((s) => s.key === tab[1])) {
+    if (!$("#viewer").hidden) closeViewer();
+    state.stage = tab[1];
+    render();
+    return;
+  }
   const m = location.hash.match(/^#\/(clip|production|inbox|idea)\/(.+)$/);
   if (!m) { if (!$("#viewer").hidden) closeViewer(); return; }
   const id = decodeURIComponent(m[2]);

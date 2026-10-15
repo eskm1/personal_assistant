@@ -180,8 +180,7 @@ def tag_clip(conn, clip_id: int, clip_dir: Path, video: Path, source_name: str,
                                                 encoding="utf-8")
 
     catalog.save_tags(conn, clip_id, meta, transcript, analysis)
-    link = f"{settings.DASHBOARD_URL}/#/clip/{clip_id}" if settings.DASHBOARD_URL else ""
-    notify.send(notify.clip_tagged(meta, analysis, source_name, link))
+    notify.digest.add("processed")
 
 
 def ingest(conn, path: Path, use_claude: bool) -> None:
@@ -195,15 +194,14 @@ def ingest(conn, path: Path, use_claude: bool) -> None:
     existing = catalog.find(conn, fp)
     if existing is not None and existing["status"] in ("tagged", "transcribed"):
         _set_aside(path, "Duplicates", f"same clip as {existing['video_path']}")
-        notify.send(f"Studio: {source_name} is a duplicate of a clip already in the library; set aside.")
+        notify.digest.add("duplicate")
         return
 
     try:
         meta = extract.probe(path)
     except RuntimeError as e:
         _set_aside(path, "Unreadable", str(e))
-        notify.send(f"Studio: couldn't read {source_name} as a video; moved to Unreadable "
-                    "(details in worker.log).")
+        notify.digest.add("unreadable")
         return
 
     when = _recorded_local(meta, path)
@@ -219,8 +217,7 @@ def ingest(conn, path: Path, use_claude: bool) -> None:
     except Exception as e:
         log.exception("Failed on %s", source_name)
         catalog.mark_failed(conn, clip_id, f"{type(e).__name__}: {e}")
-        notify.send(f"Studio: {source_name} is saved in the library but tagging failed "
-                    f"({type(e).__name__}: {e}). It is retried next time the worker starts.")
+        notify.digest.add("failed")
 
 
 def retry_failed(conn, use_claude: bool) -> None:
@@ -282,14 +279,13 @@ def run_editor(stop_after_one: bool = False) -> None:
         log.info("Editing production %s: %s", production_id, title)
         try:
             editor.edit(conn, production_id)
-            link = f"\n{settings.DASHBOARD_URL}/#/production/{production_id}" if settings.DASHBOARD_URL else ""
-            notify.send(f"Studio: draft ready to review: {title}{link}")
+            notify.digest.add("draft")
         except Exception as e:
             log.exception("Edit failed for production %s", production_id)
             conn.execute("UPDATE productions SET status = 'failed', error = ?, updated_at = ? WHERE id = ?",
                          (f"{type(e).__name__}: {e}"[:2000], catalog.now(), production_id))
             conn.commit()
-            notify.send(f"Studio: couldn't edit {title} ({type(e).__name__}). Details on the dashboard.")
+            notify.digest.add("edit_failed")
         if stop_after_one:
             return
 
@@ -384,14 +380,17 @@ def main() -> int:
         return 0
 
     import catalog
+    import notify
     conn = catalog.connect()
     use_claude = not args.no_claude
 
     if args.file:
         ingest(conn, args.file.resolve(), use_claude)
+        notify.digest.flush(force=True)
         return 0
     if args.retry_failed:
         retry_failed(conn, use_claude)
+        notify.digest.flush(force=True)
         return 0
     if args.rebuild_previews:
         rebuild_previews(conn)
@@ -416,6 +415,7 @@ def main() -> int:
     if not args.once:
         retry_failed(conn, use_claude)  # pick up anything a crash or outage left behind
         rebuild_previews(conn)
+    editor_on = not args.once and not args.no_editor
     while True:
         for path in inbox_videos():
             try:
@@ -423,8 +423,20 @@ def main() -> int:
             except Exception:  # never let one bad file stop the loop
                 log.exception("Unexpected error on %s", path.name)
         if args.once:
+            notify.digest.flush(force=True)
             return 0
+        notify.digest.flush(busy=_busy(conn, editor_on))
         time.sleep(POLL_SECONDS)
+
+
+def _busy(conn, editor_on: bool) -> bool:
+    """Still mid-batch: uploads in the inbox (synced or not) or edits queued."""
+    if INBOX.exists() and any(p.suffix.lower() in VIDEO_EXTS and not p.name.startswith((".", "~"))
+                              for p in INBOX.iterdir()):
+        return True
+    statuses = ("planned", "revising", "producing") if editor_on else ("producing",)
+    marks = ",".join("?" * len(statuses))
+    return conn.execute(f"SELECT 1 FROM productions WHERE status IN ({marks}) LIMIT 1", statuses).fetchone() is not None
 
 
 if __name__ == "__main__":

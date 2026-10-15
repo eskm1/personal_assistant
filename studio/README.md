@@ -4,7 +4,8 @@ Film on your phone and upload the video to a OneDrive folder. Your Windows lapto
 home picks it up, transcribes it, and has Claude tag it as Personal or Urban Makers.
 It also labels the format (talking head, day in the life or compilation footage) and the
 best moments, then files it in a searchable library. Every video shows up on the
-**dashboard**, a Reels-style review site the laptop serves, and Ava sends a Telegram ping.
+**dashboard**, a Reels-style review site the laptop serves. Ava sends one Telegram summary per batch
+("20 new videos processed, see …"), not a message per video.
 
 This covers phase 1 of the Content Studio plan (capture and understand) plus the review
 dashboard. Ideas and auto-editing come next and feed drafts into the dashboard's To review tab.
@@ -21,7 +22,7 @@ Phone ──upload──► OneDrive "Studio Inbox" ──sync──► laptop
                                                        │
                                                        ▼
                       Dashboard (http://127.0.0.1:8765): watch, note, approve
-                      Telegram: "Studio: Kitchen tiling day 2…" (notification only)
+                      Telegram: "Studio: 20 new videos processed. See …" (one per batch)
 ```
 
 It runs on its own machine and shares nothing with the bot on the server except the
@@ -129,7 +130,8 @@ powershell -ExecutionPolicy Bypass -File .\install_task.ps1   # start at sign-in
 ```
 
 Drop one short clip in the inbox before `--once`. It's picked up after it has been
-unchanged for 20 seconds, and you should get a Telegram message within a minute or two.
+unchanged for 20 seconds. `--once` sends its Telegram summary as soon as it finishes; the
+background worker waits until a batch of uploads and edits has settled, then sends one summary.
 
 ## 7. The Studio desktop icon
 
@@ -194,8 +196,9 @@ STUDIO_DASHBOARD_URL=http://<laptop's Tailscale name>:8765
 
 Restart the worker and open that address; any username works, with that password. The
 dashboard won't listen beyond the laptop without a password. With `STUDIO_DASHBOARD_URL` set,
-Telegram messages link straight to the clip. Telegram is just for notifications now; the
-dashboard is where you give feedback.
+Telegram is just for notifications: one summary per batch of uploads or edits, with a link
+to the right dashboard tab (set `STUDIO_DASHBOARD_URL` so the link works from your phone).
+The dashboard is where you give feedback.
 
 ## 9. Editing prerequisites (phase 5)
 
