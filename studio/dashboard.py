@@ -18,6 +18,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 from datetime import timedelta
@@ -185,9 +186,26 @@ def logout():
 
 @app.get("/api/me")
 def me():
+    import updater
     u = g.user
     return jsonify({"id": u["id"], "name": u["name"], "email": u["email"], "role": u["role"],
-                    "local": is_local()})
+                    "local": is_local(), "version": updater.version()})
+
+
+@app.post("/api/update")
+@owner_only
+def update_now():
+    """Check GitHub now; the worker updates and restarts as soon as it's idle."""
+    import updater
+    updater.requested = True
+    return jsonify({"ok": True})
+
+
+def busy() -> bool:
+    """Background work started here that a restart would cut short."""
+    import plan_routes
+    return (_ideas_job["running"] or any(j.get("state") == "building" for j in _resolve_jobs.values())
+            or any(j.get("state") == "running" for j in plan_routes._jobs.values()))
 
 
 @app.post("/api/me/password")
@@ -352,6 +370,12 @@ def index():
     return send_file(WEB / "index.html")
 
 
+def _version_commit() -> str:
+    import updater
+    v = updater.version()
+    return f"{v['commit']}|{v['subject']}"
+
+
 @app.get("/api/board")
 def board():
     clip_notes, production_notes = _open_notes("clip"), _open_notes("production")
@@ -365,6 +389,7 @@ def board():
                   *(_production_item(r, production_notes) for r in productions),
                   *(_idea_item(r) for r in ideas)],
         "ideas_job": dict(_ideas_job),
+        "version": _version_commit(),
         "costs": usage.month_summary(db()) if is_owner() else None,
     })
 
@@ -676,7 +701,15 @@ def run() -> None:
         return
     from waitress import serve
     log.info("Dashboard on http://%s:%s", DASHBOARD_HOST, DASHBOARD_PORT)
-    serve(app, host=DASHBOARD_HOST, port=DASHBOARD_PORT, threads=8, _quiet=True)
+    for attempt in range(30):  # after an update restart, the old worker may still hold the port briefly
+        try:
+            serve(app, host=DASHBOARD_HOST, port=DASHBOARD_PORT, threads=8, _quiet=True)
+            return
+        except OSError as e:
+            if attempt == 29:
+                log.error("Dashboard couldn't start: %s", e)
+                return
+            time.sleep(1)
 
 
 if __name__ == "__main__":

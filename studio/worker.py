@@ -65,22 +65,28 @@ def _setup_logging() -> None:
 _lock_handle = None
 
 
-def _single_instance() -> bool:
+def _single_instance(wait: float = 0) -> bool:
     """Hold an OS lock on ROOT/worker.lock so a second copy (say, the scheduled
-    task firing while one is already running) exits instead of double-processing."""
+    task firing while one is already running) exits instead of double-processing.
+    wait: seconds to keep trying (a worker restarted for an update waits for the
+    old one to exit)."""
     global _lock_handle
     _lock_handle = open(ROOT / "worker.lock", "a+")
-    _lock_handle.seek(0)
-    try:
-        if os.name == "nt":
-            import msvcrt
-            msvcrt.locking(_lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(_lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return True
-    except OSError:
-        return False
+    deadline = time.time() + wait
+    while True:
+        _lock_handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(_lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(_lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.5)
 
 
 # ── Inbox ─────────────────────────────────────────────────────────────────────
@@ -491,7 +497,8 @@ def main() -> int:
     _setup_logging()
     if args.check:
         return check()
-    if not _single_instance():
+    restarted = os.environ.pop("STUDIO_RESTARTED", "") == "1"
+    if not _single_instance(wait=60 if restarted else 0):
         log.info("Another studio worker is already running; exiting.")
         return 0
 
@@ -563,14 +570,22 @@ def main() -> int:
         if args.once:
             notify.digest.flush(force=True)
             return 0
-        notify.digest.flush(busy=_busy(conn, editor_on))
+        busy = _busy(conn, editor_on)
+        notify.digest.flush(busy=busy)
+        import updater
+        updater.tick(idle=not busy and not (dashboard_busy() if not args.no_dashboard else False))
         time.sleep(POLL_SECONDS)
+
+
+def dashboard_busy() -> bool:
+    """A Claude job or Resolve export started from the dashboard is still running."""
+    import dashboard
+    return dashboard.busy()
 
 
 def _busy(conn, editor_on: bool) -> bool:
     """Still mid-batch: uploads in the inbox (synced or not) or edits queued."""
-    if INBOX.exists() and any(p.suffix.lower() in VIDEO_EXTS and not p.name.startswith((".", "~"))
-                              for p in INBOX.iterdir()):
+    if inbox_files():
         return True
     statuses = ("planned", "revising", "producing") if editor_on else ("producing",)
     marks = ",".join("?" * len(statuses))

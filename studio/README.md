@@ -408,6 +408,16 @@ log; one wireless mic for speech.
 
 ## Day to day
 
+**Updates install themselves.** Every 10 minutes, when Studio is idle (nothing uploading,
+ingesting, editing, or running a Claude job), the worker checks GitHub for a new version. If there
+is one, it pulls it, installs any new packages, checks the new code starts, and restarts itself in
+the background. Open dashboards refresh on their own once nobody is typing. If an update would
+break something, it goes back to the previous version and Telegram tells you once. To update right
+away: account menu (top right) > **Update now**. The menu also shows which version is running.
+`STUDIO_AUTO_UPDATE_MINUTES=0` in `.env` turns automatic updates off. Edits you make on the laptop
+to tracked files (such as `brands.md`) are kept; if one clashes with an update, the update waits
+and Telegram says so.
+
 | Task | Command (from `studio`, with `.\venv\Scripts\python`) |
 | --- | --- |
 | See what it's doing | open `%USERPROFILE%\Studio\logs\worker.log` |
@@ -415,6 +425,7 @@ log; one wireless mic for speech.
 | Process one specific file | `worker.py --file "D:\footage\clip.mov"` |
 | Transcribe and catalogue without Claude | add `--no-claude` |
 | Stop / start the background worker | Task Scheduler → **Studio Worker** → End / Run |
+| Update now instead of waiting | account menu > **Update now** |
 | Run the worker without the dashboard | add `--no-dashboard` |
 
 Files the worker can't use are moved out of the inbox, not deleted. They go to

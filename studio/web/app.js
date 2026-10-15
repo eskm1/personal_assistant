@@ -169,7 +169,18 @@ function renderAccount() {
       <span class="muted small">${esc(me.email)} · ${isOwner() ? "Owner" : "Team"}</span></div>
     ${isOwner() ? `<button role="menuitem" data-account="team">Team…</button>` : ""}
     <button role="menuitem" data-account="password">Change password</button>
-    <button role="menuitem" data-account="signout">Sign out</button>`;
+    <button role="menuitem" data-account="signout">Sign out</button>
+    ${versionHTML(me.version)}`;
+}
+function versionHTML(v) {
+  if (!v) return "";
+  const when = v.date ? new Date(v.date).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "";
+  const status = v.error ? `<span class="small" style="color:var(--bad)">Last update failed: ${esc(v.error)}</span>`
+    : v.requested ? `<span class="muted small">Update requested: Studio restarts by itself when it's idle.</span>`
+    : v.auto_minutes ? `<span class="muted small">Updates itself every ${esc(v.auto_minutes)} min when idle.</span>` : "";
+  return `<div class="menu-head" style="border-top:1px solid var(--line)">
+      <span class="muted small" title="${esc(v.subject)}">Version ${esc(v.commit)}${when ? ` · ${esc(when)}` : ""}</span>${status}</div>
+    ${isOwner() ? `<button role="menuitem" data-account="update">Update now</button>` : ""}`;
 }
 function setAccountMenu(open) {
   $("#account-menu").hidden = !open;
@@ -187,6 +198,14 @@ $("#account-menu").addEventListener("click", async (e) => {
   setAccountMenu(false);
   if (btn.dataset.account === "team") openTeam();
   else if (btn.dataset.account === "password") openPassword();
+  else if (btn.dataset.account === "update") {
+    try {
+      await api("/api/update", {});
+      toast("Checking for updates. If there's one, Studio restarts by itself in about a minute.");
+      state.me = await api("/api/me");
+      renderAccount();
+    } catch (err) { toast(`Couldn't start the update: ${err.message}`); }
+  }
   else if (btn.dataset.account === "signout") {
     await fetch("/logout", { method: "POST" }).catch(() => {});
     location.href = "/login";
@@ -367,6 +386,18 @@ function render() {
 async function sync() {
   try {
     const data = await api("/api/board");
+    if (data.version && state.version && data.version !== state.version) {
+      // A new version is running: reload to get its screens too, but never
+      // under someone's typing (fields save when you click away).
+      const subject = data.version.split("|").slice(1).join("|");
+      toast(`Studio updated${subject ? `: ${subject}` : ""}. The page refreshes when you're not typing.`);
+      state.reloadPending = true;
+    }
+    if (state.reloadPending && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
+      setTimeout(() => location.reload(), 2500);
+      state.reloadPending = false;
+    }
+    state.version = data.version || state.version;
     state.lastSync = Date.now();
     const signature = JSON.stringify(data.items);
     const wasRunning = state.ideasJob?.running;

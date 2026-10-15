@@ -97,6 +97,10 @@ DASHBOARD_PORT = int(_env("STUDIO_DASHBOARD_PORT", "8765"))
 # Telegram pings so a notification links straight to the review.
 DASHBOARD_URL = _env("STUDIO_DASHBOARD_URL").rstrip("/")
 
+# How often the worker checks GitHub for a new version and updates itself while
+# idle (updater.py). 0 turns automatic updates off ("Update now" still works).
+AUTO_UPDATE_MINUTES = int(_env("STUDIO_AUTO_UPDATE_MINUTES", "10"))
+
 # Notes marked "remember for future edits" are appended here; the editor reads it.
 PLAYBOOK = ROOT / "playbook.md"
 
