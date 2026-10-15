@@ -6,7 +6,6 @@ Every call goes through _run so ffmpeg never flashes a console window when the
 worker runs headless under pythonw on Windows.
 """
 import json
-import logging
 import os
 import shutil
 import subprocess
@@ -15,11 +14,8 @@ from pathlib import Path
 
 from settings import FFMPEG, FFPROBE, FRAME_EVERY_SECONDS, FRAME_WIDTH, MAX_FRAMES
 
-log = logging.getLogger("studio.extract")
-
 # Without this, each ffmpeg call from pythonw pops up (and closes) a black window.
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-_window_flag_ok = True
 
 
 @lru_cache(maxsize=None)
@@ -31,21 +27,13 @@ def resolve(binary: str) -> str:
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess:
-    global _window_flag_ok
+    if not args[0]:
+        raise RuntimeError("ffmpeg/ffprobe path is empty; check FFMPEG_PATH / FFPROBE_PATH in .env")
     cmd = [resolve(args[0]), *args[1:]]
     # UTF-8 explicitly: Windows would otherwise decode ffmpeg's output with the
     # legacy code page and choke on non-ASCII metadata or file names.
-    kwargs = dict(capture_output=True, text=True, encoding="utf-8", errors="replace")
-    try:
-        result = subprocess.run(cmd, creationflags=_NO_WINDOW if _window_flag_ok else 0, **kwargs)
-    except OSError as e:
-        # WinError 87: some Windows setups refuse CREATE_NO_WINDOW. Run without it
-        # (a console may flash under pythonw) rather than fail every clip.
-        if getattr(e, "winerror", None) != 87 or not (_NO_WINDOW and _window_flag_ok):
-            raise
-        log.warning("Windows rejected the hidden-window flag for %s; running without it", cmd[0])
-        _window_flag_ok = False
-        result = subprocess.run(cmd, **kwargs)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            creationflags=_NO_WINDOW)
     if result.returncode != 0:
         tail = (result.stderr or "").strip().splitlines()[-3:]
         raise RuntimeError(f"{Path(cmd[0]).name} failed: {' | '.join(tail)}")
