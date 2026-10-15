@@ -338,7 +338,9 @@ function renderTabs() {
     const hot = s.key === "review" && n ? " hot" : "";
     return `<button data-stage="${s.key}" class="${s.key === state.stage ? "on" : ""}">${s.label}<span class="count${hot}">${n}</span></button>`;
   }).join("");
-  $("#stage-hint").textContent = STAGES.find((s) => s.key === state.stage).hint;
+  $("#stage-hint").textContent = state.stage === "plan" && state.cloud
+    ? "The team plans on the online planner. Footage dropped in a project's inbox folder is still matched to its shots here, and shows up there."
+    : STAGES.find((s) => s.key === state.stage).hint;
   renderToolbar();
 }
 
@@ -382,8 +384,33 @@ function render() {
   const planning = state.stage === "plan";
   $("#grid").hidden = planning;
   $("#planner").hidden = !planning;
-  if (planning) renderPlanner();
+  if (planning) (state.cloud ? renderCloudPlan() : renderPlanner());
   else renderGrid();
+}
+
+// Planning online (Supabase): the Plan tab links to the planner and shows how the
+// laptop's sync is going, instead of the local board.
+function renderCloudPlan() {
+  const c = state.cloud;
+  const root = $("#planner");
+  const sig = JSON.stringify(c);
+  if (plan.cloudSig === sig && $("#cloud-plan")) return;
+  plan.cloudSig = sig;
+  plan.shellFor = null;
+  const url = safeSrc(c.planner_url);
+  const o = c.online || {};
+  const online = o.projects != null
+    ? ` · online: ${o.projects} project${o.projects === 1 ? "" : "s"}, ${o.ideas} ideas, ${o.shots} shots, ${o.takes} takes, ${o.clips} clip${o.clips === 1 ? "" : "s"}`
+    : "";
+  root.innerHTML = `<div class="plan-empty" id="cloud-plan">
+    <h2>Planning has moved online</h2>
+    <p class="muted">Projects, ideas and shot lists live on the online planner now, so the team can plan while this laptop is off. Footage that lands here is still checked, matched to the planned shots and shown there.</p>
+    ${url ? `<a class="btn primary" href="${esc(url)}" target="_blank" rel="noopener">Open the planner</a>`
+          : `<p class="muted small">Set STUDIO_PLANNER_URL in studio\\.env to link the planner here.</p>`}
+    <p class="muted small">${c.last_ok ? `Laptop last synced ${esc(ago(c.last_ok))}` : "Waiting for the laptop's first sync…"}${esc(online)}</p>
+    ${c.last_error ? `<p class="small">Last sync failed ${esc(ago(c.last_error_at))}: ${esc(c.last_error)}. It tries again every 30 seconds.</p>` : ""}
+    ${(c.jobs || []).length ? `<p class="muted small">Recent laptop jobs: ${c.jobs.map(esc).join("; ")}</p>` : ""}
+  </div>`;
 }
 
 async function sync() {
@@ -406,6 +433,9 @@ async function sync() {
     const wasRunning = state.ideasJob?.running;
     state.items = data.items;
     state.ideasJob = data.ideas_job || {};
+    const cloudBefore = JSON.stringify(state.cloud ?? null);
+    state.cloud = data.cloud || null;
+    const cloudChanged = cloudBefore !== JSON.stringify(state.cloud);
     const costs = $("#costs");
     costs.hidden = !data.costs;
     if (data.costs) {
@@ -426,12 +456,12 @@ async function sync() {
         : (known ? saved : "plan");
     }
     // Re-render only on change, so a hover preview isn't cut off every poll.
-    if (signature !== state.signature) {
+    if (signature !== state.signature || (cloudChanged && state.stage === "plan")) {
       state.signature = signature;
       render();
     }
     await refreshOpenItem();
-    if (state.stage === "plan" && $("#viewer").hidden && $("#checklist").hidden) await loadPlan();
+    if (state.stage === "plan" && !state.cloud && $("#viewer").hidden && $("#checklist").hidden) await loadPlan();
     if (!$("#checklist").hidden && !check.busy) await loadChecklist();
   } catch (e) {
     if (e.message !== "signed out") $("#updated").textContent = `Can't reach the laptop (${e.message})`;
@@ -2071,6 +2101,12 @@ async function routeFromHash() {
     return;
   }
   const planIdea = hash.match(/^#\/plan-idea\/(\d+)$/);
+  if (planIdea && state.cloud) {  // planned ideas open on the online planner now
+    closeOverlays();
+    state.stage = "plan";
+    render();
+    return;
+  }
   if (planIdea) {
     if (!$("#checklist").hidden) closeChecklist(false);
     if (state.current?.kind === "plan" && state.current.id === Number(planIdea[1])) return;

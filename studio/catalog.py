@@ -198,6 +198,9 @@ _ADDED_COLUMNS = {
         "reviewed_at": "TEXT",
         "quality": "TEXT",      # JSON: quality.assess() — verdict, flags with tips, measurements
         "project_id": "INTEGER",
+        "cloud_hash": "TEXT",      # hash of the summary last pushed to the online planner
+        "cloud_thumb": "TEXT",     # the frame last uploaded as its still
+        "cloud_pushed_at": "TEXT",
     },
     "productions": {
         "plan": "TEXT",   # JSON: the approved idea the editor follows
@@ -218,9 +221,15 @@ _ADDED_COLUMNS = {
         "position": "REAL",
         "created_by": "INTEGER",
         "updated_at": "TEXT",
+        "remote_id": "INTEGER",  # its row in the online planner (cloud_sync.py)
     },
     "feedback": {"author": "TEXT"},
-    "shots": {"camera": "TEXT"},  # iphone | zfc | gopro | any: which of the team's cameras films it
+    "shots": {"camera": "TEXT",  # iphone | zfc | gopro | any: which of the team's cameras films it
+              "remote_id": "INTEGER"},
+    # remote_id: the row's id in the online planner, when planning is online (cloud_sync.py).
+    "projects": {"remote_id": "INTEGER"},
+    "arcs": {"remote_id": "INTEGER"},
+    "takes": {"remote_id": "INTEGER"},
 }
 
 

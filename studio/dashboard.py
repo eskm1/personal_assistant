@@ -27,6 +27,7 @@ from flask import Flask, abort, g, jsonify, redirect, render_template_string, re
 from flask.sessions import SecureCookieSessionInterface
 
 import auth
+import cloud_sync
 import settings
 import playbook
 import usage
@@ -398,6 +399,8 @@ def board():
         "ideas_job": dict(_ideas_job),
         "version": _version_commit(),
         "costs": usage.month_summary(db()) if is_owner() else None,
+        # Planning online (cloud_sync.py): the Plan tab links to the planner instead.
+        "cloud": cloud_sync.dashboard_info(),
     })
 
 

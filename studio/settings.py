@@ -101,6 +101,15 @@ DASHBOARD_URL = _env("STUDIO_DASHBOARD_URL").rstrip("/")
 # idle (updater.py). 0 turns automatic updates off ("Update now" still works).
 AUTO_UPDATE_MINUTES = int(_env("STUDIO_AUTO_UPDATE_MINUTES", "10"))
 
+# ── Online planning (Supabase; README section 12) ────────────────────────────
+# The team plans on the online planner; the worker syncs with it whenever it runs
+# (cloud_sync.py). Blank = planning stays on this dashboard. The service key is a
+# secret: it only ever goes to STUDIO_SUPABASE_URL.
+SUPABASE_URL = _env("STUDIO_SUPABASE_URL").rstrip("/")
+SUPABASE_SERVICE_KEY = _env("STUDIO_SUPABASE_SERVICE_KEY")
+PLANNER_URL = _env("STUDIO_PLANNER_URL").rstrip("/")
+CLOUD_SYNC_SECONDS = int(_env("STUDIO_CLOUD_SYNC_SECONDS", "30"))
+
 # Notes marked "remember for future edits" are appended here; the editor reads it.
 PLAYBOOK = ROOT / "playbook.md"
 

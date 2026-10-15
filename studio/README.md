@@ -403,6 +403,25 @@ Ideas Claude suggests from existing footage (Ideas tab) can be moved onto a proj
 plan**: their footage becomes shots that are already filmed, and the shots the editor wished it
 had become shots to film.
 
+### Planning online
+
+Planning can live on the online planner instead (a website on Netlify with its data in Supabase),
+so the team plans, votes and attaches footage while this laptop is off. Fill in
+`STUDIO_SUPABASE_URL`, `STUDIO_SUPABASE_SERVICE_KEY` and `STUDIO_PLANNER_URL` in `studio\.env`
+and restart Studio. While the worker runs, it syncs about every 30 seconds:
+
+- it pulls the plan (projects, arcs, ideas, shots, takes) into this laptop, so new footage in a
+  project's inbox folder is still matched to its shots; the online plan always wins;
+- it pushes each library clip (title, quality verdict and tips, a still) and every matched take
+  (with a still), so the planner shows what's filmed;
+- it runs what only this laptop can do: **Shortlist music** (Epidemic Sound) and **Make this**
+  (the editor), and keeps each made idea's status (draft ready, approved, posted) up to date.
+
+The dashboard's Plan tab then links to the planner and shows when the laptop last synced.
+`python worker.py --cloud-check` tests the connection and shows what's waiting;
+`python worker.py --cloud-import` (with the worker stopped) moves a plan made here before the
+switch to the online planner, once (votes and comments stay here).
+
 ## 13. Quality checks
 
 Every clip gets a verdict as it's ingested: **Good**, **Check** (usable, with issues) or

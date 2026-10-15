@@ -24,6 +24,8 @@ Usage (from the studio folder, inside its venv):
   python worker.py --resolve 12     make a DaVinci Resolve project of production 12's draft
   python worker.py --check-quality  quality-check clips from before the check existed (--all: every clip)
   python worker.py --add-user a@b.com "Name" [--owner]  make a dashboard account
+  python worker.py --cloud-check   check the online planner connection and what the next sync does
+  python worker.py --cloud-import  push the plan made on this dashboard to the online planner, once
   add --no-claude to transcribe and catalogue without tagging (no API calls)
   add --no-dashboard to skip the review site (http://127.0.0.1:8765 by default)
 """
@@ -487,6 +489,10 @@ def main() -> int:
     mode.add_argument("--add-user", nargs=2, metavar=("EMAIL", "NAME"),
                       help="make a dashboard account (asks for the password); add --owner for Bryan")
     parser.add_argument("--owner", action="store_true", help="with --add-user: an owner account")
+    mode.add_argument("--cloud-check", action="store_true",
+                      help="check the online planner (Supabase) connection and what would sync")
+    mode.add_argument("--cloud-import", action="store_true",
+                      help="push the local plan (projects, arcs, ideas, shots, takes) to the online planner once")
     mode.add_argument("--trial", metavar="FOCUS", help="ideas -> one edited draft, with advice and costs")
     parser.add_argument("--no-claude", action="store_true", help="skip Claude tagging")
     parser.add_argument("--no-dashboard", action="store_true", help="don't serve the review dashboard")
@@ -497,8 +503,15 @@ def main() -> int:
     _setup_logging()
     if args.check:
         return check()
+    if args.cloud_check:
+        import catalog
+        import cloud_sync
+        return cloud_sync.check(catalog.connect())
     restarted = os.environ.pop("STUDIO_RESTARTED", "") == "1"
     if not _single_instance(wait=60 if restarted else 0):
+        if args.cloud_import:
+            print("Stop the Studio worker first (it syncs with the planner too), then run this again.")
+            return 1
         log.info("Another studio worker is already running; exiting.")
         return 0
 
@@ -535,6 +548,19 @@ def main() -> int:
             return 1
         print(f"Account made for {args.add_user[1]} ({'owner' if args.owner else 'team'}).")
         return 0
+    if args.cloud_import:
+        import cloud_sync
+        problem = cloud_sync.config_problem()
+        if problem:
+            print(f"Online planning is {problem}. Set it in studio\\.env first (README section 12).")
+            return 1
+        try:
+            done = cloud_sync.import_local(conn)
+        except cloud_sync.CloudError as e:
+            print(f"Import stopped: {e}. Run it again: what's already online isn't sent twice.")
+            return 1
+        print("Imported to the online planner: " + ", ".join(f"{n} {t}" for t, n in done.items()))
+        return 0
     if args.resolve:
         import resolve_export
         folder = resolve_export.build(conn, args.resolve)
@@ -561,12 +587,18 @@ def main() -> int:
         retry_failed(conn, use_claude)  # pick up anything a crash or outage left behind
         rebuild_previews(conn)
     editor_on = not args.once and not args.no_editor
+    import cloud_sync
+    if cloud_sync.enabled():
+        log.info("Online planning on: syncing with %s every %ss", settings.SUPABASE_URL, settings.CLOUD_SYNC_SECONDS)
+    cloud_sync.tick(conn, force=True)  # the plan to match footage against, before the first ingest
     while True:
         for path in inbox_videos():
             try:
                 ingest(conn, path, use_claude)
             except Exception:  # never let one bad file stop the loop
                 log.exception("Unexpected error on %s", path.name)
+            cloud_sync.tick(conn)  # long batches still push takes and run jobs every ~30 s
+        cloud_sync.tick(conn, force=args.once)
         if args.once:
             notify.digest.flush(force=True)
             return 0
