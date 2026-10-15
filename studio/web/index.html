@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Studio</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand-mark">Studio</div>
+    <nav class="tabs" id="tabs" aria-label="Stages"></nav>
+    <div class="filters">
+      <div class="seg" id="brand-filter" role="group" aria-label="Account">
+        <button data-brand="" class="on">All</button>
+        <button data-brand="personal">Personal</button>
+        <button data-brand="urban_makers">Urban Makers</button>
+      </div>
+      <span class="updated" id="updated"></span>
+    </div>
+  </header>
+
+  <main>
+    <p class="stage-hint" id="stage-hint"></p>
+    <section class="grid" id="grid" aria-live="polite"></section>
+  </main>
+
+  <div class="viewer" id="viewer" hidden>
+    <div class="viewer-inner">
+      <div class="player-col">
+        <button class="nav prev" id="prev" title="Previous (K)" aria-label="Previous">&#8249;</button>
+        <div class="player-frame" id="player-frame"></div>
+        <button class="nav next" id="next" title="Next (J)" aria-label="Next">&#8250;</button>
+      </div>
+      <aside class="panel" id="panel"></aside>
+      <button class="close" id="close" title="Close (Esc)" aria-label="Close">&times;</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

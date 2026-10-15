@@ -8,6 +8,7 @@ Watches the inbox folder the phone uploads into. For each new video:
   4. transcribes locally with Whisper (word timestamps; eGPU when attached)
   5. has Claude tag brand, format, topics and best moments
   6. saves everything to the SQLite catalogue and pings Bryan on Telegram
+It also serves the review dashboard (dashboard.py) while it runs.
 
 Usage (from the studio folder, inside its venv):
   python worker.py                 run forever (what the scheduled task does)
@@ -16,6 +17,7 @@ Usage (from the studio folder, inside its venv):
   python worker.py --retry-failed  reprocess clips that failed, were interrupted or skipped Claude
   python worker.py --check         check ffmpeg, GPU, API key and Telegram, then exit
   add --no-claude to transcribe and catalogue without tagging (no API calls)
+  add --no-dashboard to skip the review site (http://127.0.0.1:8765 by default)
 """
 import argparse
 import hashlib
@@ -75,7 +77,7 @@ def _single_instance() -> bool:
 
 # ── Inbox ─────────────────────────────────────────────────────────────────────
 
-def _ready(path: Path) -> bool:
+def is_ready(path: Path) -> bool:
     """A video that has stopped changing and can be opened — i.e. fully synced."""
     try:
         stat = path.stat()
@@ -94,7 +96,7 @@ def inbox_videos() -> list[Path]:
     return sorted(
         p for p in INBOX.iterdir()
         if p.is_file() and p.suffix.lower() in VIDEO_EXTS and not p.name.startswith((".", "~"))
-        and _ready(p)
+        and is_ready(p)
     )
 
 
@@ -150,6 +152,10 @@ def tag_clip(conn, clip_id: int, clip_dir: Path, video: Path, source_name: str,
 
     meta = extract.probe(video)
     frames = extract.extract_frames(video, clip_dir / "frames", meta["duration"])
+    try:
+        extract.make_preview(video, clip_dir / "preview.mp4")
+    except RuntimeError as e:  # the dashboard falls back to the original
+        log.warning("No preview for %s: %s", source_name, e)
 
     transcript = None
     if meta["has_audio"]:
@@ -171,7 +177,8 @@ def tag_clip(conn, clip_id: int, clip_dir: Path, video: Path, source_name: str,
                                                 encoding="utf-8")
 
     catalog.save_tags(conn, clip_id, meta, transcript, analysis)
-    notify.send(notify.clip_tagged(meta, analysis, source_name))
+    link = f"{settings.DASHBOARD_URL}/#/clip/{clip_id}" if settings.DASHBOARD_URL else ""
+    notify.send(notify.clip_tagged(meta, analysis, source_name, link))
 
 
 def ingest(conn, path: Path, use_claude: bool) -> None:
@@ -271,6 +278,7 @@ def main() -> int:
     mode.add_argument("--retry-failed", action="store_true", help="reprocess failed clips")
     mode.add_argument("--check", action="store_true", help="check the setup, then exit")
     parser.add_argument("--no-claude", action="store_true", help="skip Claude tagging")
+    parser.add_argument("--no-dashboard", action="store_true", help="don't serve the review dashboard")
     args = parser.parse_args()
 
     settings.ensure_folders()
@@ -291,6 +299,11 @@ def main() -> int:
     if args.retry_failed:
         retry_failed(conn, use_claude)
         return 0
+
+    if not args.once and not args.no_dashboard:
+        import threading
+        import dashboard
+        threading.Thread(target=dashboard.run, name="dashboard", daemon=True).start()
 
     log.info("Studio worker started; watching %s every %ss", INBOX, POLL_SECONDS)
     if not args.once:

@@ -75,6 +75,17 @@ def extract_audio(path: Path, wav_path: Path) -> Path:
     return wav_path
 
 
+def make_preview(path: Path, out_path: Path) -> Path:
+    """A small H.264 copy (960 px on the long side) for the dashboard: plays in any
+    browser, seeks instantly, and streams fine over Wi-Fi or Tailscale, unlike
+    a 4K HEVC original."""
+    _run([FFMPEG, "-y", "-v", "error", "-i", str(path),
+          "-vf", "scale='if(gt(iw,ih),960,-2)':'if(gt(iw,ih),-2,960)'",
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p",
+          "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(out_path)])
+    return out_path
+
+
 def extract_frames(path: Path, out_dir: Path, duration: float) -> list[tuple[float, Path]]:
     """Evenly spaced stills across the clip: one per FRAME_EVERY_SECONDS, at most
     MAX_FRAMES. Returns (timestamp_seconds, jpg_path) pairs in time order."""

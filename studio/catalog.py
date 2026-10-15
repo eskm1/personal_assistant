@@ -1,7 +1,17 @@
 """
-The clip catalogue: one SQLite row per clip, the index phase 2's idea tools will
-search. The files themselves live in the library folder next to their sidecars
-(transcript.json, analysis.json, frames/); the row points at them.
+The studio catalogue (SQLite), shared by the worker, the dashboard and the editor.
+
+- clips: one row per raw phone video, the index phase 2's idea tools will
+  search. The files live in the library folder next to their sidecars
+  (transcript.json, analysis.json, frames/); the row points at them.
+- productions: one row per edited post. The editor renders a draft and sets
+  status 'ready'; Bryan reviews it on the dashboard.
+- feedback: Bryan's notes on a clip or a production version, optionally pinned
+  to a moment in the video.
+
+The review contract between the dashboard and the editor:
+  ready --(request changes)--> revising --(editor re-renders, version + 1,
+  marks that version's notes addressed)--> ready --(approve)--> approved
 """
 import json
 import sqlite3
@@ -41,13 +51,61 @@ CREATE TABLE IF NOT EXISTS clips (
     moments        TEXT                    -- JSON array of {start, end, kind, description}
 );
 CREATE INDEX IF NOT EXISTS clips_brand_format ON clips (brand, format);
+
+CREATE TABLE IF NOT EXISTS productions (
+    id           INTEGER PRIMARY KEY,
+    title        TEXT NOT NULL,
+    brand        TEXT,                     -- personal | urban_makers
+    format       TEXT,
+    status       TEXT NOT NULL,            -- planned | producing | ready | revising | approved | rejected | posted
+    version      INTEGER NOT NULL DEFAULT 0,
+    idea         TEXT,                     -- the brief the edit was made from
+    source_clips TEXT,                     -- JSON array of clip ids
+    video_path   TEXT,                     -- latest rendered draft
+    thumb_path   TEXT,
+    duration     REAL,
+    caption      TEXT,                     -- the post caption; Bryan has the final say
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS feedback (
+    id          INTEGER PRIMARY KEY,
+    target      TEXT NOT NULL,             -- clip | production
+    target_id   INTEGER NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 0,
+    at_seconds  REAL,                      -- moment in the video the note is about, if any
+    body        TEXT NOT NULL,
+    remember    INTEGER NOT NULL DEFAULT 0, -- 1 = also added to the playbook for future edits
+    status      TEXT NOT NULL DEFAULT 'open', -- open | addressed
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS feedback_target ON feedback (target, target_id);
 """
+
+# Columns added after the first release, applied to existing databases on connect.
+_ADDED_COLUMNS = {
+    "clips": {"reviewed_at": "TEXT"},
+}
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def connect(db_path: Path = CATALOG_DB) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
+    # The worker and the dashboard write from different threads; WAL lets the
+    # dashboard read while the worker writes, and the timeout rides out locks.
+    conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_SCHEMA)
+    for table, columns in _ADDED_COLUMNS.items():
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, sql_type in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
+    conn.commit()
     return conn
 
 
@@ -66,8 +124,7 @@ def start(conn: sqlite3.Connection, fingerprint: str, source_name: str, clip_dir
                source_name = excluded.source_name, clip_dir = excluded.clip_dir,
                video_path = excluded.video_path
            RETURNING id""",
-        (fingerprint, source_name, str(clip_dir), str(video_path),
-         datetime.now(timezone.utc).isoformat(timespec="seconds")),
+        (fingerprint, source_name, str(clip_dir), str(video_path), now()),
     )
     clip_id = cur.fetchone()[0]
     conn.commit()
@@ -83,8 +140,8 @@ def save_tags(conn: sqlite3.Connection, clip_id: int, meta: dict, transcript: di
                brand = ?, brand_reason = ?, format = ?, title = ?, summary = ?, topics = ?,
                setting = ?, usable = ?, quality_notes = ?, suggested_hook = ?, moments = ?
            WHERE id = ?""",
-        ("tagged" if analysis else "transcribed", meta.get("recorded_at"), meta.get("duration"), meta.get("width"), meta.get("height"),
-         meta.get("orientation"), int(bool(meta.get("has_audio"))),
+        ("tagged" if analysis else "transcribed", meta.get("recorded_at"), meta.get("duration"),
+         meta.get("width"), meta.get("height"), meta.get("orientation"), int(bool(meta.get("has_audio"))),
          (transcript or {}).get("language"), (transcript or {}).get("text"),
          a.get("brand"), a.get("brand_reason"), a.get("format"), a.get("title"), a.get("summary"),
          json.dumps(a.get("topics", [])), a.get("setting"),
@@ -106,3 +163,46 @@ def unfinished(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM clips WHERE status IN ('failed', 'processing', 'transcribed') ORDER BY id"
     ).fetchall()
+
+
+# ── Review (dashboard) ────────────────────────────────────────────────────────
+
+def add_feedback(conn: sqlite3.Connection, target: str, target_id: int, body: str,
+                 at_seconds: float | None = None, remember: bool = False) -> int:
+    version = 0
+    if target == "production":
+        row = conn.execute("SELECT version FROM productions WHERE id = ?", (target_id,)).fetchone()
+        version = row["version"] if row else 0
+    cur = conn.execute(
+        """INSERT INTO feedback (target, target_id, version, at_seconds, body, remember, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (target, target_id, version, at_seconds, body, int(remember), now()),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def feedback_for(conn: sqlite3.Connection, target: str, target_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM feedback WHERE target = ? AND target_id = ? ORDER BY version, COALESCE(at_seconds, 1e9), id",
+        (target, target_id),
+    ).fetchall()
+
+
+def set_production_status(conn: sqlite3.Connection, production_id: int, status: str,
+                          caption: str | None = None) -> None:
+    if caption is None:
+        conn.execute("UPDATE productions SET status = ?, updated_at = ? WHERE id = ?",
+                     (status, now(), production_id))
+    else:
+        conn.execute("UPDATE productions SET status = ?, caption = ?, updated_at = ? WHERE id = ?",
+                     (status, caption, now(), production_id))
+    conn.commit()
+
+
+def update_clip_review(conn: sqlite3.Connection, clip_id: int, brand: str, fmt: str,
+                       usable: bool) -> None:
+    """Bryan's corrections to Claude's tags win; reviewed_at marks them as checked."""
+    conn.execute("UPDATE clips SET brand = ?, format = ?, usable = ?, reviewed_at = ? WHERE id = ?",
+                 (brand, fmt, int(usable), now(), clip_id))
+    conn.commit()

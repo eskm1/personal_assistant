@@ -1,13 +1,13 @@
-# Studio worker (phase 1: capture and understand)
+# Studio worker and dashboard
 
 Film on your phone and the video lands in a Google Drive folder. Your Windows laptop at
 home picks it up, transcribes it, and has Claude tag it as Personal or Urban Makers.
 It also labels the format (talking head, day in the life or compilation footage) and the
-best moments, then files it in a searchable library. Ava pings you on Telegram once each
-clip is done.
+best moments, then files it in a searchable library. Every video shows up on the
+**dashboard**, a Reels-style review site the laptop serves, and Ava sends a Telegram ping.
 
-This is the first phase of the Content Studio plan. Ideas, auto-editing and review come
-next and build on the catalogue this creates.
+This covers phase 1 of the Content Studio plan (capture and understand) plus the review
+dashboard. Ideas and auto-editing come next and feed drafts into the dashboard's To review tab.
 
 ```
 Phone ──share──► Google Drive "Studio Inbox" ──sync──► laptop
@@ -20,7 +20,8 @@ Phone ──share──► Google Drive "Studio Inbox" ──sync──► lapto
                          %USERPROFILE%\Studio\catalog.db   (one row per clip)
                                                        │
                                                        ▼
-                                              Telegram: "Studio: Kitchen tiling day 2…"
+                      Dashboard (http://127.0.0.1:8765): watch, note, approve
+                      Telegram: "Studio: Kitchen tiling day 2…" (notification only)
 ```
 
 It runs on its own machine and shares nothing with the bot on the server except the
@@ -114,6 +115,46 @@ powershell -ExecutionPolicy Bypass -File .\install_task.ps1   # start at sign-in
 Drop one short clip in the inbox before `--once`. It's picked up after it has been
 unchanged for 20 seconds, and you should get a Telegram message within a minute or two.
 
+## 7. The dashboard (where you review)
+
+While the worker runs, it serves a review site at **http://127.0.0.1:8765** on the laptop.
+It's laid out like Reels: a grid of tiles you can filter by account, with tabs for each stage.
+
+| Tab | What's in it |
+| --- | --- |
+| To review | Edited drafts waiting for you |
+| Being edited | Drafts in progress, including ones you sent back |
+| Library | Raw clips, tagged by Claude |
+| Ingesting | Clips being processed, or that failed and will be retried |
+| In the cloud | Uploads still in the Google Drive inbox |
+| Done | Approved, posted and rejected edits |
+
+Open a tile to watch it. Pause on a moment, type a note, and it's pinned to that time. Tick
+**Remember for future edits** and the note is also added to `Studio\playbook.md`, the rules
+the editor follows on every edit. Then **Request changes**, **Approve** or **Reject**: the next
+draft opens straight away while the editor revises the last one in the background. You also
+write or approve the post caption here. Keyboard: J / K for next and previous, Space to play,
+Esc to close, Ctrl+Enter to add a note.
+
+Editing isn't built yet (phase 4), so for now **To review** stays empty, and the Library is
+where you check Claude's tags. To try the full review flow with sample videos, run
+`.\venv\Scripts\python demo.py`, which uses a separate throwaway folder, and open the
+address it prints.
+
+**From your phone or desktop when you're out:** install [Tailscale](https://tailscale.com) on
+the laptop and on your phone or desktop, signed in to the same account. Then set in `.env`:
+
+```
+STUDIO_DASHBOARD_HOST=0.0.0.0
+STUDIO_DASHBOARD_PASSWORD=pick-a-long-password
+STUDIO_DASHBOARD_URL=http://<laptop's Tailscale name>:8765
+```
+
+Restart the worker and open that address; any username works, with that password. The
+dashboard won't listen beyond the laptop without a password. With `STUDIO_DASHBOARD_URL` set,
+Telegram messages link straight to the clip. Telegram is just for notifications now; the
+dashboard is where you give feedback.
+
 ## Day to day
 
 | Task | Command (from `studio`, with `.\venv\Scripts\python`) |
@@ -123,6 +164,7 @@ unchanged for 20 seconds, and you should get a Telegram message within a minute 
 | Process one specific file | `worker.py --file "D:\footage\clip.mov"` |
 | Transcribe and catalogue without Claude | add `--no-claude` |
 | Stop / start the background worker | Task Scheduler → **Studio Worker** → End / Run |
+| Run the worker without the dashboard | add `--no-dashboard` |
 
 Files the worker can't use are moved out of the inbox, not deleted. They go to
 `Studio\Duplicates` (already in the library) or `Studio\Unreadable` (not a video).

@@ -70,6 +70,21 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 
+# ── Dashboard (review site) ───────────────────────────────────────────────────
+# 127.0.0.1 = this laptop only. To review from your phone or another computer over
+# Tailscale, set the host to 0.0.0.0 AND a password; the dashboard refuses to
+# listen beyond this machine without one.
+DASHBOARD_HOST = os.getenv("STUDIO_DASHBOARD_HOST", "127.0.0.1")
+DASHBOARD_PORT = int(os.getenv("STUDIO_DASHBOARD_PORT", "8765"))
+DASHBOARD_PASSWORD = os.getenv("STUDIO_DASHBOARD_PASSWORD", "")
+# Optional: the address you open it at (e.g. your Tailscale name); added to
+# Telegram pings so a notification links straight to the review.
+DASHBOARD_URL = os.getenv("STUDIO_DASHBOARD_URL", "").rstrip("/")
+
+# Notes marked "remember for future edits" are appended here; the editor reads it.
+PLAYBOOK = ROOT / "playbook.md"
+
+
 def ensure_folders() -> None:
     for folder in (ROOT, INBOX, LIBRARY, REVIEW, APPROVED, LOGS):
         folder.mkdir(parents=True, exist_ok=True)

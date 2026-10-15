@@ -42,10 +42,10 @@ def _mmss(seconds: float) -> str:
     return f"{seconds // 60}:{seconds % 60:02d}"
 
 
-def clip_tagged(meta: dict, analysis: dict | None, source_name: str) -> str:
+def clip_tagged(meta: dict, analysis: dict | None, source_name: str, link: str = "") -> str:
     if analysis is None:
         return (f"Studio: saved {source_name} ({_mmss(meta['duration'])}, {meta['orientation']}). "
-                "Not tagged — Claude is switched off.")
+                "Not tagged — Claude is switched off." + (f"\n{link}" if link else ""))
     a = analysis
     lines = [
         f"Studio: {a['title']}",
@@ -61,4 +61,6 @@ def clip_tagged(meta: dict, analysis: dict | None, source_name: str) -> str:
                      f"{first['description']}")
     if not a["usable"]:
         lines.append(f"Flagged unusable: {a['quality_notes']}")
+    if link:
+        lines.append(link)
     return "\n".join(lines)
