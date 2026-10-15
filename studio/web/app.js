@@ -289,6 +289,26 @@ function notesHTML(notes, currentVersion, isProduction) {
   }).join("")}</ul>`;
 }
 
+function musicHTML(m) {
+  if (!m) return "";
+  let text;
+  if (m.source === "epidemic") text = `${esc(m.title)} by ${esc(m.artist)} (Epidemic Sound)`;
+  else if (m.source === "instagram") text = esc(m.note);
+  else text = `None this time${m.error ? `: ${esc(m.error)}` : ""}. Mood asked for: ${esc(m.mood)}.`;
+  return `<div><h3>Music</h3><p>${text}</p></div>`;
+}
+
+function qaHTML(qa) {
+  if (!qa) return "";
+  const parts = [];
+  if (qa.match != null) parts.push(`${Math.round(qa.match * 100)}% of words intact`);
+  if (qa.lufs != null) parts.push(`${qa.lufs.toFixed(1)} LUFS`);
+  if (qa.true_peak != null) parts.push(`peak ${qa.true_peak.toFixed(1)} dB`);
+  const warn = qa.match != null && qa.match < 0.95 && qa.missing?.length
+    ? `<p class="muted">Possibly clipped or misheard: ${qa.missing.map(esc).join(", ")}</p>` : "";
+  return parts.length ? `<div><h3>Checks</h3><p>${parts.join(" · ")}</p>${warn}</div>` : "";
+}
+
 function composerHTML(placeholder) {
   return `<div>
     <h3>Add a note</h3>
@@ -332,9 +352,14 @@ function renderPanel() {
     const canDecide = d.status === "ready";
     const openNow = d.notes.filter((n) => n.status === "open").length;
     panel.innerHTML = `${head}
+      ${d.status === "failed" ? `<div class="box"><p><strong>The edit failed:</strong> ${esc(d.error)}</p>
+        <div class="row" style="margin-top:10px"><button class="btn primary" id="retry-edit">Retry edit</button></div></div>` : ""}
+      ${d.edit_summary ? `<div><h3>What the editor did</h3><p>${esc(d.edit_summary)}</p></div>` : ""}
+      ${musicHTML(d.music)}
+      ${qaHTML(d.qa)}
       ${d.idea ? `<div><h3>Brief</h3><p>${esc(d.idea)}</p></div>` : ""}
       ${d.sources.length ? `<div><h3>Made from</h3><p class="muted">${d.sources.map((s) => esc(s.title)).join(", ")}</p></div>` : ""}
-      ${canDecide ? "" : `<div class="box"><p>${d.status === "revising" || d.status === "producing" || d.status === "planned"
+      ${canDecide || d.status === "failed" ? "" : `<div class="box"><p>${d.status === "revising" || d.status === "producing" || d.status === "planned"
         ? "The editor is working on this. It comes back to To review when the new version renders."
         : `${esc(STATUS[d.status] || d.status)}.`}</p></div>`}
       <div><h3>Notes</h3>${notesHTML(d.notes, d.version, true)}</div>
@@ -453,6 +478,11 @@ $("#panel").addEventListener("click", async (e) => {
       await api(`/api/production/${d.id}/decision`, { decision: "reject", caption: $("#caption").value });
       toast("Rejected.");
       await nextForReview();
+    } else if (id === "retry-edit") {
+      await api(`/api/production/${d.id}/decision`, { decision: "retry", caption: $("#caption").value });
+      toast("Queued for the editor again.");
+      await loadDetail();
+      sync();
     } else if (id === "caption-save") {
       await api(`/api/production/${d.id}/decision`, { decision: "caption", caption: $("#caption").value });
       toast("Caption saved.");

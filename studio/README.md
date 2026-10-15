@@ -233,6 +233,33 @@ Run `.\venv\Scripts\python worker.py --check`. Besides the earlier lines, it now
 Node.js, HyperFrames, Chrome, a 2-second test render, and the Epidemic Sound connection with
 the tools it offers.
 
+## 10. The editor (phase 5)
+
+Once the prerequisites in section 9 pass, the worker also runs the editor. Any idea you
+**Make** (and any draft you send back with **Request changes**) is edited in the
+background, one at a time, and lands in **To review**, usually a few minutes later:
+
+1. Claude plans the cut from the idea. It sees every word with its timestamp, so it cuts
+   between phrases, drops dead air and false starts, and writes the hook text and a music
+   brief. On a revision it also gets your notes and the previous cut list.
+2. Cut points are moved out of words into the gaps around them, with a little air.
+3. ffmpeg cuts every piece from your **original** files in one pass and frames it 1080x1920
+   (horizontal footage is centre-cropped for now).
+4. HyperFrames renders the captions (1 to 3 words, timed to each word) and the hook as a
+   transparent layer over the footage.
+5. Music: Urban Makers posts get an Epidemic Sound track that dips under your voice.
+   Personal posts get no music, plus a note on what to add in the Instagram app.
+6. The draft is re-transcribed to check no word was clipped, and its loudness is measured
+   (target -14 LUFS). Both show under **Checks** on the review screen.
+
+Drafts are saved in `Studio\Renders`. If an edit fails, the draft shows the reason and a
+**Retry edit** button. To edit one production by hand: `worker.py --edit <id>`. To run the
+worker without the editor: `--no-editor`. `python music.py` saves Epidemic Sound's full tool
+list to `Studio\logs\epidemic_tools.json`, which is useful when the music step misbehaves.
+
+Each draft costs one Claude call to plan the cut plus a few short calls to pick music,
+typically tens of cents.
+
 ## Day to day
 
 | Task | Command (from `studio`, with `.\venv\Scripts\python`) |

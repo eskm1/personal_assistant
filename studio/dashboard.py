@@ -38,7 +38,8 @@ LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 CLIP_STAGE = {"processing": "ingesting", "transcribed": "ingesting", "failed": "ingesting",
               "tagged": "library"}
 PRODUCTION_STAGE = {"planned": "producing", "producing": "producing", "revising": "producing",
-                    "ready": "review", "approved": "done", "posted": "done", "rejected": "done"}
+                    "failed": "producing", "ready": "review", "approved": "done", "posted": "done",
+                    "rejected": "done"}
 
 
 # ── Plumbing ──────────────────────────────────────────────────────────────────
@@ -226,8 +227,12 @@ def production_detail(production_id: int):
         marks = ",".join("?" * len(clip_ids))
         sources = [{"id": r["id"], "title": r["title"] or r["source_name"]} for r in db().execute(
             f"SELECT id, title, source_name FROM clips WHERE id IN ({marks})", clip_ids)]
+    edl = json.loads(row["edl"]) if row["edl"] else None
     item.update({"idea": row["idea"], "caption": row["caption"] or "", "sources": sources,
-                 "notes": _notes("production", production_id)})
+                 "notes": _notes("production", production_id), "error": row["error"],
+                 "edit_summary": edl["summary"] if edl else None,
+                 "music": json.loads(row["music"]) if row["music"] else None,
+                 "qa": json.loads(row["qa"]) if row["qa"] else None})
     return jsonify(item)
 
 
@@ -336,6 +341,10 @@ def decide(production_id: int):
                                       "approved" if decision == "approve" else "rejected", caption)
     elif decision == "caption":
         catalog.set_production_status(db(), production_id, row["status"], caption)
+    elif decision == "retry":
+        if row["status"] != "failed":
+            return jsonify({"error": "only a failed edit can be retried"}), 400
+        catalog.set_production_status(db(), production_id, "planned", caption)
     else:
         return jsonify({"error": "unknown decision"}), 400
     log.info("Production %s: %s", production_id, decision)

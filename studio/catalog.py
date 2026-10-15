@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS productions (
     title        TEXT NOT NULL,
     brand        TEXT,                     -- personal | urban_makers
     format       TEXT,
-    status       TEXT NOT NULL,            -- planned | producing | ready | revising | approved | rejected | posted
+    status       TEXT NOT NULL,            -- planned | producing | ready | revising | approved | rejected | posted | failed
     version      INTEGER NOT NULL DEFAULT 0,
     idea         TEXT,                     -- the brief the edit was made from
     source_clips TEXT,                     -- JSON array of clip ids
@@ -105,7 +105,13 @@ CREATE TABLE IF NOT EXISTS ideas (
 # Columns added after the first release, applied to existing databases on connect.
 _ADDED_COLUMNS = {
     "clips": {"reviewed_at": "TEXT"},
-    "productions": {"plan": "TEXT"},  # JSON: the approved idea the editor follows
+    "productions": {
+        "plan": "TEXT",   # JSON: the approved idea the editor follows
+        "edl": "TEXT",    # JSON: the latest draft's cut list, hook text and music brief
+        "qa": "TEXT",     # JSON: checks on the latest draft (words kept, loudness)
+        "music": "TEXT",  # JSON: the Epidemic track used, or the note for Instagram music
+        "error": "TEXT",  # why the last edit failed, if it did
+    },
 }
 
 

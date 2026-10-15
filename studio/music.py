@@ -7,6 +7,7 @@ Only accounts listed in STUDIO_MUSIC_ACCOUNTS get Epidemic tracks: Bryan's plan
 licenses one channel per platform, so it must not land on both Instagram accounts.
 """
 import json
+import re
 
 import requests
 
@@ -88,3 +89,119 @@ def check() -> str:
     server = client.connect()
     tools = client.tools()
     return f"connected to {server.get('name', 'Epidemic Sound')}, {len(tools)} tools ({', '.join(tools[:6])}{'…' if len(tools) > 6 else ''})"
+
+
+# ── Track search (the editor) ─────────────────────────────────────────────────
+# Claude drives Epidemic Sound's own tools (search, recut, download) through a
+# local tool loop: the server describes its tools, Claude calls them, this module
+# executes each call with Bryan's key. Nothing here hard-codes a tool's name or
+# arguments, so it keeps working as Epidemic Sound changes its server.
+
+TRACK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "found": {"type": "boolean"},
+        "recording_id": {"type": "string"},
+        "title": {"type": "string"},
+        "artist": {"type": "string"},
+        "download_url": {"type": "string"},
+        "reason": {"type": "string"},
+    },
+    "required": ["found", "recording_id", "title", "artist", "download_url", "reason"],
+    "additionalProperties": False,
+}
+
+_MAX_TOOL_ROUNDS = 12
+_MAX_RESULT_CHARS = 20_000
+
+
+def _tool_text(result: dict) -> str:
+    text = "\n".join(c.get("text", "") for c in result.get("content", []) if c.get("type") == "text")
+    if not text:
+        text = json.dumps(result)[:_MAX_RESULT_CHARS]
+    if len(text) > _MAX_RESULT_CHARS:
+        text = text[:_MAX_RESULT_CHARS] + "\n[result shortened]"
+    return text
+
+
+def find_track(brief: str, seconds: float, out_dir, client=None, es: "EpidemicSound | None" = None):
+    """Pick and download a music track for a post. Returns (path, track info)."""
+    import anthropic
+    from pathlib import Path
+
+    from settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
+
+    es = es or EpidemicSound()
+    es.connect()
+    listed = es._post("tools/list")["tools"]
+    tools = [{"name": t["name"], "description": t.get("description", "")[:1024],
+              "input_schema": t.get("inputSchema") or {"type": "object", "properties": {}}} for t in listed]
+    client = client or anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or None)
+    messages = [{"role": "user", "content": (
+        f"Find one Epidemic Sound music track for a {seconds:.0f}-second Instagram Reel. Brief: {brief}\n\n"
+        "Search the catalogue, pick the best fit (instrumental, works under speech), and get a download "
+        "link for an MP3 of it. If the tools can make a version edited to the Reel's length, use that "
+        "version. When done, answer with the track's details and the download URL exactly as the tools "
+        "returned it. If nothing suitable is available, answer with found=false and say why.")}]
+    for _ in range(_MAX_TOOL_ROUNDS):
+        response = client.beta.messages.create(
+            model=CLAUDE_MODEL, max_tokens=16000, tools=tools, messages=messages,
+            betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+            output_config={"effort": "low", "format": {"type": "json_schema", "schema": TRACK_SCHEMA}},
+        )
+        if response.stop_reason == "refusal":
+            raise RuntimeError("Claude declined the music search")
+        calls = [b for b in response.content if b.type == "tool_use"]
+        if not calls:
+            text = next((b.text for b in response.content if b.type == "text"), "")
+            track = json.loads(text)
+            if not track["found"]:
+                raise RuntimeError(f"no suitable track: {track['reason']}")
+            path = Path(out_dir) / f"epidemic_{re.sub(r'[^A-Za-z0-9_-]', '', track['recording_id'])[:40] or 'track'}.mp3"
+            _download(track["download_url"], path)
+            return path, track
+        messages.append({"role": "assistant", "content": response.content})
+        results = []
+        for call in calls:
+            try:
+                results.append({"type": "tool_result", "tool_use_id": call.id,
+                                "content": _tool_text(es.call(call.name, call.input))})
+            except Exception as e:  # tell Claude, let it try another way
+                results.append({"type": "tool_result", "tool_use_id": call.id, "is_error": True,
+                                "content": f"{type(e).__name__}: {e}"})
+        messages.append({"role": "user", "content": results})
+    raise RuntimeError("music search took too many steps")
+
+
+def _download(url: str, path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    r = requests.get(url, stream=True, timeout=120)
+    if r.status_code in (401, 403):  # some links need the same key as the server
+        r.close()
+        r = requests.get(url, stream=True, timeout=120,
+                         headers={"Authorization": f"Bearer {EPIDEMIC_SOUND_API_KEY}"})
+    with r:
+        r.raise_for_status()
+        with open(path, "wb") as f:
+            for chunk in r.iter_content(1 << 16):
+                f.write(chunk)
+    if path.stat().st_size < 10_000:
+        raise RuntimeError("the downloaded music file is too small to be audio")
+
+
+def describe_tools(path) -> list[str]:
+    """Write the server's full tool list (names, descriptions, inputs) to a file."""
+    es = EpidemicSound()
+    es.connect()
+    tools = es._post("tools/list")["tools"]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(tools, f, indent=2)
+    return [t["name"] for t in tools]
+
+
+if __name__ == "__main__":
+    # python music.py: save Epidemic Sound's tool list to Studio\logs\epidemic_tools.json
+    from settings import LOGS
+    LOGS.mkdir(parents=True, exist_ok=True)
+    names = describe_tools(LOGS / "epidemic_tools.json")
+    print(f"{len(names)} tools saved to {LOGS / 'epidemic_tools.json'}:\n  " + "\n  ".join(names))

@@ -8,7 +8,8 @@ Watches the inbox folder the phone uploads into. For each new video:
   4. transcribes locally with Whisper (word timestamps; eGPU when attached)
   5. has Claude tag brand, format, topics and best moments
   6. saves everything to the SQLite catalogue and pings Bryan on Telegram
-It also serves the review dashboard (dashboard.py) while it runs.
+It also serves the review dashboard (dashboard.py) and runs the editor queue
+(editor.py: planned and sent-back productions become drafts) while it runs.
 
 Usage (from the studio folder, inside its venv):
   python worker.py                 run forever (what the scheduled task does)
@@ -17,6 +18,7 @@ Usage (from the studio folder, inside its venv):
   python worker.py --retry-failed  reprocess clips that failed, were interrupted or skipped Claude
   python worker.py --check         check ffmpeg, GPU, API key and Telegram, then exit
   python worker.py --rebuild-previews  remake missing dashboard previews (also done at start)
+  python worker.py --edit 12       edit production 12 now (normally the editor queue does this)
   add --no-claude to transcribe and catalogue without tagging (no API calls)
   add --no-dashboard to skip the review site (http://127.0.0.1:8765 by default)
 """
@@ -254,6 +256,44 @@ def rebuild_previews(conn) -> None:
             log.warning("No preview for %s: %s", row["source_name"], e)
 
 
+def run_editor(stop_after_one: bool = False) -> None:
+    """Background editing queue: one production at a time, oldest first."""
+    import catalog
+    import editor
+    import notify
+
+    missing = editor.ready()
+    if missing:
+        log.warning("Editor not started: %s (see README section 9)", missing)
+        return
+    conn = catalog.connect()
+    # A crash mid-edit leaves 'producing'; put those back in the queue.
+    conn.execute("UPDATE productions SET status = 'planned' WHERE status = 'producing'")
+    conn.commit()
+    log.info("Editor ready")
+    while True:
+        production_id = editor.next_job(conn)
+        if production_id is None:
+            if stop_after_one:
+                return
+            time.sleep(15)
+            continue
+        title = conn.execute("SELECT title FROM productions WHERE id = ?", (production_id,)).fetchone()["title"]
+        log.info("Editing production %s: %s", production_id, title)
+        try:
+            editor.edit(conn, production_id)
+            link = f"\n{settings.DASHBOARD_URL}/#/production/{production_id}" if settings.DASHBOARD_URL else ""
+            notify.send(f"Studio: draft ready to review: {title}{link}")
+        except Exception as e:
+            log.exception("Edit failed for production %s", production_id)
+            conn.execute("UPDATE productions SET status = 'failed', error = ?, updated_at = ? WHERE id = ?",
+                         (f"{type(e).__name__}: {e}"[:2000], catalog.now(), production_id))
+            conn.commit()
+            notify.send(f"Studio: couldn't edit {title} ({type(e).__name__}). Details on the dashboard.")
+        if stop_after_one:
+            return
+
+
 def check_editor() -> bool:
     """Phase 5 prerequisites: Node, HyperFrames and its Chrome, a real test render,
     and the Epidemic Sound connection."""
@@ -329,8 +369,10 @@ def main() -> int:
     mode.add_argument("--retry-failed", action="store_true", help="reprocess failed clips")
     mode.add_argument("--check", action="store_true", help="check the setup, then exit")
     mode.add_argument("--rebuild-previews", action="store_true", help="remake missing dashboard previews")
+    mode.add_argument("--edit", type=int, metavar="ID", help="edit one production now (by its id)")
     parser.add_argument("--no-claude", action="store_true", help="skip Claude tagging")
     parser.add_argument("--no-dashboard", action="store_true", help="don't serve the review dashboard")
+    parser.add_argument("--no-editor", action="store_true", help="don't edit planned productions")
     args = parser.parse_args()
 
     settings.ensure_folders()
@@ -354,11 +396,21 @@ def main() -> int:
     if args.rebuild_previews:
         rebuild_previews(conn)
         return 0
+    if args.edit:
+        conn.execute("UPDATE productions SET status = 'planned' WHERE id = ? AND status NOT IN ('revising')",
+                     (args.edit,))
+        conn.commit()
+        import editor
+        editor.edit(conn, args.edit)
+        return 0
 
-    if not args.once and not args.no_dashboard:
+    if not args.once:
         import threading
-        import dashboard
-        threading.Thread(target=dashboard.run, name="dashboard", daemon=True).start()
+        if not args.no_dashboard:
+            import dashboard
+            threading.Thread(target=dashboard.run, name="dashboard", daemon=True).start()
+        if not args.no_editor:
+            threading.Thread(target=run_editor, name="editor", daemon=True).start()
 
     log.info("Studio worker started; watching %s every %ss", INBOX, POLL_SECONDS)
     if not args.once:
