@@ -1,0 +1,17 @@
+# Studio planner: a static site. config.js is generated at build time from the
+# SUPABASE_URL / SUPABASE_ANON_KEY / STUDIO_URL environment variables.
+[build]
+  publish = "."
+  command = "node build-config.mjs"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    # Our own scripts and styles only; data from the Supabase project (REST, Auth, Functions,
+    # Realtime over wss, signed Storage URLs for stills); music previews are https audio.
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https://*.supabase.co; media-src https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
+    Strict-Transport-Security = "max-age=31536000"

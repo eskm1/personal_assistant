@@ -72,9 +72,10 @@ Then:
 1. Open the planner on your phone and computer and sign in with the owner account from step 2.
 2. **Team** page > invite your colleague by email. They get an email, set a password and are in.
    They can plan, vote, comment and tick shots; Go / Park / Dismiss and "Make this" are yours.
-3. If you already planned on the laptop (say, Kensington), move it online once:
-   `.\venv\Scripts\python worker.py --cloud-import`. From then on the laptop dashboard's Plan tab
-   links to the planner.
+3. If you already planned on the laptop (say, Kensington), move it online once. Stop Studio
+   (Task Scheduler > **Studio Worker** > End), run `.\venv\Scripts\python worker.py --cloud-import`,
+   then start Studio again from the desktop icon. From then on the laptop dashboard's Plan tab links
+   to the planner.
 
 ## Good to know
 
@@ -85,6 +86,9 @@ Then:
   (a still is ~30 KB), and Claude jobs split into short steps to fit the 150-second function limit.
   Supabase pauses a free project after a week with no activity; the laptop's check-ins keep it
   awake, and a paused project is restored with one click in the dashboard.
+- **Invite emails** come from Supabase's built-in mailer, which sends only a few an hour: fine for
+  your colleague. For a bigger team, add your own email sender under *Authentication > Emails >
+  SMTP Settings*.
 - **Security**: invite-only sign-in; every table is locked to members by row-level rules; stills
   are in a private bucket. The secret key lives only in the laptop's `.env` and in Supabase; never
   paste it anywhere else.

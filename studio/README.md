@@ -406,9 +406,10 @@ had become shots to film.
 ### Planning online
 
 Planning can live on the online planner instead (a website on Netlify with its data in Supabase),
-so the team plans, votes and attaches footage while this laptop is off. Fill in
-`STUDIO_SUPABASE_URL`, `STUDIO_SUPABASE_SERVICE_KEY` and `STUDIO_PLANNER_URL` in `studio\.env`
-and restart Studio. While the worker runs, it syncs about every 30 seconds:
+so the team plans, votes and attaches footage while this laptop is off. **Setting it up (once, about
+30 minutes): follow [`cloud/SETUP.md`](cloud/SETUP.md)**; its script `cloud_setup.py` fills in
+`STUDIO_SUPABASE_URL`, `STUDIO_SUPABASE_SERVICE_KEY` and `STUDIO_PLANNER_URL` in `studio\.env`.
+While the worker runs, it syncs about every 30 seconds:
 
 - it pulls the plan (projects, arcs, ideas, shots, takes) into this laptop, so new footage in a
   project's inbox folder is still matched to its shots; the online plan always wins;
