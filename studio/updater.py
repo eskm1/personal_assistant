@@ -33,6 +33,7 @@ _GIT_ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"
 _MODULES = "worker, dashboard, plan_routes, plan, editor, quality, resolve_export, ideas, classify, music, auth"
 
 requested = False  # set by the dashboard's "Update now"
+restart_requested = False  # set by "Restart Studio" (say, after editing .env)
 _last_error: str | None = None
 
 
@@ -62,7 +63,7 @@ def version() -> dict:
         last = json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {}
         _running = {"commit": commit, "subject": subject, "date": date, "last_update": last}
     return {**_running, "auto_minutes": settings.AUTO_UPDATE_MINUTES, "error": _last_error,
-            "requested": requested}
+            "requested": requested or restart_requested}
 
 
 def _upstream() -> str:
@@ -136,7 +137,11 @@ def restart() -> None:
 
 def tick(idle: bool) -> None:
     """Called from the worker's main loop. Updates and restarts when it's time."""
-    global requested, _last_error
+    global requested, restart_requested, _last_error
+    if restart_requested and idle:
+        restart_requested = False
+        log.info("Restart requested from the dashboard")
+        restart()
     if not (requested or (settings.AUTO_UPDATE_MINUTES and idle)):
         return
     now = time.time()

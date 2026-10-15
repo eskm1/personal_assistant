@@ -43,7 +43,8 @@ class _SessionInterface(SecureCookieSessionInterface):
     """Mark the cookie Secure when the page came over HTTPS (via the tunnel), so
     plain http://127.0.0.1 on the laptop keeps working too."""
     def get_cookie_secure(self, app):
-        return request.is_secure or request.headers.get("X-Forwarded-Proto") == "https"
+        return (request.is_secure or request.headers.get("X-Forwarded-Proto") == "https"
+                or (not is_local() and settings.DASHBOARD_URL.startswith("https://")))
 
 
 app.session_interface = _SessionInterface()
@@ -82,7 +83,9 @@ def _auth():
     if request.method == "POST":
         # Refuse cross-site form posts: a browser always sends Origin on POST.
         origin = request.headers.get("Origin")
-        hosts = {request.host, request.headers.get("X-Forwarded-Host")}
+        # Tunnels may pass on the laptop's own host name, so also accept the public address.
+        hosts = {request.host, request.headers.get("X-Forwarded-Host"),
+                 settings.DASHBOARD_URL.split("://", 1)[-1].split("/", 1)[0] or None}
         if origin and origin.split("://", 1)[-1] not in hosts:
             return jsonify({"error": "cross-site request refused"}), 403
     if request.path.startswith(_PUBLIC):
@@ -195,9 +198,13 @@ def me():
 @app.post("/api/update")
 @owner_only
 def update_now():
-    """Check GitHub now; the worker updates and restarts as soon as it's idle."""
+    """Check GitHub now (or with {"restart": true} just restart); the worker does it
+    as soon as it's idle."""
     import updater
-    updater.requested = True
+    if body().get("restart"):
+        updater.restart_requested = True
+    else:
+        updater.requested = True
     return jsonify({"ok": True})
 
 

@@ -180,7 +180,8 @@ function versionHTML(v) {
     : v.auto_minutes ? `<span class="muted small">Updates itself every ${esc(v.auto_minutes)} min when idle.</span>` : "";
   return `<div class="menu-head" style="border-top:1px solid var(--line)">
       <span class="muted small" title="${esc(v.subject)}">Version ${esc(v.commit)}${when ? ` · ${esc(when)}` : ""}</span>${status}</div>
-    ${isOwner() ? `<button role="menuitem" data-account="update">Update now</button>` : ""}`;
+    ${isOwner() ? `<button role="menuitem" data-account="update">Update now</button>
+      <button role="menuitem" data-account="restart">Restart Studio</button>` : ""}`;
 }
 function setAccountMenu(open) {
   $("#account-menu").hidden = !open;
@@ -198,10 +199,12 @@ $("#account-menu").addEventListener("click", async (e) => {
   setAccountMenu(false);
   if (btn.dataset.account === "team") openTeam();
   else if (btn.dataset.account === "password") openPassword();
-  else if (btn.dataset.account === "update") {
+  else if (btn.dataset.account === "update" || btn.dataset.account === "restart") {
+    const restart = btn.dataset.account === "restart";
     try {
-      await api("/api/update", {});
-      toast("Checking for updates. If there's one, Studio restarts by itself in about a minute.");
+      await api("/api/update", restart ? { restart: true } : {});
+      toast(restart ? "Studio restarts as soon as it's idle (usually within a minute). This page reconnects by itself."
+        : "Checking for updates. If there's one, Studio restarts by itself in about a minute.");
       state.me = await api("/api/me");
       renderAccount();
     } catch (err) { toast(`Couldn't start the update: ${err.message}`); }

@@ -276,18 +276,17 @@ In Resolve: **File > Import > Timeline...**, pick `timeline.fcpxml`, keep "Autom
 import source clips into media pool" ticked, press OK. Export from the **Deliver** page at
 1080x1920.
 
-## 11. Team logins and studio.theurbanmakers.com
+## 11. Team logins and reaching Studio from anywhere
 
-The dashboard stays on the laptop. A free **Cloudflare Tunnel** gives it the address
-`https://studio.theurbanmakers.com`: the laptop makes an outgoing connection to Cloudflare, so no
-router ports are opened and nobody can reach the laptop directly. Everyone signs in with their own
-account.
+The dashboard runs on the laptop. To open it from your phone on site, or to let a colleague in, the
+laptop needs a private way to be reached. Either way **only Studio** is reachable (not the laptop's
+files or anything else), nothing is opened on your home router, everyone signs in with their own
+Studio account, and it works only while the laptop is on and awake (section 1).
 
-The tunnel needs Cloudflare to run the domain's DNS. The domain itself stays registered at GoDaddy
-(renewals and billing unchanged); only the "address book" moves. Done as below, the website
-(`theurbanmakers.com`), the designer app (`app.theurbanmakers.com`), anything on Netlify or
-Supabase, and email keep working exactly as before, because Cloudflare answers with the same
-records.
+- **Tailscale** (below): free for a few people, about 10 minutes, no changes to your domain. Each
+  person installs the Tailscale app once. Best for you plus one or two colleagues.
+- **Cloudflare Tunnel at studio.theurbanmakers.com** (further down): free, nothing to install for
+  the team, but it moves the domain's DNS to Cloudflare first. Worth it when the team grows.
 
 **Who can do what**
 
@@ -303,7 +302,34 @@ records.
 **1. Your account.** Open http://127.0.0.1:8765 on the laptop and make the owner account (or
 `.\venv\Scripts\python worker.py --add-user you@theurbanmakers.com "Bryan" --owner`).
 
-**2. Move the DNS to Cloudflare (about 20 minutes, then up to a day of waiting).**
+**2. Tailscale (about 10 minutes).**
+
+1. On the laptop: install Tailscale (`winget install tailscale.tailscale`, or tailscale.com/download)
+   and sign in (a Google or Microsoft account is fine). Do the same on your phone.
+2. In PowerShell on the laptop: `tailscale serve --bg 8765`. The first time, it gives you a link to
+   switch on HTTPS for your Tailscale network: open it, allow it, and run the command again. It
+   prints Studio's private address, like `https://your-laptop.tail1234.ts.net`. `--bg` keeps it
+   running in the background, also after restarts.
+3. In `.env`, set `STUDIO_DASHBOARD_URL=` that address (invite and Telegram links use it), then
+   account menu > **Restart Studio**.
+4. On your phone, open the address and sign in.
+5. Your colleague: in the Tailscale admin console (login.tailscale.com) > **Machines** > the
+   laptop > **Share**, and send them the link. They install Tailscale on their phone and computer,
+   sign in with their own account and accept; they can reach this one machine and nothing else.
+   Then invite them to Studio (step 3 below).
+
+**3. Invite your colleague.** Account menu (top right) > **Team** > **Invite someone**. Send the link
+(WhatsApp is fine); it works once and expires after 7 days. Each person picks their own password.
+Remove someone there and they're signed out everywhere at once.
+
+The laptop has to be on and awake for anyone to reach Studio (section 1). If the team outgrows
+that, the planning board is the part to move to a server first.
+
+
+**Later, for a bigger team: Cloudflare Tunnel at studio.theurbanmakers.com.** Instead of Tailscale
+(turn `tailscale serve` off with `tailscale serve --bg off`, or keep both).
+
+*Move the DNS to Cloudflare (about 20 minutes, then up to a day of waiting):*
 
 1. **Save what's there now.** GoDaddy: *My Products > theurbanmakers.com > DNS*. Export the zone
    file, or screenshot every record. Typical ones here:
@@ -327,7 +353,7 @@ records.
    sent to you from outside arrives. If anything's wrong, compare the records again; switching the
    nameservers back to GoDaddy's undoes everything.
 
-**3. The tunnel (about 10 minutes, on the laptop).**
+*The tunnel (about 10 minutes, on the laptop):*
 
 1. PowerShell: `winget install --id Cloudflare.cloudflared`
 2. Cloudflare dashboard: **Zero Trust > Networks > Tunnels > Create a tunnel** (the first time,
@@ -346,13 +372,6 @@ records.
 Optional extra lock, also free: **Zero Trust > Access > Applications** can put Cloudflare's own
 email check in front of Studio, so only addresses you list (or all `@theurbanmakers.com`) even reach
 the sign-in page. It means signing in twice, so it's up to you.
-
-**4. Invite the team.** Account menu (top right) > **Team** > **Invite someone**. Send the link
-(WhatsApp is fine); it works once and expires after 7 days. Each person picks their own password.
-Remove someone there and they're signed out everywhere at once.
-
-The laptop has to be on and awake for anyone to reach Studio (section 1). If the team outgrows
-that, the planning board is the part to move to a server first.
 
 ## 12. Planning: projects, arcs and shot lists
 
