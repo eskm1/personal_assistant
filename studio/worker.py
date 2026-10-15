@@ -50,7 +50,7 @@ def _setup_logging() -> None:
         h.setFormatter(fmt)
     logging.basicConfig(level=logging.INFO, handlers=handlers)
     # Keep third-party chatter (HTTP requests, model downloads) out of the log.
-    for noisy in ("httpx", "httpx2", "anthropic", "faster_whisper", "urllib3"):
+    for noisy in ("httpx", "httpx2", "anthropic", "faster_whisper", "urllib3", "huggingface_hub"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 

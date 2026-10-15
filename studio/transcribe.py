@@ -9,11 +9,22 @@ GPU disappears mid-run (eGPU unplugged), the next attempt reloads on the CPU.
 import logging
 import os
 import sys
+import warnings
+import wave
 from pathlib import Path
+
+import numpy as np
 
 from settings import WHISPER_DEVICE, WHISPER_LANGUAGE, WHISPER_MODEL
 
 log = logging.getLogger("studio.transcribe")
+
+# Model downloads from Hugging Face: Windows without Developer Mode can't make
+# symlinks (the cache just uses a bit more disk), and no token is needed for
+# public models. Neither warning needs action, so keep them out of the log.
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+warnings.filterwarnings("ignore", module="huggingface_hub")
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
 _model = None
 _device = None
@@ -69,9 +80,20 @@ def device() -> str | None:
     return _device
 
 
+def _load_wav(wav_path: Path) -> np.ndarray:
+    """The 16 kHz mono 16-bit WAV extract.extract_audio writes, as float32 samples.
+    Handing Whisper samples (not a path) skips its own decoder, PyAV, whose current
+    releases reject an option faster-whisper 1.2.1 passes (metadata_errors)."""
+    with wave.open(str(wav_path), "rb") as w:
+        if (w.getnchannels(), w.getsampwidth(), w.getframerate()) != (1, 2, 16000):
+            raise RuntimeError(f"unexpected WAV format in {wav_path.name}")
+        pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+    return pcm.astype(np.float32) / 32768.0
+
+
 def _transcribe_once(wav_path: Path) -> dict:
     segments, info = _model.transcribe(
-        str(wav_path),
+        _load_wav(wav_path),
         language=WHISPER_LANGUAGE,
         word_timestamps=True,
         vad_filter=True,  # skips silence, which also stops Whisper inventing words in it
