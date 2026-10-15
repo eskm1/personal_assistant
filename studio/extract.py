@@ -92,14 +92,18 @@ def extract_audio(path: Path, wav_path: Path) -> Path:
     return wav_path
 
 
+# Bump the name when the preview recipe changes, so old previews get rebuilt.
+PREVIEW_NAME = "preview-1080.mp4"
+
+
 def make_preview(path: Path, out_path: Path) -> Path:
-    """A small H.264 copy (960 px on the long side) for the dashboard: plays in any
-    browser, seeks instantly, and streams fine over Wi-Fi or Tailscale, unlike
-    a 4K HEVC original."""
+    """A 1080p H.264 copy for the dashboard: plays in any browser and seeks
+    instantly, unlike a 4K HEVC original, while staying crisp enough to judge
+    focus and framing (CRF 20 is close to visually lossless at this size)."""
     _run([FFMPEG, "-y", "-v", "error", "-i", str(path),
-          "-vf", "scale='if(gt(iw,ih),960,-2)':'if(gt(iw,ih),-2,960)'",
-          "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p",
-          "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(out_path)])
+          "-vf", "scale='if(gt(iw,ih),1920,-2)':'if(gt(iw,ih),-2,1920)'",
+          "-c:v", "libx264", "-preset", "faster", "-crf", "20", "-pix_fmt", "yuv420p",
+          "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out_path)])
     return out_path
 
 

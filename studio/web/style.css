@@ -92,8 +92,13 @@ main { padding: 16px 24px 48px; }
   position: relative; height: 100%; display: grid; grid-template-columns: 1fr minmax(340px, 420px);
 }
 .player-col { position: relative; display: grid; place-items: center; padding: 24px 72px; min-width: 0; }
-.player-frame { height: calc(100vh - 48px); aspect-ratio: 9 / 16; max-width: 100%; display: grid; place-items: center; }
+.player-frame { position: relative; height: calc(100vh - 48px); aspect-ratio: 9 / 16; max-width: 100%; display: grid; place-items: center; }
 .player-frame video { width: 100%; height: 100%; object-fit: contain; background: #000; border-radius: var(--radius); }
+.quality {
+  position: absolute; top: 12px; left: 12px; padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: rgba(0, 0, 0, .65); border: 1px solid rgba(255, 255, 255, .25);
+}
+.quality.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .player-frame .placeholder { color: var(--muted); text-align: center; }
 .nav {
   position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 50%;

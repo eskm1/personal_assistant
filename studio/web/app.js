@@ -203,12 +203,36 @@ function closeViewer() {
 function renderPlayer(item) {
   const frame = $("#player-frame");
   if (item.video) {
-    frame.innerHTML = `<video controls autoplay playsinline src="${esc(item.video)}" ${item.thumb ? `poster="${esc(item.thumb)}"` : ""}></video>`;
+    const original = item.original && recall("studio.original") === "1";
+    frame.innerHTML = `<video controls autoplay playsinline src="${esc(original ? item.original : item.video)}" ${item.thumb ? `poster="${esc(item.thumb)}"` : ""}></video>
+      ${item.original ? `<button class="quality${original ? " on" : ""}" id="quality" title="Switch between the 1080p preview and your untouched file">${original ? "Original" : "1080p preview"}</button>` : ""}`;
     player().addEventListener("timeupdate", updatePinLabel);
+    player().addEventListener("error", () => {
+      // Originals from an iPhone are usually HEVC, which some browsers can't play.
+      if (player().src.endsWith("/original")) {
+        toast("This browser can't play the original (iPhone HEVC). Showing the 1080p preview.");
+        setQuality(item, false);
+      }
+    });
+    $("#quality")?.addEventListener("click", () => setQuality(item, !$("#quality").classList.contains("on")));
   } else {
     const why = item.kind === "inbox" ? "Still in OneDrive. It plays here once it's ingested." : "Being processed. It plays here once a preview is ready.";
     frame.innerHTML = `<div class="placeholder">${why}</div>`;
   }
+}
+
+function setQuality(item, original) {
+  const video = player();
+  const at = video.currentTime, wasPlaying = !video.paused;
+  store("studio.original", original ? "1" : "0");
+  video.src = original ? item.original : item.video;
+  video.addEventListener("loadedmetadata", () => {
+    video.currentTime = at;
+    if (wasPlaying) video.play().catch(() => {});
+  }, { once: true });
+  const btn = $("#quality");
+  btn.classList.toggle("on", original);
+  btn.textContent = original ? "Original" : "1080p preview";
 }
 
 async function loadDetail() {

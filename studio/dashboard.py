@@ -78,10 +78,12 @@ def _file_response(path: str | None):
 def _clip_files(row: sqlite3.Row) -> dict:
     clip_dir = Path(row["clip_dir"])
     frames = sorted((clip_dir / "frames").glob("*.jpg"))
-    preview = clip_dir / "preview.mp4"
+    # Newest preview first; clips from before a recipe change fall back to the old one.
+    preview = next((p for p in (clip_dir / "preview-1080.mp4", clip_dir / "preview.mp4") if p.exists()), None)
     return {
         "thumb": str(frames[len(frames) // 2]) if frames else None,
-        "video": str(preview) if preview.exists() else row["video_path"],
+        "video": str(preview) if preview else row["video_path"],
+        "original": row["video_path"],
     }
 
 
@@ -125,6 +127,7 @@ def _clip_item(row: sqlite3.Row, open_notes: dict[int, int]) -> dict:
         "error": row["error"], "open_notes": open_notes.get(row["id"], 0),
         "thumb": f"/media/clip/{row['id']}/thumb" if files["thumb"] else None,
         "video": f"/media/clip/{row['id']}/video" if row["status"] != "processing" else None,
+        "original": f"/media/clip/{row['id']}/original" if row["status"] != "processing" else None,
         "updated": row["ingested_at"],
     }
 
@@ -270,7 +273,7 @@ def review_clip(clip_id: int):
 @app.get("/media/clip/<int:clip_id>/<what>")
 def clip_media(clip_id: int, what: str):
     row = db().execute("SELECT * FROM clips WHERE id = ?", (clip_id,)).fetchone()
-    if row is None or what not in ("thumb", "video"):
+    if row is None or what not in ("thumb", "video", "original"):
         abort(404)
     return _file_response(_clip_files(row)[what])
 

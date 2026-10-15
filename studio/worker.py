@@ -16,6 +16,7 @@ Usage (from the studio folder, inside its venv):
   python worker.py --file C:\\x.mp4 process one file now (moves it into the library)
   python worker.py --retry-failed  reprocess clips that failed, were interrupted or skipped Claude
   python worker.py --check         check ffmpeg, GPU, API key and Telegram, then exit
+  python worker.py --rebuild-previews  remake missing dashboard previews (also done at start)
   add --no-claude to transcribe and catalogue without tagging (no API calls)
   add --no-dashboard to skip the review site (http://127.0.0.1:8765 by default)
 """
@@ -153,7 +154,7 @@ def tag_clip(conn, clip_id: int, clip_dir: Path, video: Path, source_name: str,
     meta = extract.probe(video)
     frames = extract.extract_frames(video, clip_dir / "frames", meta["duration"])
     try:
-        extract.make_preview(video, clip_dir / "preview.mp4")
+        extract.make_preview(video, clip_dir / extract.PREVIEW_NAME)
     except RuntimeError as e:  # the dashboard falls back to the original
         log.warning("No preview for %s: %s", source_name, e)
 
@@ -236,6 +237,23 @@ def retry_failed(conn, use_claude: bool) -> None:
             catalog.mark_failed(conn, row["id"], f"{type(e).__name__}: {e}")
 
 
+def rebuild_previews(conn) -> None:
+    """Make the current dashboard preview for clips that lack it (older clips got a
+    smaller, softer one), and drop the old preview once replaced."""
+    import extract
+    for row in conn.execute("SELECT * FROM clips WHERE status != 'processing' ORDER BY id"):
+        clip_dir, video = Path(row["clip_dir"]), Path(row["video_path"])
+        target = clip_dir / extract.PREVIEW_NAME
+        if target.exists() or not video.exists():
+            continue
+        log.info("Making a 1080p preview for %s", row["source_name"])
+        try:
+            extract.make_preview(video, target)
+            (clip_dir / "preview.mp4").unlink(missing_ok=True)
+        except RuntimeError as e:
+            log.warning("No preview for %s: %s", row["source_name"], e)
+
+
 def check() -> int:
     """Print what the worker will use, and send a Telegram test message."""
     import extract
@@ -277,6 +295,7 @@ def main() -> int:
     mode.add_argument("--file", type=Path, help="process one video file now")
     mode.add_argument("--retry-failed", action="store_true", help="reprocess failed clips")
     mode.add_argument("--check", action="store_true", help="check the setup, then exit")
+    mode.add_argument("--rebuild-previews", action="store_true", help="remake missing dashboard previews")
     parser.add_argument("--no-claude", action="store_true", help="skip Claude tagging")
     parser.add_argument("--no-dashboard", action="store_true", help="don't serve the review dashboard")
     args = parser.parse_args()
@@ -299,6 +318,9 @@ def main() -> int:
     if args.retry_failed:
         retry_failed(conn, use_claude)
         return 0
+    if args.rebuild_previews:
+        rebuild_previews(conn)
+        return 0
 
     if not args.once and not args.no_dashboard:
         import threading
@@ -308,6 +330,7 @@ def main() -> int:
     log.info("Studio worker started; watching %s every %ss", INBOX, POLL_SECONDS)
     if not args.once:
         retry_failed(conn, use_claude)  # pick up anything a crash or outage left behind
+        rebuild_previews(conn)
     while True:
         for path in inbox_videos():
             try:
