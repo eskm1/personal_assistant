@@ -1,0 +1,7 @@
+{
+  "id": "check",
+  "name": "Studio render check",
+  "width": 1080,
+  "height": 1920,
+  "fps": 30
+}

@@ -254,6 +254,38 @@ def rebuild_previews(conn) -> None:
             log.warning("No preview for %s: %s", row["source_name"], e)
 
 
+def check_editor() -> bool:
+    """Phase 5 prerequisites: Node, HyperFrames and its Chrome, a real test render,
+    and the Epidemic Sound connection."""
+    import music
+    import render
+
+    ok = True
+
+    def line(label: str, fn, fix: str = "") -> bool:
+        try:
+            print(f"{label:<12}: {fn()}")
+            return True
+        except Exception as e:
+            print(f"{label:<12}: NOT READY ({e}){f' - {fix}' if fix else ''}")
+            return False
+
+    ok &= line("Node.js", render.node_version)
+    if line("HyperFrames", render.hyperframes_version, "in studio\\render run: npm ci"):
+        if line("Chrome", render.browser_path):
+            ok &= line("Render test", lambda: f"2-second vertical test rendered in {render.smoke_test():.0f}s")
+        else:
+            ok = False
+    else:
+        ok = False
+    if settings.EPIDEMIC_SOUND_API_KEY:
+        ok &= line("Epidemic", music.check)
+    else:
+        print("Epidemic    : no key yet (EPIDEMIC_SOUND_API_KEY); edits will have no music")
+    print(f"Music for   : {', '.join(sorted(settings.MUSIC_ACCOUNTS)) or 'no account'}")
+    return ok
+
+
 def check() -> int:
     """Print what the worker will use, and send a Telegram test message."""
     import extract
@@ -279,6 +311,7 @@ def check() -> int:
           f"{'set' if settings.ANTHROPIC_API_KEY else 'MISSING'}")
     ok = ok and bool(settings.ANTHROPIC_API_KEY)
     print(f"Brands file : {settings.BRANDS_FILE} ({'found' if settings.BRANDS_FILE.exists() else 'MISSING'})")
+    ok = check_editor() and ok
     if notify.configured():
         sent = notify.send("Studio worker check: Telegram notifications are working.")
         print(f"Telegram    : {'test message sent' if sent else 'SEND FAILED - check token and chat ID'}")

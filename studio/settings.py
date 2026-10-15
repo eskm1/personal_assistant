@@ -71,6 +71,15 @@ CLAUDE_MODEL = _env("STUDIO_CLAUDE_MODEL", "claude-opus-5-5")
 CLAUDE_EFFORT = _env("STUDIO_CLAUDE_EFFORT", "medium")
 BRANDS_FILE = _path("STUDIO_BRANDS_FILE", HERE / "brands.md")
 
+# ── Epidemic Sound (music for the editor) ─────────────────────────────────────
+# Personal MCP key from epidemicsound.com/account/api-keys.
+EPIDEMIC_SOUND_API_KEY = _env("EPIDEMIC_SOUND_API_KEY")
+EPIDEMIC_SOUND_MCP_URL = _env("EPIDEMIC_SOUND_MCP_URL", "https://www.epidemicsound.com/a/mcp-service/mcp")
+# Which accounts may use Epidemic tracks (comma-separated: personal, urban_makers).
+# The plan licenses one channel per platform, so list only the account registered
+# with Epidemic Sound; posts for other accounts are made without Epidemic music.
+MUSIC_ACCOUNTS = {a.strip() for a in _env("STUDIO_MUSIC_ACCOUNTS", "urban_makers").split(",") if a.strip()}
+
 # ── Telegram (send-only, through Ava's bot) ───────────────────────────────────
 # Sending with the same token the server uses is safe: only getUpdates polling
 # conflicts between processes, and this worker never polls.

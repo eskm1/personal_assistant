@@ -197,6 +197,42 @@ dashboard won't listen beyond the laptop without a password. With `STUDIO_DASHBO
 Telegram messages link straight to the clip. Telegram is just for notifications now; the
 dashboard is where you give feedback.
 
+## 9. Editing prerequisites (phase 5)
+
+The editor cuts with ffmpeg and renders captions and graphics with HyperFrames, which
+turns HTML pages into video frames with a headless Chrome. It needs Node.js, HyperFrames
+itself, and its Chrome, plus your Epidemic Sound key for music. One-time setup:
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+
+Close and reopen PowerShell, then from the `studio` folder:
+
+```powershell
+cd render
+npm ci
+npx hyperframes browser ensure
+cd ..
+```
+
+`npm ci` installs the pinned HyperFrames and GSAP versions into `studio\render`.
+`browser ensure` downloads the Chrome that HyperFrames renders with.
+
+Then add to `.env`:
+
+```
+EPIDEMIC_SOUND_API_KEY=<key from epidemicsound.com/account/api-keys>
+STUDIO_MUSIC_ACCOUNTS=urban_makers
+```
+
+Your Epidemic Sound plan covers one channel per platform, so only the accounts listed in
+`STUDIO_MUSIC_ACCOUNTS` get Epidemic tracks. Personal posts are edited without Epidemic music.
+
+Run `.\venv\Scripts\python worker.py --check`. Besides the earlier lines, it now shows
+Node.js, HyperFrames, Chrome, a 2-second test render, and the Epidemic Sound connection with
+the tools it offers.
+
 ## Day to day
 
 | Task | Command (from `studio`, with `.\venv\Scripts\python`) |

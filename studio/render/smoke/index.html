@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Studio render check</title>
+<script src="gsap.min.js"></script>
+<style>
+html,body{margin:0;width:1080px;height:1920px;overflow:hidden;background:#101014;font-family:Arial,sans-serif}
+#check{position:relative;width:1080px;height:1920px;overflow:hidden;background:linear-gradient(160deg,#1d1d24,#0b0b0d)}
+.cap{position:absolute;left:50%;top:1180px;transform:translateX(-50%);padding:18px 30px;border-radius:16px;
+  background:rgba(0,0,0,.72);border:2px solid rgba(255,255,255,.35);color:#fff;font-weight:800;font-size:64px;letter-spacing:1px}
+</style></head><body>
+<div id="check" data-composition-id="check" data-start="0" data-duration="2" data-width="1080" data-height="1920">
+  <div id="cap" class="cap clip" data-start="0" data-duration="2" data-track-index="0">RENDER CHECK</div>
+</div>
+<script>
+const tl = gsap.timeline({paused: true});
+tl.from('#cap', {opacity: 0, y: 30, duration: .5, ease: 'power2.out'}, 0);
+window.__timelines = window.__timelines || {}; window.__timelines['check'] = tl;
+</script></body></html>
