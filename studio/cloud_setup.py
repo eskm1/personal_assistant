@@ -31,6 +31,7 @@ HERE = Path(__file__).resolve().parent
 CLOUD = HERE / "cloud"
 ENV_FILE = HERE / ".env"
 CLI = "supabase@2.121.0"
+FUNCTIONS = ("plan-organise", "plan-develop", "team")  # supabase/functions/<name>; tests/ isn't one
 
 
 def say(text: str = "") -> None:
@@ -157,7 +158,7 @@ def main() -> int:
         finally:
             os.unlink(f.name)
         step(5, "Deploying the Edge Functions (Organise / Refine with Claude, team invites).")
-        npx("functions", "deploy", "--use-api")
+        npx("functions", "deploy", *FUNCTIONS, "--use-api")
 
     step(6, "Connecting the laptop.")
     say("  In the Supabase dashboard: Project Settings > API Keys. Copy the SECRET key\n"
