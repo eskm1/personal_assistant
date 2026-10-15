@@ -126,6 +126,11 @@ async function sync() {
     const wasRunning = state.ideasJob?.running;
     state.items = data.items;
     state.ideasJob = data.ideas_job || {};
+    if (data.costs) {
+      const c = data.costs;
+      $("#costs").textContent = `API this month: ${money(c.usd)}`;
+      $("#costs").title = Object.entries(c.by_kind).map(([k, v]) => `${k}: ${money(v.usd)} (${v.calls} calls)`).join("\n");
+    }
     if (wasRunning && !state.ideasJob.running && state.ideasJob.count != null) {
       toast(state.ideasJob.count ? `${state.ideasJob.count} new idea${state.ideasJob.count > 1 ? "s" : ""}` : "No new ideas this time. Try a different focus or add more clips.");
     }
@@ -289,6 +294,16 @@ function notesHTML(notes, currentVersion, isProduction) {
   }).join("")}</ul>`;
 }
 
+function money(usd) {
+  return usd < 0.01 ? "under 1¢" : `$${usd.toFixed(2)}`;
+}
+
+function shotsHTML(heading, shots) {
+  if (!shots || !shots.length) return "";
+  return `<div><h3>${esc(heading)}</h3><ul class="shots">${shots.map((s) =>
+    `<li><strong>${esc(s.shot)}</strong><span>${esc(s.why)}</span></li>`).join("")}</ul></div>`;
+}
+
 function musicHTML(m) {
   if (!m) return "";
   let text;
@@ -340,6 +355,7 @@ function renderPanel() {
       ${d.beats.length ? `<div><h3>Structure</h3><ol class="beats">${d.beats.map((b) => `<li>${esc(b)}</li>`).join("")}</ol></div>` : ""}
       <div><h3>Footage (${d.segments.length} segment${d.segments.length > 1 ? "s" : ""})</h3><ul class="moments">${d.segments.map((s, i) =>
         `<li><button data-segment="${i}"><strong>${esc(s.clip_title)} · ${mmss(s.start)}–${mmss(s.end)}</strong> ${esc(s.purpose)}</button></li>`).join("")}</ul></div>
+      ${shotsHTML("Film these to make it stronger", d.wishlist)}
       <div><h3>Caption</h3><textarea id="caption">${esc(d.caption)}</textarea></div>
       ${d.status === "new" ? `<div class="decision row">
         <button class="btn primary" id="idea-make">Make this</button>
@@ -357,7 +373,9 @@ function renderPanel() {
       ${d.edit_summary ? `<div><h3>What the editor did</h3><p>${esc(d.edit_summary)}</p></div>` : ""}
       ${musicHTML(d.music)}
       ${qaHTML(d.qa)}
+      ${shotsHTML("The editor wished it had", d.missing_shots)}
       ${d.idea ? `<div><h3>Brief</h3><p>${esc(d.idea)}</p></div>` : ""}
+      ${d.cost ? `<p class="muted">API cost so far: ${money(d.cost)}${d.graphics ? ` · ${d.graphics} graphic${d.graphics > 1 ? "s" : ""}` : ""}</p>` : ""}
       ${d.sources.length ? `<div><h3>Made from</h3><p class="muted">${d.sources.map((s) => esc(s.title)).join(", ")}</p></div>` : ""}
       ${canDecide || d.status === "failed" ? "" : `<div class="box"><p>${d.status === "revising" || d.status === "producing" || d.status === "planned"
         ? "The editor is working on this. It comes back to To review when the new version renders."
@@ -394,6 +412,7 @@ function renderPanel() {
       ${composerHTML("How should this clip be used? e.g. \"Great hook for the kitchen reveal\"")}
       ${d.topics.length ? `<p class="muted">${d.topics.map((t) => `#${esc(t)}`).join(" ")}</p>` : ""}
       ${d.quality_notes ? `<p class="muted">Quality: ${esc(d.quality_notes)}</p>` : ""}
+      ${d.cost ? `<p class="muted">Tagging cost: ${money(d.cost)}</p>` : ""}
       ${d.transcript ? `<details><summary>Transcript</summary><p>${esc(d.transcript)}</p></details>` : ""}`;
   }
   updatePinLabel();

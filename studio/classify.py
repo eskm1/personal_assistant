@@ -114,7 +114,7 @@ def build_content(meta: dict, frames: list[tuple[float, Path]], transcript: dict
 
 
 def classify(meta: dict, frames: list[tuple[float, Path]], transcript: dict | None,
-             source_name: str, client: anthropic.Anthropic | None = None) -> dict:
+             source_name: str, client: anthropic.Anthropic | None = None, ref: str = "") -> dict:
     client = client or anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or None)
     response = client.beta.messages.create(
         model=CLAUDE_MODEL,
@@ -130,6 +130,8 @@ def classify(meta: dict, frames: list[tuple[float, Path]], transcript: dict | No
         system=_SYSTEM.replace("{brands}", _brands_text()),  # not .format: brands.md may hold braces
         messages=[{"role": "user", "content": build_content(meta, frames, transcript, source_name)}],
     )
+    import usage
+    usage.record("tag", ref, response)
     if response.stop_reason == "refusal":
         raise RuntimeError("Claude declined to classify this clip")
     if response.stop_reason == "max_tokens":

@@ -51,9 +51,21 @@ SCHEMA = {
                     },
                     "caption": {"type": "string"},
                     "est_seconds": {"type": "number"},
+                    "wishlist": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "shot": {"type": "string"},
+                                "why": {"type": "string"},
+                            },
+                            "required": ["shot", "why"],
+                            "additionalProperties": False,
+                        },
+                    },
                 },
                 "required": ["brand", "format", "title", "hook", "angle", "beats", "segments", "caption",
-                             "est_seconds"],
+                             "est_seconds", "wishlist"],
                 "additionalProperties": False,
             },
         },
@@ -86,6 +98,11 @@ seconds inside that clip. Use the transcript timestamps so speech starts and end
 phrases. A clip may appear in several ideas.
 - caption: a ready-to-edit Instagram caption in Bryan's voice with 3 to 6 relevant hashtags.
 - est_seconds: the finished length.
+- wishlist: up to 4 specific shots Bryan could still film that would make this post noticeably \
+better, each with why (e.g. "5-second close-up of the membrane being rolled onto the wall corner: \
+shows the step the post is about instead of only describing it"). Think about what's missing: a \
+strong opening visual, a before or after shot, close-ups of the work being explained, a clean \
+retake of a fumbled line, a call to action. Empty if the footage already has everything.
 - Use only what the footage shows and Bryan says. Never invent results, prices, clients or claims.
 - Don't repeat posts that already exist (listed below)."""
 
@@ -164,6 +181,7 @@ def generate(conn, focus: str = "", count: int = 6, client: anthropic.Anthropic 
         + library
     )
     client = client or anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or None)
+    batch = uuid.uuid4().hex[:8]
     response = client.beta.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=16000,
@@ -175,6 +193,8 @@ def generate(conn, focus: str = "", count: int = 6, client: anthropic.Anthropic 
                       .replace("{count}", str(count)),
         messages=[{"role": "user", "content": user}],
     )
+    import usage
+    usage.record("ideas", f"ideas:{batch}", response)
     if response.stop_reason == "refusal":
         raise RuntimeError("Claude declined to suggest ideas")
     if response.stop_reason == "max_tokens":
@@ -182,7 +202,6 @@ def generate(conn, focus: str = "", count: int = 6, client: anthropic.Anthropic 
     text = next((b.text for b in response.content if b.type == "text"), "")
     durations = {r["id"]: r["duration"] or 0 for r in conn.execute("SELECT id, duration FROM clips")}
     ideas = _clean(json.loads(text)["ideas"], durations)
-    batch = uuid.uuid4().hex[:8]
     catalog.save_ideas(conn, batch, ideas)
     log.info("Saved %d ideas (batch %s) from %d clips", len(ideas), batch, len(ids))
     return batch, len(ideas)

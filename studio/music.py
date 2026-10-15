@@ -124,7 +124,8 @@ def _tool_text(result: dict) -> str:
     return text
 
 
-def find_track(brief: str, seconds: float, out_dir, client=None, es: "EpidemicSound | None" = None):
+def find_track(brief: str, seconds: float, out_dir, client=None, es: "EpidemicSound | None" = None,
+               ref: str = ""):
     """Pick and download a music track for a post. Returns (path, track info)."""
     import anthropic
     from pathlib import Path
@@ -149,6 +150,8 @@ def find_track(brief: str, seconds: float, out_dir, client=None, es: "EpidemicSo
             betas=["server-side-fallback-2026-07-01"], fallbacks="default",
             output_config={"effort": "low", "format": {"type": "json_schema", "schema": TRACK_SCHEMA}},
         )
+        import usage
+        usage.record("music", ref, response)
         if response.stop_reason == "refusal":
             raise RuntimeError("Claude declined the music search")
         calls = [b for b in response.content if b.type == "tool_use"]

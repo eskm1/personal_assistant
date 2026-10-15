@@ -19,6 +19,7 @@ Usage (from the studio folder, inside its venv):
   python worker.py --check         check ffmpeg, GPU, API key and Telegram, then exit
   python worker.py --rebuild-previews  remake missing dashboard previews (also done at start)
   python worker.py --edit 12       edit production 12 now (normally the editor queue does this)
+  python worker.py --trial "talking head"  ideas -> one edited draft, with footage advice and costs
   add --no-claude to transcribe and catalogue without tagging (no API calls)
   add --no-dashboard to skip the review site (http://127.0.0.1:8765 by default)
 """
@@ -175,7 +176,7 @@ def tag_clip(conn, clip_id: int, clip_dir: Path, video: Path, source_name: str,
     analysis = None
     if use_claude:
         import classify
-        analysis = classify.classify(meta, frames, transcript, source_name)
+        analysis = classify.classify(meta, frames, transcript, source_name, ref=f"clip:{clip_id}")
         (clip_dir / "analysis.json").write_text(json.dumps(analysis, indent=2, ensure_ascii=False),
                                                 encoding="utf-8")
 
@@ -290,6 +291,57 @@ def run_editor(stop_after_one: bool = False) -> None:
             return
 
 
+def trial(conn, focus: str) -> int:
+    """One end-to-end test: suggest ideas, make the best talking-head one, edit it,
+    and print what came out, what footage would help, and what it all cost."""
+    import catalog
+    import editor
+    import ideas
+    import usage
+
+    print(f"1/3 Suggesting ideas (focus: {focus}) ...", flush=True)
+    batch, count = ideas.generate(conn, f"{focus}. Include at least one strong talking-head post.", count=3)
+    rows = conn.execute("SELECT * FROM ideas WHERE batch = ? ORDER BY id", (batch,)).fetchall()
+    for r in rows:
+        print(f"   - [{r['brand']} / {r['format']}] {r['title']}: {r['hook']}")
+    if not rows:
+        print("No ideas came back. Add more clips, or try a different focus.")
+        return 1
+    talking = [r for r in rows if r["format"] == "talking_head"]
+    with_music = [r for r in talking if r["brand"] in settings.MUSIC_ACCOUNTS]
+    pick = (with_music or talking or list(rows))[0]
+    print(f"\n2/3 Editing: {pick['title']} ({pick['brand']}, {pick['format']}). This takes a few minutes ...",
+          flush=True)
+    production_id = catalog.make_production(conn, pick["id"])
+    editor.edit(conn, production_id)
+    p = conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    edl, qa, music_info = json.loads(p["edl"]), json.loads(p["qa"]), json.loads(p["music"])
+
+    print(f"\n3/3 Draft ready: {p['video_path']} ({p['duration']:.0f}s)")
+    print(f"   Editor: {edl['summary']}")
+    print(f"   Graphics: {len(edl.get('graphics', []))}  |  Captions: on  |  Hook text: {edl['hook_text'] or '(none)'}")
+    if music_info.get("source") == "epidemic":
+        print(f"   Music: {music_info['title']} by {music_info['artist']} (Epidemic Sound)")
+    else:
+        print(f"   Music: {music_info.get('note') or 'none: ' + music_info.get('error', 'not available')}")
+    match = f"{qa['match']:.0%}" if qa.get("match") is not None else "n/a"
+    print(f"   Checks: {match} of words intact, {qa.get('lufs')} LUFS"
+          + (f", possibly clipped: {', '.join(qa['missing'])}" if qa.get("missing") else ""))
+    wishes = json.loads(pick["wishlist"] or "[]") + edl.get("missing_shots", [])
+    if wishes:
+        print("\n   Film these to make it better:")
+        for w in wishes:
+            print(f"   - {w['shot']}  ({w['why']})")
+    idea_cost = usage.total_for(conn, f"ideas:{batch}")
+    edit_cost = usage.total_for(conn, f"production:{production_id}")
+    month = usage.month_summary(conn)
+    print(f"\n   API cost: ideas ${idea_cost:.2f} (for {count} ideas) + edit and music ${edit_cost:.2f}"
+          f" = ${idea_cost + edit_cost:.2f}. This month so far: ${month['usd']:.2f} "
+          + "(" + ", ".join(f"{k} ${v['usd']:.2f}" for k, v in month["by_kind"].items()) + ")")
+    print(f"\n   Review it on the dashboard: To review, or http://127.0.0.1:{settings.DASHBOARD_PORT}/#/production/{production_id}")
+    return 0
+
+
 def check_editor() -> bool:
     """Phase 5 prerequisites: Node, HyperFrames and its Chrome, a real test render,
     and the Epidemic Sound connection."""
@@ -366,6 +418,7 @@ def main() -> int:
     mode.add_argument("--check", action="store_true", help="check the setup, then exit")
     mode.add_argument("--rebuild-previews", action="store_true", help="remake missing dashboard previews")
     mode.add_argument("--edit", type=int, metavar="ID", help="edit one production now (by its id)")
+    mode.add_argument("--trial", metavar="FOCUS", help="ideas -> one edited draft, with advice and costs")
     parser.add_argument("--no-claude", action="store_true", help="skip Claude tagging")
     parser.add_argument("--no-dashboard", action="store_true", help="don't serve the review dashboard")
     parser.add_argument("--no-editor", action="store_true", help="don't edit planned productions")
@@ -395,6 +448,8 @@ def main() -> int:
     if args.rebuild_previews:
         rebuild_previews(conn)
         return 0
+    if args.trial:
+        return trial(conn, args.trial)
     if args.edit:
         conn.execute("UPDATE productions SET status = 'planned' WHERE id = ? AND status NOT IN ('revising')",
                      (args.edit,))

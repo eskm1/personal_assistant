@@ -112,6 +112,7 @@ _ADDED_COLUMNS = {
         "music": "TEXT",  # JSON: the Epidemic track used, or the note for Instagram music
         "error": "TEXT",  # why the last edit failed, if it did
     },
+    "ideas": {"wishlist": "TEXT"},  # JSON: shots Bryan could film to make the idea stronger
 }
 
 
@@ -240,9 +241,9 @@ def save_ideas(conn: sqlite3.Connection, batch: str, ideas: list[dict]) -> None:
     for i in ideas:
         conn.execute(
             """INSERT INTO ideas (batch, brand, format, title, hook, angle, beats, segments, caption,
-                   est_seconds, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   est_seconds, wishlist, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (batch, i["brand"], i["format"], i["title"], i["hook"], i["angle"], json.dumps(i["beats"]),
-             json.dumps(i["segments"]), i["caption"], i["est_seconds"], now()),
+             json.dumps(i["segments"]), i["caption"], i["est_seconds"], json.dumps(i.get("wishlist", [])), now()),
         )
     conn.commit()
 
@@ -256,7 +257,8 @@ def make_production(conn: sqlite3.Connection, idea_id: int, caption: str | None 
         return idea["production_id"]
     segments = json.loads(idea["segments"] or "[]")
     plan = {k: idea[k] for k in ("title", "brand", "format", "hook", "angle", "est_seconds")}
-    plan.update(beats=json.loads(idea["beats"] or "[]"), segments=segments, idea_id=idea_id)
+    plan.update(beats=json.loads(idea["beats"] or "[]"), segments=segments, idea_id=idea_id,
+                wishlist=json.loads(idea["wishlist"] or "[]"))
     clip_ids = list(dict.fromkeys(seg["clip_id"] for seg in segments))
     stamp = now()
     cur = conn.execute(

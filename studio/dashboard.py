@@ -23,6 +23,7 @@ from flask import Flask, Response, abort, g, jsonify, request, send_file
 
 import settings
 import playbook
+import usage
 from settings import DASHBOARD_HOST, DASHBOARD_PASSWORD, DASHBOARD_PORT, INBOX, VIDEO_EXTS
 
 log = logging.getLogger("studio.dashboard")
@@ -189,6 +190,7 @@ def board():
                   *(_production_item(r, production_notes) for r in productions),
                   *(_idea_item(r) for r in ideas)],
         "ideas_job": dict(_ideas_job),
+        "costs": usage.month_summary(db()),
     })
 
 
@@ -211,6 +213,7 @@ def clip_detail(clip_id: int):
         "suggested_hook": row["suggested_hook"], "quality_notes": row["quality_notes"],
         "transcript": row["transcript"], "source_name": row["source_name"],
         "notes": _notes("clip", clip_id), "brands": BRANDS, "formats": FORMATS,
+        "cost": usage.total_for(db(), f"clip:{clip_id}"),
     })
     return jsonify(item)
 
@@ -231,6 +234,10 @@ def production_detail(production_id: int):
     item.update({"idea": row["idea"], "caption": row["caption"] or "", "sources": sources,
                  "notes": _notes("production", production_id), "error": row["error"],
                  "edit_summary": edl["summary"] if edl else None,
+                 "missing_shots": (edl or {}).get("missing_shots", []),
+                 "graphics": len((edl or {}).get("graphics", [])),
+                 "wishlist": json.loads(row["plan"] or "{}").get("wishlist", []),
+                 "cost": usage.total_for(db(), f"production:{production_id}"),
                  "music": json.loads(row["music"]) if row["music"] else None,
                  "qa": json.loads(row["qa"]) if row["qa"] else None})
     return jsonify(item)
@@ -248,7 +255,8 @@ def idea_detail(idea_id: int):
                  "video": f"/media/clip/{seg['clip_id']}/video"}
                 for seg in json.loads(row["segments"] or "[]")]
     item.update({"hook": row["hook"], "angle": row["angle"], "beats": json.loads(row["beats"] or "[]"),
-                 "segments": segments, "caption": row["caption"] or "", "production_id": row["production_id"]})
+                 "segments": segments, "caption": row["caption"] or "", "production_id": row["production_id"],
+                 "wishlist": json.loads(row["wishlist"] or "[]")})
     return jsonify(item)
 
 

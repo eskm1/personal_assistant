@@ -71,6 +71,31 @@ EDL_SCHEMA = {
             "additionalProperties": False,
         },
         "summary": {"type": "string"},
+        "graphics": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                    "at": {"type": "number"},
+                    "duration": {"type": "number"},
+                    "style": {"type": "string", "enum": ["card", "callout"]},
+                    "title": {"type": "string"},
+                    "lines": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["clip_id", "at", "duration", "style", "title", "lines"],
+                "additionalProperties": False,
+            },
+        },
+        "missing_shots": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"shot": {"type": "string"}, "why": {"type": "string"}},
+                "required": ["shot", "why"],
+                "additionalProperties": False,
+            },
+        },
         "notes_addressed": {
             "type": "array",
             "items": {
@@ -81,7 +106,7 @@ EDL_SCHEMA = {
             },
         },
     },
-    "required": ["cuts", "hook_text", "music", "summary", "notes_addressed"],
+    "required": ["cuts", "hook_text", "music", "graphics", "missing_shots", "summary", "notes_addressed"],
     "additionalProperties": False,
 }
 
@@ -105,6 +130,16 @@ should add to the spoken hook, not repeat it word for word.
 volume_db is the music's level before it dips under speech; around -16 is typical, lower for \
 talk-heavy posts.
 - {music_rule}
+- graphics: 1 to 3 animated B-roll inserts (rendered with HyperFrames) that show what Bryan is \
+saying while he says it. Anchor each to the moment the words it illustrates are spoken: clip_id \
+and "at" in that clip's own seconds (it must fall inside one of your cuts), plus duration (1.5 to \
+3.5 s). style "card" fills the screen with a headline and up to 3 short points (good for steps, \
+lists or the key takeaway); style "callout" is a panel over the top third of the footage for one \
+number, price, duration or key term (title is the big text, lines one short label). Use Bryan's \
+own words and facts; never invent numbers. Title at most 5 words, each line at most 4 words. \
+Leave the first 2.5 seconds clear for the hook. Use none if nothing in the speech suits a graphic.
+- missing_shots: footage you wished you had while cutting this post, specific enough to film \
+(what, framing, roughly how long), each with why it would make the post better. Empty if none.
 - summary: two sentences on what you did, for Bryan.
 - On a revision, address every note and say how in notes_addressed. Notes are pinned to times \
 in the PREVIOUS draft; the previous cut list shows where each piece sat in that draft."""
@@ -176,6 +211,8 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None) -> di
         system=_SYSTEM.replace("{playbook}", playbook.text()).replace("{music_rule}", music_rule),
         messages=[{"role": "user", "content": user}],
     )
+    import usage
+    usage.record("edit", f"production:{production['id']}", response)
     if response.stop_reason == "refusal":
         raise RuntimeError("Claude declined to plan this edit")
     if response.stop_reason == "max_tokens":
@@ -214,6 +251,31 @@ def timeline(cuts: list[dict], clips: dict[int, dict]) -> list[dict]:
                             "end": offset + w["end"] - c["start"]})
         offset += c["end"] - c["start"]
     return out
+
+
+def place_graphics(graphics: list[dict], cuts: list[dict], total: float) -> list[dict]:
+    """Move each graphic from its source anchor (clip + seconds) onto the draft's
+    clock; drop ones whose moment was cut, that would cover the hook, or overlap."""
+    placed, offset_of = [], []
+    offset = 0.0
+    for c in cuts:
+        offset_of.append(offset)
+        offset += c["end"] - c["start"]
+    for g in graphics:
+        start = next((offset_of[i] + g["at"] - c["start"] for i, c in enumerate(cuts)
+                      if c["clip_id"] == g["clip_id"] and c["start"] <= g["at"] < c["end"]), None)
+        if start is None:
+            continue
+        start = max(start, 2.5)
+        duration = min(max(g["duration"], 1.2), 4.0, total - start)
+        if duration < 1.0:
+            continue
+        if placed and start < placed[-1]["start"] + placed[-1]["duration"] + 0.3:
+            continue
+        placed.append({**g, "start": round(start, 3), "duration": round(duration, 3),
+                       "lines": [line for line in g["lines"] if line.strip()][:3]})
+        placed.sort(key=lambda x: x["start"])
+    return placed
 
 
 def caption_chunks(words: list[dict], total: float) -> list[dict]:
@@ -266,16 +328,57 @@ def render_cut(cuts: list[dict], clips: dict[int, dict], out: Path) -> float:
 _OVERLAY_CSS = """
 html,body{margin:0;width:1080px;height:1920px;overflow:hidden;background:transparent}
 #overlay{position:relative;width:1080px;height:1920px;background:transparent}
-.cap,.hook{position:absolute;left:50%;transform:translateX(-50%);text-align:center;color:#fff;
+.cap,.hook{position:absolute;left:0;right:0;margin:0 auto;width:fit-content;text-align:center;color:#fff;
   font-family:"Montserrat","Arial Black","Segoe UI Black","Segoe UI",Arial,sans-serif;font-weight:900;
   background:rgba(0,0,0,.62);border:2px solid rgba(255,255,255,.38);border-radius:16px;white-space:nowrap}
 .cap{top:1240px;padding:12px 26px;font-size:64px;letter-spacing:1px;max-width:940px;white-space:normal}
 .hook{top:250px;padding:18px 30px;font-size:58px;max-width:920px;white-space:normal;line-height:1.15}
+.cap,.hook{z-index:3}
+.card{position:absolute;inset:0;z-index:1;overflow:hidden;color:#fff;
+  font-family:"Montserrat","Arial Black","Segoe UI Black","Segoe UI",Arial,sans-serif}
+.card .bg{position:absolute;inset:-60px;background:radial-gradient(circle at 30% 20%,#2a2a33,#0b0b0d 70%)}
+.card .inner{position:absolute;left:90px;right:90px;top:520px}
+.card .bar{width:120px;height:14px;border-radius:7px;background:var(--accent);margin-bottom:44px}
+.card .title{font-size:96px;font-weight:900;line-height:1.05;letter-spacing:-1px}
+.card ul{list-style:none;margin:56px 0 0;padding:0}
+.card li{font-size:58px;font-weight:800;margin:0 0 30px;display:flex;align-items:center;gap:26px}
+.card li::before{content:"";flex:0 0 26px;height:26px;border-radius:50%;background:var(--accent)}
+.callout{position:absolute;left:70px;right:70px;top:300px;z-index:2;padding:34px 40px;border-radius:24px;
+  background:rgba(11,11,13,.82);border-left:14px solid var(--accent);color:#fff;
+  font-family:"Montserrat","Arial Black","Segoe UI Black","Segoe UI",Arial,sans-serif}
+.callout .big{font-size:120px;font-weight:900;line-height:1}
+.callout .label{font-size:50px;font-weight:700;margin-top:14px;opacity:.9}
 """
 
+# Accent colour per account for graphics (the dashboard's colours; swap for brand colours).
+ACCENT = {"urban_makers": "#f5a524", "personal": "#7c9cff"}
 
-def render_overlay(chunks: list[dict], hook: str, total: float, out: Path) -> None:
-    """Captions and hook as a transparent WebM (HyperFrames, headless Chrome)."""
+
+def _graphic_html(i: int, g: dict) -> tuple[str, str]:
+    """Markup and GSAP animation for one B-roll graphic. Everything moves, gently."""
+    s, d, gid = g["start"], g["duration"], f"g{i}"
+    attrs = f'id="{gid}" data-start="{s:.3f}" data-duration="{d:.3f}" data-track-index="{2 + i}"'
+    if g["style"] == "card":
+        lines = "".join(f"<li>{html.escape(line)}</li>" for line in g["lines"])
+        markup = (f'<div {attrs} class="card clip"><div class="bg"></div><div class="inner"><div class="bar"></div>'
+                  f'<div class="title">{html.escape(g["title"])}</div><ul>{lines}</ul></div></div>')
+        anim = (f"tl.from('#{gid}',{{opacity:0,duration:.25}},{s:.3f});"
+                f"tl.fromTo('#{gid} .bg',{{scale:1.12}},{{scale:1,duration:{d:.3f},ease:'none'}},{s:.3f});"
+                f"tl.from('#{gid} .bar',{{scaleX:0,transformOrigin:'left',duration:.4,ease:'power3.out'}},{s + .05:.3f});"
+                f"tl.from('#{gid} .title',{{y:50,opacity:0,duration:.45,ease:'power3.out'}},{s + .1:.3f});"
+                f"tl.from('#{gid} li',{{x:-50,opacity:0,duration:.35,stagger:.22,ease:'power2.out'}},{s + .35:.3f});")
+    else:
+        label = html.escape(g["lines"][0]) if g["lines"] else ""
+        markup = (f'<div {attrs} class="callout clip"><div class="big">{html.escape(g["title"])}</div>'
+                  + (f'<div class="label">{label}</div>' if label else "") + "</div>")
+        anim = (f"tl.from('#{gid}',{{y:-40,opacity:0,duration:.35,ease:'power2.out'}},{s:.3f});"
+                f"tl.from('#{gid} .big',{{scale:.7,duration:.45,ease:'back.out(2)'}},{s + .05:.3f});")
+    return markup, anim
+
+
+def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
+                   graphics: list[dict] = (), accent: str = "#ff4d6d") -> None:
+    """Captions, hook and B-roll graphics as a transparent WebM (HyperFrames, headless Chrome)."""
     with tempfile.TemporaryDirectory(prefix="studio-overlay-") as tmp:
         project = Path(tmp) / "overlay"
         project.mkdir()
@@ -287,13 +390,19 @@ def render_overlay(chunks: list[dict], hook: str, total: float, out: Path) -> No
         for i, c in enumerate(chunks):
             clips.append(f'<div id="c{i}" class="cap clip" data-start="{c["start"]:.3f}" '
                          f'data-duration="{c["end"] - c["start"]:.3f}" data-track-index="0">{html.escape(c["text"])}</div>')
+        animations = []
+        for i, g in enumerate(graphics):
+            markup, anim = _graphic_html(i, g)
+            clips.append(markup)
+            animations.append(anim)
         (project / "index.html").write_text(
             '<!doctype html><html><head><meta charset="utf-8"><script src="gsap.min.js"></script>'
-            f"<style>{_OVERLAY_CSS}</style></head><body>"
+            f"<style>:root{{--accent:{accent}}}{_OVERLAY_CSS}</style></head><body>"
             f'<div id="overlay" data-composition-id="overlay" data-start="0" data-duration="{total:.3f}" '
             f'data-width="{W}" data-height="{H}">' + "".join(clips) + "</div>"
-            "<script>const tl=gsap.timeline({paused:true});window.__timelines=window.__timelines||{};"
-            "window.__timelines['overlay']=tl;</script></body></html>", encoding="utf-8")
+            "<script>const tl=gsap.timeline({paused:true});" + "".join(animations) +
+            "window.__timelines=window.__timelines||{};window.__timelines['overlay']=tl;</script></body></html>",
+            encoding="utf-8")
         (project / "meta.json").write_text(json.dumps({"id": "overlay", "name": "overlay", "width": W,
                                                        "height": H, "fps": FPS}), encoding="utf-8")
         result = render.hyperframes(["render", str(project), "--format", "webm", "--quality", "standard",
@@ -392,16 +501,19 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
         words = timeline(cuts, clips)
         chunks = caption_chunks(words, total)
         overlay = None
-        if chunks or edl["hook_text"].strip():
+        graphics = place_graphics(edl.get("graphics", []), cuts, total)
+        edl["graphics"] = graphics
+        if chunks or edl["hook_text"].strip() or graphics:
             overlay = work / "overlay.webm"
-            render_overlay(chunks, edl["hook_text"], total, overlay)
+            render_overlay(chunks, edl["hook_text"], total, overlay, graphics,
+                           ACCENT.get(production["brand"], "#ff4d6d"))
 
         music_info, music_file = {"mood": edl["music"]["mood"], "tempo_bpm": edl["music"]["tempo_bpm"]}, None
         if music.allowed_for(production["brand"]) and settings.EPIDEMIC_SOUND_API_KEY:
             try:
                 music_file, track = (find_track or music.find_track)(
                     f"{edl['music']['mood']}; search: {edl['music']['search']}; about {edl['music']['tempo_bpm']:.0f} BPM",
-                    total, ROOT / "Music")
+                    total, ROOT / "Music", ref=f"production:{production_id}")
                 music_info.update(source="epidemic", title=track["title"], artist=track["artist"],
                                   recording_id=track["recording_id"])
             except Exception as e:  # a draft without music beats no draft

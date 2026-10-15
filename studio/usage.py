@@ -1,0 +1,88 @@
+"""
+What the Claude API actually costs: every call records its token usage and price,
+so the dashboard can show the cost per clip, idea run and draft, and a monthly total.
+
+Prices are US$ per million tokens (Anthropic's list prices). Thinking tokens are
+billed as output and are already included in output_tokens.
+"""
+import logging
+import sqlite3
+
+log = logging.getLogger("studio.usage")
+
+# model: (input, output, cache read, cache write) in US$ per million tokens
+PRICES = {
+    "claude-opus-5-5": (4.00, 20.00, 0.20, 5.00),
+    "claude-sonnet-5-5": (2.00, 10.00, 0.20, 2.50),
+    "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125),
+    "claude-opus-4-8": (5.00, 25.00, 0.50, 6.25),  # a possible server-side fallback model
+}
+DEFAULT_PRICE = PRICES["claude-opus-5-5"]
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS usage (
+    id            INTEGER PRIMARY KEY,
+    at            TEXT NOT NULL,
+    kind          TEXT NOT NULL,     -- tag | ideas | edit | music
+    ref           TEXT,              -- clip:12, production:3, ideas:<batch>
+    model         TEXT,
+    input_tokens  INTEGER,
+    output_tokens INTEGER,
+    cache_read    INTEGER,
+    cache_write   INTEGER,
+    cost_usd      REAL
+);
+CREATE INDEX IF NOT EXISTS usage_ref ON usage (ref);
+"""
+
+
+def cost(model: str, input_tokens: int, output_tokens: int, cache_read: int = 0, cache_write: int = 0) -> float:
+    price_in, price_out, price_read, price_write = next(
+        (p for name, p in PRICES.items() if model and model.startswith(name)), DEFAULT_PRICE)
+    return (input_tokens * price_in + output_tokens * price_out
+            + cache_read * price_read + cache_write * price_write) / 1_000_000
+
+
+def record(kind: str, ref: str, response) -> float:
+    """Log one API response's usage. Never raises: cost tracking must not break work."""
+    try:
+        import catalog
+        u = response.usage
+        tokens = dict(input_tokens=getattr(u, "input_tokens", 0) or 0,
+                      output_tokens=getattr(u, "output_tokens", 0) or 0,
+                      cache_read=getattr(u, "cache_read_input_tokens", 0) or 0,
+                      cache_write=getattr(u, "cache_creation_input_tokens", 0) or 0)
+        model = getattr(response, "model", "") or ""
+        usd = cost(model, **tokens)
+        conn = catalog.connect()
+        try:
+            conn.executescript(_SCHEMA)
+            conn.execute("""INSERT INTO usage (at, kind, ref, model, input_tokens, output_tokens, cache_read,
+                                cache_write, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                         (catalog.now(), kind, ref, model, tokens["input_tokens"], tokens["output_tokens"],
+                          tokens["cache_read"], tokens["cache_write"], usd))
+            conn.commit()
+        finally:
+            conn.close()
+        return usd
+    except Exception as e:
+        log.warning("Couldn't record API usage for %s: %s", ref, e)
+        return 0.0
+
+
+def total_for(conn: sqlite3.Connection, ref_prefix: str) -> float:
+    conn.executescript(_SCHEMA)
+    row = conn.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM usage WHERE ref = ? OR ref LIKE ?",
+                       (ref_prefix, ref_prefix + ":%")).fetchone()
+    return round(row[0], 4)
+
+
+def month_summary(conn: sqlite3.Connection) -> dict:
+    """This calendar month: total and per kind (tagging, ideas, editing, music)."""
+    conn.executescript(_SCHEMA)
+    import catalog
+    month = catalog.now()[:7]
+    rows = conn.execute("""SELECT kind, COUNT(*) AS calls, SUM(cost_usd) AS usd FROM usage
+                           WHERE substr(at, 1, 7) = ? GROUP BY kind""", (month,)).fetchall()
+    by_kind = {r["kind"]: {"calls": r["calls"], "usd": round(r["usd"] or 0, 4)} for r in rows}
+    return {"month": month, "usd": round(sum(k["usd"] for k in by_kind.values()), 4), "by_kind": by_kind}
