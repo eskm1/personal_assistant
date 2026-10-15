@@ -278,14 +278,16 @@ import source clips into media pool" ticked, press OK. Export from the **Deliver
 
 ## 11. Team logins and studio.theurbanmakers.com
 
-The dashboard stays on the laptop. An **ngrok** tunnel gives it the address
-`https://studio.theurbanmakers.com`: the laptop makes an outgoing connection to ngrok, so no
+The dashboard stays on the laptop. A free **Cloudflare Tunnel** gives it the address
+`https://studio.theurbanmakers.com`: the laptop makes an outgoing connection to Cloudflare, so no
 router ports are opened and nobody can reach the laptop directly. Everyone signs in with their own
 account.
 
-Your website (`theurbanmakers.com`), the designer app (`app.theurbanmakers.com`) and email are not
-touched: the domain stays at GoDaddy with all its records. The only change is **one new record**
-named `studio`, and a record only affects its own name.
+The tunnel needs Cloudflare to run the domain's DNS. The domain itself stays registered at GoDaddy
+(renewals and billing unchanged); only the "address book" moves. Done as below, the website
+(`theurbanmakers.com`), the designer app (`app.theurbanmakers.com`), anything on Netlify or
+Supabase, and email keep working exactly as before, because Cloudflare answers with the same
+records.
 
 **Who can do what**
 
@@ -301,45 +303,51 @@ named `studio`, and a record only affects its own name.
 **1. Your account.** Open http://127.0.0.1:8765 on the laptop and make the owner account (or
 `.\venv\Scripts\python worker.py --add-user you@theurbanmakers.com "Bryan" --owner`).
 
-**2. The tunnel (one time, about 15 minutes plus a short wait for DNS).**
+**2. Move the DNS to Cloudflare (about 20 minutes, then up to a day of waiting).**
 
-1. Sign up at [ngrok.com](https://ngrok.com) and pick the plan that includes **custom domains**
-   (Pay-as-you-go at the time of writing; check the pricing page).
-2. ngrok dashboard: **Domains > New Domain** > `studio.theurbanmakers.com`. It shows a **CNAME
-   target** ending in `ngrok-cname.com`. Copy it.
-3. GoDaddy: *My Products > theurbanmakers.com > DNS > Add New Record*: type **CNAME**, name
-   **studio**, value **the target from step 2**, TTL 1 hour. Save. Don't change any other record.
-   Back in ngrok, the domain turns green once the record is seen (minutes, sometimes an hour), and
-   ngrok sets up the HTTPS certificate by itself.
-4. On the laptop, in PowerShell: `winget install ngrok.ngrok`, then
-   `ngrok config add-authtoken <your token>` (the token is under **Your Authtoken** in the ngrok
-   dashboard).
-5. Make a folder `C:\ngrok` and save this as `C:\ngrok\ngrok.yml` (spaces, not tabs; paste your
-   token):
+1. **Save what's there now.** GoDaddy: *My Products > theurbanmakers.com > DNS*. Export the zone
+   file, or screenshot every record. Typical ones here:
+   - the website: `@` (an **A** record; for Netlify usually `75.2.60.5`) and `www` (a **CNAME** to
+     `<something>.netlify.app`);
+   - the designer app: `app` (a **CNAME** to Netlify, Vercel, or similar);
+   - email: **MX** records, **TXT** records (SPF `v=spf1 ...`, `_dmarc`, verification codes such as
+     Google or Microsoft), and email-signing **CNAME**s such as `selector1._domainkey`;
+   - anything with Supabase or Netlify in its value, and any `_acme-challenge` or other
+     underscore records.
+2. **DNSSEC:** in GoDaddy (*DNS > DNSSEC*), if it's on, turn it off and wait a day before step 4.
+   Switching nameservers with DNSSEC on can take the whole domain offline.
+3. **Cloudflare:** sign up (free), **Add a domain** > `theurbanmakers.com` > **Free** plan. It scans
+   and copies the records. Check its list against step 1 line by line and add anything missing
+   (scans often miss underscore records like `_dmarc` or `_domainkey`). Then set **every** record
+   to **DNS only** (grey cloud, not orange). That keeps Netlify, the app and email working exactly
+   as today; Netlify in particular should not sit behind Cloudflare's proxy.
+4. **GoDaddy:** *Domain > DNS > Nameservers > Change nameservers > I'll use my own*, and enter the
+   two nameservers Cloudflare shows. Cloudflare emails when the domain is active (usually within an
+   hour). Then check: the website loads, `app.theurbanmakers.com` loads and signs in, and an email
+   sent to you from outside arrives. If anything's wrong, compare the records again; switching the
+   nameservers back to GoDaddy's undoes everything.
 
-   ```yaml
-   version: 3
-   agent:
-     authtoken: YOUR_AUTHTOKEN
-   endpoints:
-     - name: studio
-       url: https://studio.theurbanmakers.com
-       upstream:
-         url: 8765
-   ```
+**3. The tunnel (about 10 minutes, on the laptop).**
 
-6. In an **administrator** PowerShell: `ngrok service install --config C:\ngrok\ngrok.yml`, then
-   `ngrok service start`. The tunnel now runs as a Windows service and starts with the laptop.
-   Don't move `C:\ngrok\ngrok.yml` or ngrok afterwards; the service remembers where they are.
-7. In `.env` set `STUDIO_DASHBOARD_URL=https://studio.theurbanmakers.com` (invite links and
+1. PowerShell: `winget install --id Cloudflare.cloudflared`
+2. Cloudflare dashboard: **Zero Trust > Networks > Tunnels > Create a tunnel** (the first time,
+   Zero Trust asks you to pick a team name and the free plan), type *Cloudflared*, name it
+   `studio`. Choose Windows; it shows a command like `cloudflared.exe service install <long token>`.
+   Run that in an **administrator** PowerShell. The tunnel now runs as a Windows service and starts
+   with the laptop.
+3. Add the route (called **Published application** or **Public hostname** depending on the
+   dashboard version): subdomain `studio`, domain `theurbanmakers.com`, service **HTTP**
+   `localhost:8765`. Cloudflare creates the `studio` DNS record itself (orange cloud, which is right
+   for this one).
+4. In `.env` set `STUDIO_DASHBOARD_URL=https://studio.theurbanmakers.com` (invite links and
    Telegram links use it) and restart the worker. Leave `STUDIO_DASHBOARD_HOST` at `127.0.0.1`.
-8. Open https://studio.theurbanmakers.com on your phone (off Wi-Fi, to be sure) and sign in.
+5. Open https://studio.theurbanmakers.com on your phone (off Wi-Fi, to be sure) and sign in.
 
-To test before setting up the service, step 6 can be replaced by running
-`ngrok http 8765 --url https://studio.theurbanmakers.com` in a normal PowerShell window (Ctrl+C
-stops it).
+Optional extra lock, also free: **Zero Trust > Access > Applications** can put Cloudflare's own
+email check in front of Studio, so only addresses you list (or all `@theurbanmakers.com`) even reach
+the sign-in page. It means signing in twice, so it's up to you.
 
-**3. Invite the team.** Account menu (top right) > **Team** > **Invite someone**. Send the link
+**4. Invite the team.** Account menu (top right) > **Team** > **Invite someone**. Send the link
 (WhatsApp is fine); it works once and expires after 7 days. Each person picks their own password.
 Remove someone there and they're signed out everywhere at once.
 
