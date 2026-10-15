@@ -50,7 +50,8 @@ MAX_FRAMES = int(os.getenv("STUDIO_MAX_FRAMES", "20"))
 FRAME_WIDTH = int(os.getenv("STUDIO_FRAME_WIDTH", "512"))
 
 # ── Whisper (local, faster-whisper) ───────────────────────────────────────────
-# "auto" uses the eGPU when an NVIDIA card is attached and falls back to the CPU.
+# "auto" uses an NVIDIA GPU (eGPU included) when attached and falls back to the CPU.
+# faster-whisper has no Intel Arc or AMD support, so those machines use the CPU.
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "auto").lower()
 # Blank = pick by device: large-v3-turbo on GPU, small on CPU.
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "").strip()

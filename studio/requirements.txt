@@ -6,7 +6,7 @@
 # Claude API (1.x needs Python 3.10+)
 anthropic==1.13.0
 
-# Local Whisper with word timestamps (CPU, or CUDA on an NVIDIA eGPU)
+# Local Whisper with word timestamps (CPU, or CUDA on an NVIDIA GPU)
 faster-whisper==1.2.1
 
 # Review dashboard (waitress serves it on Windows without extra setup)
@@ -17,5 +17,5 @@ waitress==3.0.2
 python-dotenv==1.2.2
 requests==2.34.2
 
-# NVIDIA eGPU only — the CUDA libraries faster-whisper needs on Windows. Install with:
+# NVIDIA GPU only — the CUDA libraries faster-whisper needs on Windows. Install with:
 #   pip install -r requirements-gpu.txt

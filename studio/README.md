@@ -12,7 +12,7 @@ dashboard. Ideas and auto-editing come next and feed drafts into the dashboard's
 ```
 Phone ──share──► Google Drive "Studio Inbox" ──sync──► laptop
                                                        │  ffmpeg: audio + frames
-                                                       │  Whisper: transcript (eGPU if attached)
+                                                       │  Whisper: transcript (CPU; NVIDIA GPU if present)
                                                        │  Claude: brand, format, moments
                                                        ▼
                          %USERPROFILE%\Studio\Library\2026-10\2026-10-14_1532_IMG_1234\
@@ -43,10 +43,12 @@ processed once it's back home and awake.
 4. **Settings → Windows Update → Advanced options → Active hours**: set them to cover
    the hours you're out, so updates don't restart it mid-job. After an update restart,
    sign in once; the worker starts at sign-in.
-5. **eGPU:** leave it plugged in at home. With an NVIDIA card, Whisper runs on it (much
-   faster than the CPU). If it's unplugged, the worker falls back to the CPU and switches
-   back once it's reconnected. AMD and Intel cards are ignored for now, since the CPU
-   handles phase 1 fine.
+5. **GPU:** Whisper's GPU mode needs an NVIDIA card. On your laptop's Intel Arc, or with
+   the AMD RX 7600 XT eGPU, it runs on the CPU, which handles phone clips of a few
+   minutes fine. Leave the eGPU plugged in at home anyway: its hardware video encoder
+   speeds up rendering in the editing phase. Its 16 GB of video memory also meets the
+   requirement for DaVinci Resolve's AI features if you add Resolve later. (With an NVIDIA
+   card, Whisper would run on it automatically and fall back to the CPU when unplugged.)
 
 ## 2. Install the tools (one time)
 
@@ -70,12 +72,14 @@ git clone https://github.com/eskm1/personal_assistant.git
 cd personal_assistant\studio
 python -m venv venv
 .\venv\Scripts\pip install -r requirements.txt
-# NVIDIA eGPU only:
-.\venv\Scripts\pip install -r requirements-gpu.txt
+# Only with an NVIDIA card (skip for Intel Arc / AMD):
+# .\venv\Scripts\pip install -r requirements-gpu.txt
 ```
 
-The first clip downloads the Whisper model (about 1.6 GB for the GPU model, 0.5 GB for
-the CPU one). Later clips reuse it.
+The first clip downloads the Whisper model (about 0.5 GB for the CPU model; 1.6 GB for
+the GPU one). Later clips reuse it. If transcripts miss words, especially with accents or
+mixed languages, set `WHISPER_MODEL=large-v3-turbo` in `.env`. It's more accurate but
+noticeably slower on the CPU, which is usually fine for a background worker.
 
 ## 4. Set up the inbox
 
