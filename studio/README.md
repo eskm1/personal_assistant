@@ -278,10 +278,14 @@ import source clips into media pool" ticked, press OK. Export from the **Deliver
 
 ## 11. Team logins and studio.theurbanmakers.com
 
-The dashboard stays on the laptop. A **Cloudflare Tunnel** gives it the address
-`https://studio.theurbanmakers.com`: the laptop makes an outgoing connection to Cloudflare, so no
+The dashboard stays on the laptop. An **ngrok** tunnel gives it the address
+`https://studio.theurbanmakers.com`: the laptop makes an outgoing connection to ngrok, so no
 router ports are opened and nobody can reach the laptop directly. Everyone signs in with their own
 account.
+
+Your website (`theurbanmakers.com`), the designer app (`app.theurbanmakers.com`) and email are not
+touched: the domain stays at GoDaddy with all its records. The only change is **one new record**
+named `studio`, and a record only affects its own name.
 
 **Who can do what**
 
@@ -297,42 +301,43 @@ account.
 **1. Your account.** Open http://127.0.0.1:8765 on the laptop and make the owner account (or
 `.\venv\Scripts\python worker.py --add-user you@theurbanmakers.com "Bryan" --owner`).
 
-**2. The tunnel (one time, about 15 minutes, plus waiting for DNS).** The tunnel needs the
-domain's DNS to be run by Cloudflare. `theurbanmakers.com` is registered at GoDaddy; it stays
-registered there (renewals, billing unchanged). Only the DNS moves to a free Cloudflare account:
+**2. The tunnel (one time, about 15 minutes plus a short wait for DNS).**
 
-1. **Before anything, save what's there now.** GoDaddy: *My Products > theurbanmakers.com > DNS*.
-   Export the zone file, or screenshot every record. The ones that matter: **MX**, and **TXT**
-   (SPF, domain verifications) for email. Also any **CNAME** such as `autodiscover`,
-   `selector1._domainkey` or `selector2._domainkey` (email signing). And the **A**/**CNAME**
-   records for `@` and `www` (the website).
-2. If **DNSSEC** is on at GoDaddy (*DNS > DNSSEC*), turn it off first and wait a day. Moving
-   nameservers with DNSSEC on can take the whole domain offline.
-3. Cloudflare: sign up, **Add a domain** > `theurbanmakers.com` > **Free** plan. It scans and copies
-   the records. Compare its list with step 1 line by line and add anything missing. Set every
-   existing record to **DNS only** (grey cloud), so the website and email keep working exactly
-   as they do today.
-4. GoDaddy: *Domain > DNS > Nameservers > Change nameservers > I'll use my own*, and enter the two
-   nameservers Cloudflare shows you. Cloudflare emails you when the domain is active (usually
-   within an hour, up to 24 hours). Check that email still arrives and the website still loads.
+1. Sign up at [ngrok.com](https://ngrok.com) and pick the plan that includes **custom domains**
+   (Pay-as-you-go at the time of writing; check the pricing page).
+2. ngrok dashboard: **Domains > New Domain** > `studio.theurbanmakers.com`. It shows a **CNAME
+   target** ending in `ngrok-cname.com`. Copy it.
+3. GoDaddy: *My Products > theurbanmakers.com > DNS > Add New Record*: type **CNAME**, name
+   **studio**, value **the target from step 2**, TTL 1 hour. Save. Don't change any other record.
+   Back in ngrok, the domain turns green once the record is seen (minutes, sometimes an hour), and
+   ngrok sets up the HTTPS certificate by itself.
+4. On the laptop, in PowerShell: `winget install ngrok.ngrok`, then
+   `ngrok config add-authtoken <your token>` (the token is under **Your Authtoken** in the ngrok
+   dashboard).
+5. Make a folder `C:\ngrok` and save this as `C:\ngrok\ngrok.yml` (spaces, not tabs; paste your
+   token):
 
-Then make the tunnel:
+   ```yaml
+   version: 3
+   agent:
+     authtoken: YOUR_AUTHTOKEN
+   endpoints:
+     - name: studio
+       url: https://studio.theurbanmakers.com
+       upstream:
+         url: 8765
+   ```
 
-1. On the laptop: `winget install --id Cloudflare.cloudflared`
-2. In the Cloudflare dashboard: **Zero Trust > Networks > Tunnels > Create a tunnel**, type
-   *Cloudflared*, name it `studio`. Choose Windows; it shows a command like
-   `cloudflared.exe service install <long token>`. Run that in an **administrator** PowerShell.
-   The tunnel now runs as a Windows service and starts with the laptop.
-3. Add the route (called **Published application** or **Public hostname** depending on the
-   dashboard version): subdomain `studio`, domain `theurbanmakers.com`, service
-   **HTTP** `localhost:8765`. Cloudflare creates the DNS record.
-4. In `.env` set `STUDIO_DASHBOARD_URL=https://studio.theurbanmakers.com` (invite links and
+6. In an **administrator** PowerShell: `ngrok service install --config C:\ngrok\ngrok.yml`, then
+   `ngrok service start`. The tunnel now runs as a Windows service and starts with the laptop.
+   Don't move `C:\ngrok\ngrok.yml` or ngrok afterwards; the service remembers where they are.
+7. In `.env` set `STUDIO_DASHBOARD_URL=https://studio.theurbanmakers.com` (invite links and
    Telegram links use it) and restart the worker. Leave `STUDIO_DASHBOARD_HOST` at `127.0.0.1`.
-5. Open https://studio.theurbanmakers.com on your phone and sign in.
+8. Open https://studio.theurbanmakers.com on your phone (off Wi-Fi, to be sure) and sign in.
 
-Optional extra lock: **Zero Trust > Access > Applications** can put Cloudflare's own email check
-in front of the site (free for up to 50 people), so only `@theurbanmakers.com` addresses even
-reach the sign-in page. It means signing in twice, so it's up to you.
+To test before setting up the service, step 6 can be replaced by running
+`ngrok http 8765 --url https://studio.theurbanmakers.com` in a normal PowerShell window (Ctrl+C
+stops it).
 
 **3. Invite the team.** Account menu (top right) > **Team** > **Invite someone**. Send the link
 (WhatsApp is fine); it works once and expires after 7 days. Each person picks their own password.

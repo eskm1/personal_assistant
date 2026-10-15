@@ -46,6 +46,8 @@ class _SessionInterface(SecureCookieSessionInterface):
 
 
 app.session_interface = _SessionInterface()
+# Flask opens the session before any request hook runs, so the key must be set up front.
+app.secret_key = auth.secret_key()
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
                   SESSION_COOKIE_NAME="studio_session", PERMANENT_SESSION_LIFETIME=timedelta(days=30),
                   MAX_CONTENT_LENGTH=2 * 1024 * 1024)
@@ -76,12 +78,11 @@ _PUBLIC = ("/login", "/setup", "/invite/", "/healthz", "/static/")
 @app.before_request
 def _auth():
     """Signed-in users only, everywhere except the sign-in pages themselves."""
-    if not app.secret_key:
-        app.secret_key = auth.secret_key()
     if request.method == "POST":
         # Refuse cross-site form posts: a browser always sends Origin on POST.
         origin = request.headers.get("Origin")
-        if origin and origin.split("://", 1)[-1] != request.host:
+        hosts = {request.host, request.headers.get("X-Forwarded-Host")}
+        if origin and origin.split("://", 1)[-1] not in hosts:
             return jsonify({"error": "cross-site request refused"}), 403
     if request.path.startswith(_PUBLIC):
         return None
@@ -673,7 +674,6 @@ def run() -> None:
                   "http://127.0.0.1:%s with STUDIO_DASHBOARD_HOST unset, or run worker.py --add-user).",
                   DASHBOARD_HOST, DASHBOARD_PORT)
         return
-    app.secret_key = auth.secret_key()
     from waitress import serve
     log.info("Dashboard on http://%s:%s", DASHBOARD_HOST, DASHBOARD_PORT)
     serve(app, host=DASHBOARD_HOST, port=DASHBOARD_PORT, threads=8, _quiet=True)

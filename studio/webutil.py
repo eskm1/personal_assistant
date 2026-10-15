@@ -6,7 +6,7 @@ import sqlite3
 from flask import g, jsonify, request
 
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
-# Set by proxies (Cloudflare Tunnel, Tailscale Serve/Funnel) in front of the laptop.
+# Set by tunnels and proxies (ngrok, Cloudflare Tunnel, Tailscale Funnel) in front of the laptop.
 PROXY_HEADERS = ("Cf-Connecting-Ip", "X-Forwarded-For", "X-Forwarded-Host", "Forwarded", "Tailscale-User-Login")
 
 
@@ -32,7 +32,15 @@ def is_local() -> bool:
 
 
 def client_ip() -> str:
-    return request.headers.get("Cf-Connecting-Ip") or request.remote_addr or "?"
+    """The visitor's address. Through a tunnel every request comes from 127.0.0.1; the
+    tunnel appends the real address to X-Forwarded-For, so take the last entry (earlier
+    ones are whatever the visitor sent)."""
+    if request.remote_addr in LOOPBACK:
+        forwarded = request.headers.get("Cf-Connecting-Ip") or request.headers.get("X-Forwarded-For", "")
+        last = forwarded.split(",")[-1].strip()
+        if last:
+            return last
+    return request.remote_addr or "?"
 
 
 def owner_only(view):
