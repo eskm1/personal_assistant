@@ -297,10 +297,26 @@ account.
 **1. Your account.** Open http://127.0.0.1:8765 on the laptop and make the owner account (or
 `.\venv\Scripts\python worker.py --add-user you@theurbanmakers.com "Bryan" --owner`).
 
-**2. The tunnel (one time, about 15 minutes).** This needs `theurbanmakers.com` to use Cloudflare
-for its DNS. If it doesn't yet, adding the site to a free Cloudflare account moves the DNS there:
-Cloudflare copies the existing records, but **check the website and email (MX) records it imports
-before switching the nameservers**, or ask whoever manages the domain.
+**2. The tunnel (one time, about 15 minutes, plus waiting for DNS).** The tunnel needs the
+domain's DNS to be run by Cloudflare. `theurbanmakers.com` is registered at GoDaddy; it stays
+registered there (renewals, billing unchanged). Only the DNS moves to a free Cloudflare account:
+
+1. **Before anything, save what's there now.** GoDaddy: *My Products > theurbanmakers.com > DNS*.
+   Export the zone file, or screenshot every record. The ones that matter: **MX**, and **TXT**
+   (SPF, domain verifications) for email. Also any **CNAME** such as `autodiscover`,
+   `selector1._domainkey` or `selector2._domainkey` (email signing). And the **A**/**CNAME**
+   records for `@` and `www` (the website).
+2. If **DNSSEC** is on at GoDaddy (*DNS > DNSSEC*), turn it off first and wait a day. Moving
+   nameservers with DNSSEC on can take the whole domain offline.
+3. Cloudflare: sign up, **Add a domain** > `theurbanmakers.com` > **Free** plan. It scans and copies
+   the records. Compare its list with step 1 line by line and add anything missing. Set every
+   existing record to **DNS only** (grey cloud), so the website and email keep working exactly
+   as they do today.
+4. GoDaddy: *Domain > DNS > Nameservers > Change nameservers > I'll use my own*, and enter the two
+   nameservers Cloudflare shows you. Cloudflare emails you when the domain is active (usually
+   within an hour, up to 24 hours). Check that email still arrives and the website still loads.
+
+Then make the tunnel:
 
 1. On the laptop: `winget install --id Cloudflare.cloudflared`
 2. In the Cloudflare dashboard: **Zero Trust > Networks > Tunnels > Create a tunnel**, type
