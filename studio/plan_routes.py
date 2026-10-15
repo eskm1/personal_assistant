@@ -229,17 +229,20 @@ def checklist(project_id: int):
 @bp.get("/api/project/<int:project_id>/clips")
 def project_clips(project_id: int):
     """Clips to attach to a shot: this project's first, then everything recent."""
-    q = f"%{request.args.get('q', '').strip()}%"
+    term = request.args.get("q", "").strip()[:100]
+    q = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
     rows = db().execute(
         """SELECT * FROM clips WHERE status IN ('tagged', 'transcribed')
-           AND (title LIKE ? OR source_name LIKE ? OR COALESCE(summary, '') LIKE ?)
+           AND (title LIKE ? ESCAPE '\\' OR source_name LIKE ? ESCAPE '\\'
+                OR COALESCE(summary, '') LIKE ? ESCAPE '\\')
            ORDER BY project_id = ? DESC, COALESCE(recorded_at, ingested_at) DESC LIMIT 60""",
         (q, q, q, project_id)).fetchall()
     return jsonify({"clips": [{
         "id": r["id"], "title": r["title"] or r["source_name"], "duration": r["duration"],
         "recorded_at": r["recorded_at"], "in_project": r["project_id"] == project_id,
         "verdict": json.loads(r["quality"]).get("verdict") if r["quality"] else None,
-        "thumb": f"/media/clip/{r['id']}/thumb", "video": f"/media/clip/{r['id']}/video"} for r in rows]})
+        "thumb": f"/media/clip/{r['id']}/thumb" if any((Path(r["clip_dir"]) / "frames").glob("*.jpg")) else None,
+        "video": f"/media/clip/{r['id']}/video"} for r in rows]})
 
 
 @bp.post("/api/clip/<int:clip_id>/project")
@@ -445,8 +448,10 @@ def _shot_fields(data: dict) -> dict:
     for key, allowed in (("kind", plan.SHOT_KINDS), ("framing", plan.FRAMINGS), ("camera", list(plan.CAMERAS))):
         if key in data and (data[key] in allowed or data[key] is None):
             out[key] = data[key]
-    if isinstance(data.get("seconds"), (int, float)) and 0 < data["seconds"] <= 120:
-        out["seconds"] = float(data["seconds"])
+    if "seconds" in data:
+        sec = data["seconds"]
+        if sec is None or (isinstance(sec, (int, float)) and 0 < sec <= 120):
+            out["seconds"] = None if sec is None else float(sec)
     return out
 
 

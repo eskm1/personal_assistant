@@ -17,8 +17,12 @@
         <button data-brand="personal">Personal</button>
         <button data-brand="urban_makers">Urban Makers</button>
       </div>
-      <span class="updated" id="costs" title=""></span>
+      <span class="updated" id="costs" title="" hidden></span>
       <span class="updated" id="updated"></span>
+      <div class="account" id="account">
+        <button class="account-btn" id="account-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu"></button>
+        <div class="menu" id="account-menu" role="menu" hidden></div>
+      </div>
     </div>
   </header>
 
@@ -30,6 +34,7 @@
       <span class="muted" id="ideas-status"></span>
     </div>
     <section class="grid" id="grid" aria-live="polite"></section>
+    <section class="planner" id="planner" hidden></section>
   </main>
 
   <div class="viewer" id="viewer" hidden>
@@ -41,6 +46,15 @@
       </div>
       <aside class="panel" id="panel"></aside>
       <button class="close" id="close" title="Close (Esc)" aria-label="Close">&times;</button>
+    </div>
+  </div>
+
+  <div class="checklist" id="checklist" hidden></div>
+
+  <div class="modal" id="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <button class="close" data-modal-close title="Close (Esc)" aria-label="Close">&times;</button>
+      <div id="modal-body"></div>
     </div>
   </div>
 
