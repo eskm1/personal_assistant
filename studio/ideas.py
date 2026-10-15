@@ -182,9 +182,11 @@ def generate(conn, focus: str = "", count: int = 6, client: anthropic.Anthropic 
     )
     client = client or anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or None)
     batch = uuid.uuid4().hex[:8]
-    response = client.beta.messages.create(
+    import llm
+    response = llm.final_message(
+        client,
         model=CLAUDE_MODEL,
-        max_tokens=16000,
+        max_tokens=32000,
         betas=["server-side-fallback-2026-07-01"],
         fallbacks="default",
         # Planning is judgment-heavy and runs only when Bryan asks, so think harder than tagging.

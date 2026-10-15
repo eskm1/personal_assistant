@@ -211,8 +211,9 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None) -> di
             + "\n\n".join(_clip_block(c, segments) for c in clips.values())
             + _revision_block(conn, production))
     client = client or anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or None)
-    response = client.beta.messages.create(
-        model=CLAUDE_MODEL, max_tokens=16000,
+    import llm
+    response = llm.final_message(
+        client, model=CLAUDE_MODEL, max_tokens=32000,
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
         output_config={"effort": "high", "format": {"type": "json_schema", "schema": EDL_SCHEMA}},
         system=_SYSTEM.replace("{playbook}", playbook.text()).replace("{music_rule}", music_rule),

@@ -182,8 +182,9 @@ def _brands() -> str:
 
 def _ask(system: str, user: str, schema: dict, ref: str, client=None) -> dict:
     client = client or anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or None)
-    response = client.beta.messages.create(
-        model=CLAUDE_MODEL, max_tokens=32000,
+    import llm
+    response = llm.final_message(
+        client, model=CLAUDE_MODEL, max_tokens=64000,
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
         output_config={"effort": "high", "format": {"type": "json_schema", "schema": schema}},
         system=system.replace("{brands}", _brands()).replace("{playbook}", playbook.text())
