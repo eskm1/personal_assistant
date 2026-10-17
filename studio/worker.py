@@ -531,6 +531,8 @@ def main() -> int:
     import notify
     conn = catalog.connect()
     use_claude = not args.no_claude
+    if settings.SINGLE_BRAND and (n := catalog.file_under(conn, settings.SINGLE_BRAND)):
+        log.info("Filed %d clips, ideas and edits under %s (one account for now)", n, settings.SINGLE_BRAND)
 
     if args.file:
         ingest(conn, args.file.resolve(), use_claude)

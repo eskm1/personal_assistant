@@ -138,9 +138,18 @@ function verdictChip(verdict) {
   return `<span class="chip verdict ${esc(verdict)}">${esc({ good: "Good", check: "Check", retake: "Retake" }[verdict] || verdict)}</span>`;
 }
 
+// The accounts Studio makes content for (settings.BRANDS). With just one (Urban Makers
+// for now), account labels, filters and pickers are left out.
+const brands = () => state.me?.brands || ["urban_makers"];
+const oneBrand = () => brands().length < 2;
+function brandField(id, current) {
+  return oneBrand() ? `<input type="hidden" id="${id}" value="${esc(brands()[0])}">`
+    : `<label>Account<select id="${id}">${options(brands(), BRAND, current)}</select></label>`;
+}
+
 function chips(item, short = false) {
   const out = [];
-  if (item.brand) out.push(`<span class="chip ${esc(item.brand)}">${esc(BRAND[item.brand] || item.brand)}</span>`);
+  if (item.brand && !oneBrand()) out.push(`<span class="chip ${esc(item.brand)}">${esc(BRAND[item.brand] || item.brand)}</span>`);
   if (item.kind === "production" && item.version) out.push(`<span class="chip">v${esc(item.version)}</span>`);
   if (item.open_notes) out.push(`<span class="chip notes">${esc(item.open_notes)} note${item.open_notes > 1 ? "s" : ""}</span>`);
   const status = item.kind === "clip" && item.status === "tagged" ? (item.reviewed ? "Checked" : null)
@@ -164,6 +173,8 @@ function pbarHTML(p) {
 function renderAccount() {
   const me = state.me;
   if (!me) return;
+  $("#brand-filter").hidden = oneBrand();
+  if (oneBrand()) state.brand = "";
   $("#account-btn").innerHTML = `<span class="avatar">${esc((me.name || "?").slice(0, 1).toUpperCase())}</span><span class="account-name">${esc(me.name)}</span>`;
   $("#account-menu").innerHTML = `<div class="menu-head"><strong>${esc(me.name)}</strong>
       <span class="muted small">${esc(me.email)} · ${isOwner() ? "Owner" : "Team"}</span></div>
@@ -618,7 +629,7 @@ function plannerShellHTML() {
       <div class="plan-details-body">
         <div class="row">
           <label class="grow">Name<input id="proj-name" maxlength="120" value="${esc(p.name)}"></label>
-          <label>Account<select id="proj-brand">${options(["urban_makers", "personal"], BRAND, p.brand)}</select></label>
+          ${brandField("proj-brand", p.brand)}
         </div>
         <label>Brief<textarea id="proj-brief" rows="4" maxlength="4000" placeholder="What's the job, who's the client, what should the posts show? Claude reads this when it organises ideas.">${esc(p.brief)}</textarea></label>
         <p class="muted small">Inbox folder: uploads dropped in <code>Studio Inbox\\${esc(p.folder || p.name)}</code> on OneDrive are filed to this project and matched to its shots.</p>
@@ -739,7 +750,7 @@ function cardHTML(i) {
     <span class="card-body">
       <span class="card-title">${esc(i.title)}</span>
       <span class="card-chips">
-        <span class="chip ${esc(i.brand)}">${esc(BRAND[i.brand] || i.brand)}</span>
+        ${oneBrand() ? "" : `<span class="chip ${esc(i.brand)}">${esc(BRAND[i.brand] || i.brand)}</span>`}
         ${i.decision === "go" ? `<span class="chip go">Go</span>` : i.decision === "parked" ? `<span class="chip parked">Parked</span>` : ""}
         ${i.status === "made" ? `<span class="chip producing">In edit</span>` : ""}
       </span>
@@ -822,7 +833,7 @@ function openNewProject() {
   openModal(`<h2 id="modal-title">New project</h2>
     <form class="form">
       <label>Name<input id="np-name" maxlength="120" placeholder="e.g. Kensington" required></label>
-      <label>Account<select id="np-brand">${options(["urban_makers", "personal"], BRAND, "urban_makers")}</select></label>
+      ${brandField("np-brand", "urban_makers")}
       <label>Inbox folder <span class="muted">(optional)</span><input id="np-folder" maxlength="80" placeholder="Same as the name"></label>
       <p class="muted small" id="np-hint">Studio makes the OneDrive folder <code>Studio Inbox\\…</code>; uploads dropped there are filed to this project and matched to its shots.</p>
       <label>Brief <span class="muted">(optional)</span><textarea id="np-brief" rows="4" maxlength="4000" placeholder="What's the job, who's the client, what should the posts show?"></textarea></label>
@@ -1276,7 +1287,7 @@ function renderPanel() {
         `<li><button data-seek="${Number(m.start) || 0}"><strong>${mmss(m.start)}–${mmss(m.end)}</strong> ${esc(m.description)}</button></li>`).join("")}</ul></div>` : ""}
       ${d.status === "tagged" || d.status === "transcribed" ? `<div class="box"><h3>Check the tags</h3>
         <div class="row">
-          <select id="tag-brand">${option(d.brands, BRAND, d.brand)}</select>
+          ${d.brands.length > 1 ? `<select id="tag-brand">${option(d.brands, BRAND, d.brand)}</select>` : ""}
           <select id="tag-format">${option(d.formats, FORMAT, d.format)}</select>
           <label class="check"><input type="checkbox" id="tag-usable" ${d.usable === 0 ? "" : "checked"}> Usable</label>
         </div>
@@ -1420,7 +1431,7 @@ $("#panel").addEventListener("click", async (e) => {
       toast("Caption saved.");
     } else if (id === "tags-save" || id === "tags-next") {
       await api(`/api/clip/${d.id}/review`, {
-        brand: $("#tag-brand").value, format: $("#tag-format").value, usable: $("#tag-usable").checked,
+        brand: $("#tag-brand")?.value || d.brands[0], format: $("#tag-format").value, usable: $("#tag-usable").checked,
       });
       toast("Tags saved.");
       await sync();
@@ -1735,7 +1746,7 @@ function renderPlanPanel() {
       </div>
       <div class="meta-grid" data-saved-scope>
         <label>Arc<select data-idea-field="arc_id">${`<option value="">Unsorted</option>` + d.arcs.map((a) => `<option value="${esc(a.id)}" ${a.id === d.arc_id ? "selected" : ""}>${esc(a.title)}</option>`).join("")}</select></label>
-        <label>Account<select data-idea-field="brand">${options(["urban_makers", "personal"], BRAND, d.brand)}</select></label>
+        ${oneBrand() ? "" : `<label>Account<select data-idea-field="brand">${options(brands(), BRAND, d.brand)}</select></label>`}
         <label>Format<select data-idea-field="format">${options(PLAN_FORMATS, FORMAT, d.format)}</select></label>
         <label>Length<span class="num-field"><input type="number" min="3" max="180" step="1" data-idea-field="est_seconds" value="${esc(Math.round(d.est_seconds || 30))}"> s</span></label>
         <span class="saved" aria-live="polite"></span>

@@ -244,9 +244,7 @@ def _heartbeat(api: Client) -> None:
 
 def _push_context(api: Client) -> int:
     import playbook
-    brands = Path(settings.BRANDS_FILE)
-    values = {"brands": brands.read_text(encoding="utf-8") if brands.exists() else "",
-              "playbook": playbook.text()}
+    values = {"brands": settings.brands_text(), "playbook": playbook.text()}
     changed = []
     for key, value in values.items():
         digest = hashlib.sha256(value.encode()).hexdigest()
@@ -261,6 +259,12 @@ def _push_context(api: Client) -> int:
 
 
 # ── Step 3: mirror the plan ──────────────────────────────────────────────────
+
+def _brand(brand: str | None) -> str:
+    """A brand Studio makes content for: with one account (settings.SINGLE_BRAND),
+    everything from the planner is filed under it."""
+    return settings.SINGLE_BRAND or (brand if brand in settings.BRANDS else "urban_makers")
+
 
 def _safe_folder(folder: str) -> str:
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", folder or "").strip(" .")[:80]
@@ -344,7 +348,7 @@ def pull(api: Client, conn) -> dict:
     try:
         projects, ins, upd = _mirror_table(
             conn, "projects", remote["projects"],
-            lambda r: {"name": r["name"], "brand": r["brand"], "folder": _safe_folder(r["folder"]) or r["name"],
+            lambda r: {"name": r["name"], "brand": _brand(r["brand"]), "folder": _safe_folder(r["folder"]) or r["name"],
                        "brief": r["brief"], "status": r["status"]},
             extra={"created_at": None})
         stats["projects"] = [ins, upd]
@@ -369,7 +373,7 @@ def pull(api: Client, conn) -> dict:
             if status_ == "new" and made.get(r["id"]):
                 status_ = "made"  # made on this laptop; the push below tells the cloud
             return {"project_id": projects[r["project_id"]], "arc_id": arcs.get(r["arc_id"]),
-                    "title": r["title"], "brand": r["brand"], "format": r["format"], "hook": r["hook"],
+                    "title": r["title"], "brand": _brand(r["brand"]), "format": r["format"], "hook": r["hook"],
                     "purpose": r["purpose"], "cta": r["cta"], "caption": r["caption"],
                     "est_seconds": r["est_seconds"], "music_plan": json.dumps(r["music"] or {}),
                     "decision": r["decision"], "status": status_, "position": r["position"],
@@ -898,7 +902,7 @@ def sync_references(api: Client, started: float, client=None) -> dict:
                 continue
             brand = (job.get("payload") or {}).get("brand") or "urban_makers"
             try:
-                if brand not in ("urban_makers", "personal"):
+                if brand not in settings.BRANDS:
                     raise RuntimeError(f"unknown brand {brand!r}")
                 row = draft_style_guide(api, brand, refs, analyses, guides, client)
                 drafted.add(brand)
@@ -919,7 +923,7 @@ def sync_references(api: Client, started: float, client=None) -> dict:
 
     # Automatic drafts: when a brand's set of analysed references differs from its newest guide's
     def auto_drafts():
-        for brand in ("urban_makers", "personal"):
+        for brand in settings.BRANDS:
             if brand in drafted:
                 continue
             if any(r["brand"] == brand and r["status"] == "active" and analyses.get(r["id"])
@@ -975,12 +979,30 @@ def _refs_summary(refs: list[dict], analyses: dict[int, dict], guides: list[dict
 
 # ── The tick ──────────────────────────────────────────────────────────────────
 
+def _file_online(api: Client) -> int:
+    """With one account (settings.SINGLE_BRAND), whatever the planner holds under
+    another one (older ideas, an idea Claude or a teammate filed as personal) is
+    filed under it. Returns how many rows changed."""
+    brand = settings.SINGLE_BRAND
+    if not brand:
+        return 0
+    n = 0
+    for table in ("projects", "ideas", "reference_videos"):
+        try:
+            n += len(api.update(table, {"brand": f"neq.{brand}"}, {"brand": brand}))
+        except CloudError:
+            if table != "reference_videos":  # that one waits for cloud_setup.py --update
+                raise
+    return n
+
+
 def sync_once(conn, api: Client | None = None) -> dict:
     """One full sync. Raises on failure (tick() catches)."""
     api = api or Client()
     started = time.time()
     _heartbeat(api)
     counts = {"context": _push_context(api)}
+    counts["refiled"] = _file_online(api)
     pulled = pull(api, conn)
     remote, maps = pulled["remote"], pulled["remote"]["maps"]
     counts["pulled"] = pulled["stats"]

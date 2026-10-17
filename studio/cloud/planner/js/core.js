@@ -24,6 +24,11 @@ export const sb = window.supabase && cfg.supabaseUrl && cfg.supabaseAnonKey
 // ── Labels ──────────────────────────────────────────────────────────────────
 
 export const BRAND = { personal: "Personal", urban_makers: "Urban Makers" };
+// The accounts the team plans for. Personal is on hold: everything is Urban Makers for
+// now, so account pickers and labels are left out. Add "personal" back to bring it back
+// (with STUDIO_BRANDS=urban_makers,personal on the Studio machine).
+export const ACCOUNTS = ["urban_makers"];
+export const oneBrand = ACCOUNTS.length < 2;
 export const FORMAT = { talking_head: "Talking head", day_in_the_life: "Day in the life", compilation: "Compilation" };
 export const PLAN_FORMATS = ["talking_head", "day_in_the_life", "compilation"];
 export const FRAMING = { wide: "Wide", medium: "Medium", close: "Close-up", detail: "Detail", pov: "POV", overhead: "Overhead" };

@@ -3,13 +3,13 @@
 // laptop analyses each one and drafts a style guide from the active set; the owner
 // approves it. Routes: #/references, #/references/<id>, #/style, #/style/<brand>.
 import {
-  $, $$, BRAND, esc, sb, must, toast, ago, shortDate, plural, httpsUrl, isOwner, ownerName, nameOf, state,
+  $, $$, BRAND, ACCOUNTS, oneBrand, esc, sb, must, toast, ago, shortDate, plural, httpsUrl, isOwner, ownerName, nameOf, state,
   typingIn, keepDrafts, signPaths, stillUrl, jobView, jobActive, laptopWait, laptopOn, openModal, closeModal,
   modalOpen, formError, store, recall, isTyping,
 } from "./core.js";
 
 const root = () => $("#refs");
-const BRANDS = ["urban_makers", "personal"];
+const BRANDS = ACCOUNTS;
 const SIDE = { ours: "Ours", inspiration: "Inspiration" };
 const SIDE_LONG = { ours: "Ours: our own reel", inspiration: "Inspiration: another account" };
 const JOB_COLS = "id,kind,runner,state,payload,result,error,requested_by,created_at,started_at,updated_at";
@@ -17,7 +17,7 @@ const WHY_HINT = "e.g. most saves we've had; the reveal at 3 s; fast captions, t
 
 export const refs = {
   route: null, rows: null, guides: [], jobs: [], sig: "", pending: false, editing: null, error: "",
-  brand: recall("studio.refBrand") || "all", status: recall("studio.refStatus") || "active",
+  brand: oneBrand ? "all" : recall("studio.refBrand") || "all", status: recall("studio.refStatus") || "active",
   guideBrand: BRANDS.includes(recall("studio.guideBrand")) ? recall("studio.guideBrand") : "urban_makers",
   flashed: new Set(),
 };
@@ -35,7 +35,7 @@ export function refsRoute(hash) {
 export async function showRefs(route) {
   const prev = refs.route;
   const moved = !prev || prev.page !== route.page || prev.id !== route.id;
-  if (route.page === "style" && route.brand) {
+  if (route.page === "style" && route.brand && BRANDS.includes(route.brand)) {
     refs.guideBrand = route.brand;
     store("studio.guideBrand", route.brand);
   }
@@ -161,7 +161,7 @@ function analysisChip(r, long = false) {
   }
   return `<span class="chip wait">Waiting for Studio</span>`;
 }
-const brandChip = (b) => `<span class="chip ${esc(b)}">${esc(BRAND[b] || b)}</span>`;
+const brandChip = (b) => oneBrand ? "" : `<span class="chip ${esc(b)}">${esc(BRAND[b] || b)}</span>`;
 
 // Numbers worth a glance on a card.
 const KEY_NUMBERS = [
@@ -340,7 +340,7 @@ function listHTML() {
     </div>
     ${guideStatusHTML()}
     ${all.length ? `<div class="refs-filters">
-      ${seg("ref-brand", refs.brand, [["all", "Both accounts"], ["urban_makers", "Urban Makers"], ["personal", "Personal"]], "Account")}
+      ${oneBrand ? "" : seg("ref-brand", refs.brand, [["all", "Both accounts"], ...BRANDS.map((b) => [b, BRAND[b]])], "Account")}
       ${seg("ref-status", refs.status, [["active", "Active"], ["retired", `Retired${retired ? ` (${retired})` : ""}`], ["all", "All"]], "Show")}
     </div>
     ${group("ours", "Our own reels that did well.")}
@@ -438,7 +438,7 @@ function detailHTML(id) {
           <h2>Details <span class="saved" aria-live="polite"></span></h2>
           <div class="meta-grid">
             <label>Whose reel<select id="ref-side">${sideOpts}</select></label>
-            <label>Account<select id="ref-brand">${brandOpts}</select></label>
+            ${oneBrand ? "" : `<label>Account<select id="ref-brand">${brandOpts}</select></label>`}
           </div>
           <p class="muted small">${esc(addedBy(r))}${inGuides.length ? ` · In ${inGuides.map((g) => `${BRAND[g.brand]} style guide v${g.version}${g.status === "draft" ? " (draft)" : ""}`).join(", ")}` : ""}</p>
         </section>
@@ -631,7 +631,7 @@ function styleHTML() {
         <h1 tabindex="-1">Style guide</h1>
         <p class="muted">How our reels are edited, drafted by Studio from the references and approved by ${esc(ownerName())}. The idea generator and the editor follow the guide in use.</p>
       </div>
-      ${seg("guide-brand", brand, BRANDS.map((b) => [b, BRAND[b]]), "Account")}
+      ${oneBrand ? "" : seg("guide-brand", brand, BRANDS.map((b) => [b, BRAND[b]]), "Account")}
     </div>
     <div class="sg-update">
       <div class="row">
@@ -700,13 +700,13 @@ function addRowHTML(p, k, keep) {
 }
 
 function openAdd() {
-  const brand = refs.brand !== "all" ? refs.brand : (recall("studio.refAddBrand") || "urban_makers");
+  const brand = oneBrand ? BRANDS[0] : refs.brand !== "all" ? refs.brand : (recall("studio.refAddBrand") || "urban_makers");
   openModal(`<h2 id="modal-title">Add references</h2>
     <form class="form" id="ar-form" novalidate>
       <label>Link<textarea id="ar-links" rows="2" maxlength="20000" spellcheck="false" autocomplete="off"
         placeholder="https://www.instagram.com/reel/…  (several? one per line)"></textarea></label>
       <p class="muted small">Instagram reels, TikToks or YouTube Shorts, public. Studio downloads each one, measures its cuts, pace and captions, and keeps a few stills.</p>
-      <label>Account<select id="ar-brand">${BRANDS.map((b) => `<option value="${b}" ${b === brand ? "selected" : ""}>${esc(BRAND[b])}</option>`).join("")}</select></label>
+      ${oneBrand ? "" : `<label>Account<select id="ar-brand">${BRANDS.map((b) => `<option value="${b}" ${b === brand ? "selected" : ""}>${esc(BRAND[b])}</option>`).join("")}</select></label>`}
       <div class="ar-rows" id="ar-rows"></div>
       <p class="error-text" id="modal-error" role="alert" hidden></p>
       <div class="row end"><button type="button" class="btn" data-modal-close>Cancel</button><button type="submit" class="btn primary" id="ar-save">Add</button></div>
@@ -746,7 +746,7 @@ async function saveAdd(btn) {
     return formError(`${missing.length === rows.length && rows.length === 1 ? "It has" : `${plural(missing.length, "link")} ${missing.length === 1 ? "has" : "have"}`} no note on why it works. That note is what the style guide learns from: add one, or press Add again to add without.`);
   }
   btn.disabled = true;
-  const brand = $("#ar-brand").value;
+  const brand = $("#ar-brand")?.value || BRANDS[0];
   store("studio.refAddBrand", brand);
   store("studio.refSide", rows[rows.length - 1].side);
   const failed = [];

@@ -1,7 +1,7 @@
 // The planning board: projects, the brief, the idea dump (plain or organised by
 // Claude), arcs as columns and idea cards. Ported from the laptop's Plan tab.
 import {
-  $, $$, BRAND, esc, sb, must, invoke, toast, options, store, recall, plural, typingIn, keepDrafts,
+  $, $$, BRAND, ACCOUNTS, oneBrand, esc, sb, must, invoke, toast, options, store, recall, plural, typingIn, keepDrafts,
   pbarHTML, prepShots, progress, signPaths, stillUrl, takePaths, jobView, jobActive, kickDevelop,
   openModal, closeModal, formError, nameOf, PRODUCTION, state,
 } from "./core.js";
@@ -124,7 +124,7 @@ function plannerShellHTML() {
       <div class="plan-details-body">
         <div class="row">
           <label class="grow">Name<input id="proj-name" maxlength="120" value="${esc(p.name)}" data-orig="${esc(p.name)}"></label>
-          <label>Account<select id="proj-brand">${options(["urban_makers", "personal"], BRAND, p.brand)}</select></label>
+          ${oneBrand ? "" : `<label>Account<select id="proj-brand">${options(ACCOUNTS, BRAND, p.brand)}</select></label>`}
         </div>
         <label>Brief<textarea id="proj-brief" rows="4" maxlength="4000" data-orig="${esc(p.brief)}" placeholder="What's the job, who's the client, what should the posts show? Claude reads this when it organises ideas.">${esc(p.brief)}</textarea></label>
         <label>Inbox folder<input id="proj-folder" maxlength="80" value="${esc(p.folder)}" data-orig="${esc(p.folder)}" placeholder="${esc(folderName(p.name))}"></label>
@@ -302,7 +302,7 @@ function cardHTML(i) {
     <span class="card-body">
       <span class="card-title">${esc(i.title)}</span>
       <span class="card-chips">
-        <span class="chip ${esc(i.brand)}">${esc(BRAND[i.brand] || i.brand)}</span>
+        ${oneBrand ? "" : `<span class="chip ${esc(i.brand)}">${esc(BRAND[i.brand] || i.brand)}</span>`}
         ${i.decision === "go" ? `<span class="chip go">Go</span>` : i.decision === "parked" ? `<span class="chip parked">Parked</span>` : ""}
         ${i.status === "made" || prod ? `<span class="chip producing">${esc(prod ? PRODUCTION[prod] || prod : "In edit")}</span>` : ""}
         ${jobActive(dev) ? `<span class="chip drafting"><span class="spin"></span>Drafting storyboard…</span>` : ""}
@@ -421,7 +421,7 @@ export function openNewProject() {
   openModal(`<h2 id="modal-title">New project</h2>
     <form class="form">
       <label>Name<input id="np-name" maxlength="120" placeholder="e.g. Kensington" required></label>
-      <label>Account<select id="np-brand">${options(["urban_makers", "personal"], BRAND, "urban_makers")}</select></label>
+      ${oneBrand ? "" : `<label>Account<select id="np-brand">${options(ACCOUNTS, BRAND, "urban_makers")}</select></label>`}
       <label>Inbox folder <span class="muted">(optional)</span><input id="np-folder" maxlength="80" placeholder="Same as the name"></label>
       <p class="muted small" id="np-hint">${folderHint("")}</p>
       <label>Brief <span class="muted">(optional)</span><textarea id="np-brief" rows="4" maxlength="4000" placeholder="What's the job, who's the client, what should the posts show?"></textarea></label>
@@ -434,7 +434,7 @@ export function openNewProject() {
     let row;
     try {
       row = must(await sb.from("projects").insert({
-        name, brand: $("#np-brand").value, folder: folderName($("#np-folder").value) || folderName(name), brief: $("#np-brief").value.trim(),
+        name, brand: $("#np-brand")?.value || ACCOUNTS[0], folder: folderName($("#np-folder").value) || folderName(name), brief: $("#np-brief").value.trim(),
       }).select("id").single());
     } catch (err) { return formError(err.message); }
     closeModal();
@@ -458,7 +458,7 @@ $("#planner").addEventListener("click", async (e) => {
     else if (t.id === "plan-organise") await addIdeas(true);
     else if (t.id === "proj-save") {
       const name = $("#proj-name").value.trim();
-      await saveProject({ ...(name ? { name } : {}), brand: $("#proj-brand").value, brief: $("#proj-brief").value.trim(), folder: folderName($("#proj-folder").value) }, "Project saved.");
+      await saveProject({ ...(name ? { name } : {}), brand: $("#proj-brand")?.value || ACCOUNTS[0], brief: $("#proj-brief").value.trim(), folder: folderName($("#proj-folder").value) }, "Project saved.");
     } else if (t.id === "proj-archive") {
       const p = currentProject();
       if (p.status === "archived") await saveProject({ status: "active" }, `${p.name} is active again.`);

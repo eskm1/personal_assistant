@@ -117,6 +117,28 @@ CLOUD_SYNC_SECONDS = int(_env("STUDIO_CLOUD_SYNC_SECONDS", "30"))
 # Notes marked "remember for future edits" are appended here; the editor reads it.
 PLAYBOOK = ROOT / "playbook.md"
 
+# ── Accounts ──────────────────────────────────────────────────────────────────
+# Which Instagram accounts Studio makes content for. For now everything is Urban
+# Makers, even clips that sound personal. "urban_makers,personal" brings the
+# personal account back (clips are then tagged per account again).
+KNOWN_BRANDS = ("urban_makers", "personal")
+BRANDS = tuple(b for b in (x.strip() for x in _env("STUDIO_BRANDS", "urban_makers").split(","))
+               if b in KNOWN_BRANDS) or ("urban_makers",)
+SINGLE_BRAND = BRANDS[0] if len(BRANDS) == 1 else None
+
+
+def brands_text() -> str:
+    """brands.md, as Claude reads it when tagging, planning and suggesting posts.
+    With one account, prefaced by the rule that everything is for that account."""
+    path = Path(BRANDS_FILE)
+    text = path.read_text(encoding="utf-8").strip() if path.exists() else ""
+    if SINGLE_BRAND == "urban_makers":
+        text = ("For now, every post is for the Urban Makers account, including clips and ideas that "
+                "sound personal (Bryan's day, his opinions, life running the business): file them under "
+                "urban_makers and shape them for the Urban Makers audience. The personal account below "
+                "is on hold.\n\n" + text)
+    return text
+
 # ── OneDrive (server) ─────────────────────────────────────────────────────────
 # On the server, footage still arrives through OneDrive: onedrive.py pulls it with
 # rclone (remote set up by server_move.py) into INBOX, and moves each picked-up

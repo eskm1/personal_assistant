@@ -58,7 +58,7 @@ app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
                   SESSION_COOKIE_NAME="studio_session", PERMANENT_SESSION_LIFETIME=timedelta(days=30),
                   MAX_CONTENT_LENGTH=2 * 1024 * 1024)
 
-BRANDS = ("personal", "urban_makers", "unsure")
+BRANDS = (*settings.BRANDS, "unsure") if len(settings.BRANDS) > 1 else settings.BRANDS
 FORMATS = ("talking_head", "day_in_the_life", "compilation", "other")
 
 # Where each catalogue status shows up on the board.
@@ -196,7 +196,7 @@ def me():
     import updater
     u = g.user
     return jsonify({"id": u["id"], "name": u["name"], "email": u["email"], "role": u["role"],
-                    "local": is_local(), "version": updater.version()})
+                    "local": is_local(), "version": updater.version(), "brands": list(settings.BRANDS)})
 
 
 @app.post("/api/update")

@@ -253,6 +253,22 @@ def connect(db_path: Path = CATALOG_DB) -> sqlite3.Connection:
     return conn
 
 
+def file_under(conn: sqlite3.Connection, brand: str) -> int:
+    """With one account (settings.SINGLE_BRAND), file everything already in the
+    catalogue under it. A clip keeps a note of what it was tagged before. Returns
+    how many rows changed; 0 once done."""
+    n = conn.execute(
+        """UPDATE clips SET brand_reason = 'Tagged ' || brand || ' before everything became ' || ? || '. '
+               || COALESCE(brand_reason, ''), brand = ?
+           WHERE brand IS NOT NULL AND brand <> ?""",
+        (brand.replace("_", " ").title(), brand, brand)).rowcount
+    for table in ("productions", "ideas", "projects"):
+        n += conn.execute(f"UPDATE {table} SET brand = ? WHERE brand IS NOT NULL AND brand <> ?",
+                          (brand, brand)).rowcount
+    conn.commit()
+    return n
+
+
 def find(conn: sqlite3.Connection, fingerprint: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM clips WHERE fingerprint = ?", (fingerprint,)).fetchone()
 

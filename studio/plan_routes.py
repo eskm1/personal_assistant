@@ -17,12 +17,13 @@ from flask import Blueprint, abort, g, jsonify, request, send_file
 
 import catalog
 import plan
+import settings
 from webutil import body, db, is_owner, owner_only, text
 
 log = logging.getLogger("studio.plan")
 bp = Blueprint("plan", __name__)
 
-BRANDS = ("personal", "urban_makers")
+BRANDS = settings.BRANDS
 FORMATS = ("talking_head", "day_in_the_life", "compilation")
 DECISIONS = ("proposed", "go", "parked")
 

@@ -18,13 +18,13 @@ segments the editor cuts from.
 """
 import json
 import logging
-from pathlib import Path
 
 import anthropic
 
 import catalog
 import playbook
-from settings import ANTHROPIC_API_KEY, BRANDS_FILE, CLAUDE_MODEL
+import settings
+from settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
 
 log = logging.getLogger("studio.plan")
 
@@ -61,7 +61,7 @@ _IDEA = {
     "properties": {
         "arc": {"type": "string"},
         "title": {"type": "string"},
-        "brand": {"type": "string", "enum": ["personal", "urban_makers"]},
+        "brand": {"type": "string", "enum": list(settings.BRANDS)},
         "format": {"type": "string", "enum": ["talking_head", "day_in_the_life", "compilation"]},
         "hook": {"type": "string"},
         "purpose": {"type": "string"},
@@ -176,8 +176,7 @@ comments and history, so give its id in keep_id too; new shots get keep_id 0.
 
 
 def _brands() -> str:
-    path = Path(BRANDS_FILE)
-    return path.read_text(encoding="utf-8").strip() if path.exists() else ""
+    return settings.brands_text()
 
 
 def _ask(system: str, user: str, schema: dict, ref: str, client=None) -> dict:

@@ -14,11 +14,13 @@ from pathlib import Path
 
 import anthropic
 
-from settings import ANTHROPIC_API_KEY, BRANDS_FILE, CLAUDE_EFFORT, CLAUDE_MODEL
+import settings
+from settings import ANTHROPIC_API_KEY, CLAUDE_EFFORT, CLAUDE_MODEL
 
 log = logging.getLogger("studio.classify")
 
-BRANDS = ["personal", "urban_makers", "unsure"]
+# One account for now (settings.BRANDS): every clip is filed under it.
+BRANDS = [*settings.BRANDS, "unsure"] if len(settings.BRANDS) > 1 else list(settings.BRANDS)
 FORMATS = ["talking_head", "day_in_the_life", "compilation", "other"]
 MOMENT_KINDS = ["hook", "key_point", "quote", "visual", "reaction"]
 
@@ -80,9 +82,9 @@ SCHEMA = {
     "additionalProperties": False,
 }
 
-_SYSTEM = """You catalogue raw phone footage for Bryan, who posts to two Instagram accounts. \
-Each clip you see is unedited. Your tags decide which account it is filed under and \
-which moments get cut into posts later, so be concrete and use real timestamps.
+_SYSTEM = """You catalogue raw phone footage for Bryan, {accounts} \
+Each clip you see is unedited. Your tags decide which moments get cut into posts \
+later, so be concrete and use real timestamps.
 
 {brands}
 
@@ -94,7 +96,7 @@ and compilations (process shots, before/after, scenery, details).
 - other: none of the above.
 
 Field guidance:
-- brand: "unsure" when the clip could reasonably go either way; say why in brand_reason.
+{brand_rule}
 - title: 3-8 words, specific enough to find the clip again ("Kitchen tiling day 2 progress").
 - topics: 2-6 short lowercase tags.
 - usable: false only if the clip is unusable (accidental recording, black screen, \
@@ -113,9 +115,22 @@ transcript when possible.
 clip's duration, taken from the transcript timestamps or frame times. Empty if none."""
 
 
+def _system() -> str:
+    # .replace, not .format: brands.md may hold braces.
+    if settings.SINGLE_BRAND:
+        accounts = "who posts everything to the Urban Makers Instagram account for now."
+        rule = ('- brand: always "urban_makers". Every clip is Urban Makers content, including ones that '
+                "sound personal (Bryan's day, his opinions, life running the business): title, hook and "
+                "moments are for the Urban Makers audience. brand_reason: \"\".")
+    else:
+        accounts = "who posts to two Instagram accounts. Your tags also decide which account a clip is filed under."
+        rule = '- brand: "unsure" when the clip could reasonably go either way; say why in brand_reason.'
+    return (_SYSTEM.replace("{accounts}", accounts).replace("{brand_rule}", rule)
+            .replace("{brands}", _brands_text()))
+
+
 def _brands_text() -> str:
-    path = Path(BRANDS_FILE)
-    return path.read_text(encoding="utf-8").strip() if path.exists() else ""
+    return settings.brands_text()
 
 
 def _image_block(jpg: Path) -> dict:
@@ -162,7 +177,7 @@ def classify(meta: dict, frames: list[tuple[float, Path]], transcript: dict | No
             "effort": CLAUDE_EFFORT,
             "format": {"type": "json_schema", "schema": SCHEMA},
         },
-        system=_SYSTEM.replace("{brands}", _brands_text()),  # not .format: brands.md may hold braces
+        system=_system(),
         messages=[{"role": "user", "content": build_content(meta, frames, transcript, source_name, shot_list)}],
     )
     import usage
@@ -173,6 +188,8 @@ def classify(meta: dict, frames: list[tuple[float, Path]], transcript: dict | No
         raise RuntimeError("Claude's answer was cut off (max_tokens)")
     text = next((b.text for b in response.content if b.type == "text"), "")
     result = json.loads(text)
+    if settings.SINGLE_BRAND:
+        result["brand"] = settings.SINGLE_BRAND
     log.info("Classified %s as %s / %s (%s)", source_name, result["brand"], result["format"],
              response.model)
     return result

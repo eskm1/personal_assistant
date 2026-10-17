@@ -1,7 +1,7 @@
 // One planned post: the storyboard (left) and its plan (right). Ported from the
 // laptop dashboard's planned-idea viewer. Stills come from the private bucket.
 import {
-  $, cfg, BRAND, FORMAT, PLAN_FORMATS, FRAMING, KIND, CAMERA, SHOT_STATE, DECISION, PRODUCTION,
+  $, cfg, BRAND, ACCOUNTS, oneBrand, FORMAT, PLAN_FORMATS, FRAMING, KIND, CAMERA, SHOT_STATE, DECISION, PRODUCTION,
   esc, sb, must, invoke, toast, options, ago, mmss, shortDate, plural, typingIn, keepDrafts, isOwner, ownerName,
   nameOf, state, pbarHTML, prepShots, progress, bestTake, takeVerdict, takeFlags, verdictChip, signPaths, stillUrl,
   takePaths, jobView, jobActive, kickDevelop, laptopWait, httpUrl, httpsUrl, openModal, closeModal, syncInert,
@@ -352,7 +352,7 @@ function renderPanel() {
       </div>
       <div class="meta-grid" data-saved-scope>
         <label>Arc<select data-idea-field="arc_id">${`<option value="">Unsorted</option>` + d.arcs.map((a) => `<option value="${esc(a.id)}" ${a.id === d.arc_id ? "selected" : ""}>${esc(a.title)}</option>`).join("")}</select></label>
-        <label>Account<select data-idea-field="brand">${options(["urban_makers", "personal"], BRAND, d.brand)}</select></label>
+        ${oneBrand ? "" : `<label>Account<select data-idea-field="brand">${options(ACCOUNTS, BRAND, d.brand)}</select></label>`}
         <label>Format<select data-idea-field="format">${options(PLAN_FORMATS, FORMAT, d.format)}</select></label>
         <label>Length<span class="num-field"><input type="number" min="3" max="180" step="1" data-idea-field="est_seconds" value="${esc(Math.round(d.est_seconds || 30))}" data-orig="${esc(Math.round(d.est_seconds || 30))}"> s</span></label>
         <span class="saved" aria-live="polite"></span>

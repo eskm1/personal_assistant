@@ -13,7 +13,8 @@ from pathlib import Path
 import anthropic
 
 import playbook
-from settings import ANTHROPIC_API_KEY, BRANDS_FILE, CLAUDE_MODEL
+import settings
+from settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
 
 log = logging.getLogger("studio.ideas")
 
@@ -29,7 +30,7 @@ SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "brand": {"type": "string", "enum": ["personal", "urban_makers"]},
+                    "brand": {"type": "string", "enum": list(settings.BRANDS)},
                     "format": {"type": "string", "enum": ["talking_head", "day_in_the_life", "compilation"]},
                     "title": {"type": "string"},
                     "hook": {"type": "string"},
@@ -172,7 +173,7 @@ def generate(conn, focus: str = "", count: int = 6, client: anthropic.Anthropic 
     if not ids:
         raise RuntimeError("The library has no tagged, usable clips yet")
     existing = [r["title"] for r in conn.execute("SELECT title FROM productions")]
-    brands = Path(BRANDS_FILE).read_text(encoding="utf-8").strip() if Path(BRANDS_FILE).exists() else ""
+    brands = settings.brands_text()
     user = (
         (f"Focus for this batch: {focus}\n\n" if focus.strip() else "")
         + "Existing posts: " + ("; ".join(existing) if existing else "none yet") + "\n\n"

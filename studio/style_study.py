@@ -462,11 +462,11 @@ def draft_guide(brand: str, references: list[dict], previous_guide: dict | None 
     import llm
     import playbook
     import usage
-    from settings import ANTHROPIC_API_KEY, BRANDS_FILE, CLAUDE_MODEL
+    from settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
     usable = [r for r in references if r.get("measured")]
     if not usable:
         raise RuntimeError("no analysed references to learn from")
-    brands = Path(BRANDS_FILE).read_text(encoding="utf-8") if Path(BRANDS_FILE).exists() else ""
+    brands = settings.brands_text()
     if previous_guide and (previous_guide.get("content") or "").strip():
         label = f"version {previous_guide['version']}" if previous_guide.get("version") else "applied earlier"
         previous = _PREVIOUS.replace("{label}", label).replace("{content}", previous_guide["content"].strip())
