@@ -1,0 +1,53 @@
+# Studio: context for Claude sessions
+
+Studio turns Urban Makers' raw footage into Instagram Reels. Owner: Bryan (Urban Makers, a
+Singapore renovation company). Team member: Michelle (marketing). Read README.md first, then
+`server/SERVER.md` (the server), `cloud/CONTRACT.md` (planner <-> Studio machine contract).
+
+## Where things run
+
+- **Studio machine = Hetzner server** (CPX42, Ubuntu 24.04, IP 46.62.223.220), not the laptop any more.
+  systemd `studio.service` runs `worker.py` (worker loop + Flask/waitress dashboard on 127.0.0.1:8765)
+  as user `studio`, repo at `/home/studio/personal_assistant`, data in `/home/studio/Studio`, behind
+  Caddy at **https://studio.theurbanmakers.com**. It self-updates from the branch below every ~10 min
+  when idle (`updater.py`; systemd restarts it). Status: `ssh root@46.62.223.220 bash /root/studio-server/setup.sh status`.
+- **Footage** arrives in OneDrive `Studio Inbox/<project>/<post>/`; `onedrive.py` (rclone) pulls it and
+  moves originals to `Studio Archive`; approved reels are copied to `Studio Ready to post`.
+- **Planner**: static web app (`cloud/planner`) on Supabase (DB, auth, realtime, storage, Edge
+  Functions). Served by the Studio machine at `/plan/` (single sign-on from the dashboard) and by Netlify
+  (fallback). The Studio machine syncs with Supabase every 30 s (`cloud_sync.py`).
+- **The Windows laptop** is retired from Studio (`Studio\MOVED_TO_SERVER.txt`); its repo does NOT
+  auto-update any more (`git pull` first). It's still where `cloud_setup.py` runs (Supabase CLI), e.g.
+  `cloud_setup.py --update` after a new migration or Edge Function change.
+
+## Rules
+
+- Branch `claude/sleepy-thompson-iewk09`. The server (and Netlify) deploy whatever is pushed, so never
+  push half-built or untested code. No PRs unless asked. Never commit `.env` or secrets; never log keys.
+- Bryan decides: approving/rejecting drafts, Go/Park/Dismiss, spending (Make this), style guides.
+  Captions and posting stay his call; Studio never posts.
+- All content is Urban Makers for now (`STUDIO_BRANDS`, personal on hold). Epidemic Sound music is
+  licensed for the Urban Makers account only.
+- Subtitles: English or Simplified Chinese only (`WHISPER_LANGUAGES=en,zh`, zhconv).
+- Only @theurbanmakers.com accounts may sign in (owners always may).
+- Place names (clients' addresses, estates) stay internal: never in captions or posts.
+- Anything touching the quote tool (`tools/umcpm.py`, the urban-makers-quote-engine repo) is the
+  UMC Lead agent's: consult and defer to it.
+- Plain English for Bryan (not technical); match the code's style (plain docstrings, short comments).
+
+## Testing
+
+Local Supabase stack via the Supabase CLI + Docker (`cloud/supabase`), Playwright for the planner,
+stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "import worker, dashboard, ..."`
+(`updater._MODULES`) before pushing.
+
+## Open items (as of 2026-10-17)
+
+- Bryan to run once on the laptop: `git pull` then `.\venv\Scripts\python cloud_setup.py --update`
+  (adds the shoot-plan tables and redeploys the team function with the domain rule).
+- If /plan/ can't find the planner's public key, the server needs `STUDIO_PLANNER_URL` (Netlify address)
+  or `STUDIO_SUPABASE_ANON_KEY` in `/home/studio/personal_assistant/studio/.env`.
+- Not yet proven live: the `place` job and tagging with real Claude after this update; iPhone "Film"
+  upload quality from Safari.
+- Offered next: editor upgrades from the reel analysis (trim pauses/breaths, punch-in zooms every few
+  seconds, numbered chapter labels, screenshots floating above the speaker).
