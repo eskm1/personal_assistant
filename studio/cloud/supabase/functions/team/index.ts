@@ -6,6 +6,12 @@ import { check, db, requireOwner } from "../_shared/db.ts";
 import { HttpError, json, readJson, serve } from "../_shared/http.ts";
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Only work addresses join the team (ALLOWED_EMAIL_DOMAINS secret, comma-separated; "*" = any).
+const DOMAINS = (Deno.env.get("ALLOWED_EMAIL_DOMAINS") || "theurbanmakers.com")
+  .split(",").map((d) => d.trim().toLowerCase().replace(/^@/, "")).filter(Boolean);
+export function allowedEmail(email: string): boolean {
+  return DOMAINS.includes("*") || DOMAINS.includes(email.split("@").pop() || "");
+}
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface Profile {
@@ -79,6 +85,9 @@ async function members() {
 async function invite(body: Record<string, unknown>) {
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   if (!EMAIL.test(email) || email.length > 320) throw new HttpError(400, "Enter a valid email address");
+  if (!allowedEmail(email)) {
+    throw new HttpError(400, `Invite their work email: only ${DOMAINS.map((d) => "@" + d).join(", ")} addresses can join`);
+  }
   const name = typeof body.name === "string" ? body.name.trim().slice(0, 100) : "";
   const redirect = typeof body.redirect_to === "string" && body.redirect_to
     ? body.redirect_to

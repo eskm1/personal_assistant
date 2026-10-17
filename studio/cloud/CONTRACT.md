@@ -146,3 +146,60 @@ under voice). Style guide view: the active guide (Markdown rendered safely as te
 version history; a banner when references changed since it ("2 added, 1 retired"); the newest
 draft with its "What changed" and Approve / Reject / Edit (owner); "Update style guide" queues a
 `style` job (shows waiting-for-laptop when it's off).
+
+## Shoot plan, uploads to a shot, post folders (migration 20261018000000_shoot_plan.sql)
+
+### Shoot plan (planner only; no Studio-machine work except the `place` job)
+
+- `phases`: a project's renovation phases (name, `starts_on`/`ends_on` dates, `position`). Members edit.
+- `site_days`: the days someone is on site (`day`, `phase_id`, `who` free text, `note`), one per project per date.
+- `shots.phase_id`: the phase whose work the shot shows (Claude places them with the `place` job;
+  the team can move them). `shots.shoot_on`: optional, pins a shot to one site day.
+- A shot is **due** on a site day when `shoot_on = day`, or `shoot_on` is null and its `phase_id` is the
+  day's `phase_id`. Only shots of ideas with `decision = 'go'` and `status <> 'dismissed'` are planned.
+- **Filmed** = `filmed_at` set, or the shot has a take.
+- **Last chance**: a site day that is the last (by date) site day of its phase while that phase still has
+  unfilmed due shots.
+- **Not on a site day yet**: Go shots with neither `phase_id` nor `shoot_on`, or whose phase has no site day.
+
+### Jobs
+
+| kind | runner | queued by | payload | result |
+|---|---|---|---|---|
+| place | laptop | any member (insert) | `{}` (project_id set) | `{placed, unplaced}`; writes `shots.phase_id` for the project's unplaced shots of Go and proposed ideas (Claude picks the phase each shot's work happens in, or none) |
+
+### Uploading footage to a shot (planner -> Studio machine, HTTP)
+
+Base URL: the Studio dashboard (`config.js` `studioUrl`, default `https://studio.theurbanmakers.com`;
+also in `laptop_status.info.dashboard_url`). Every request carries the planner session:
+`Authorization: Bearer <supabase access_token>`. The Studio machine checks it with Supabase
+(`GET /auth/v1/user`) and that the user has a profile (a member). CORS: the planner's origin
+(`STUDIO_PLANNER_URL`, plus any in `STUDIO_UPLOAD_ORIGINS`, comma-separated) may call these, with the
+`Authorization` and `Content-Type` headers, methods GET/POST/PUT/DELETE.
+
+| Request | Body | Answer |
+|---|---|---|
+| `POST /api/uploads` | JSON `{shot_id, name, size, type}` | `201 {id, offset, chunk}`; the same user + shot + name + size with an unfinished upload gets that one back (resume). 401 bad session, 403 not a member, 404 no such shot, 413 over 8 GB, 415 not a video, 507 disk full |
+| `PUT /api/uploads/<id>?offset=<n>` | raw bytes (`application/octet-stream`), at most 16 MB | `{offset}`; 409 `{offset}` when n isn't where the server is; at `offset = size` the server finishes: `{offset, state: "received"}` |
+| `GET /api/uploads/<id>` | | `{offset, size, state}` |
+| `DELETE /api/uploads/<id>` | | cancels an unfinished upload |
+
+`chunk` is the size the planner should send per PUT (8 MB). The Studio machine mirrors each upload in
+`shot_uploads` (it inserts the row at `POST`, state `uploading`; `received` when the file is complete and
+in the inbox; `ingested` with `clip_id` once tagged; `failed` with `error`). A received file goes to
+`Inbox/<project folder>/<idea folder>/<name>` and is pinned to its shot: when ingested, Studio makes a
+`manual` take for that shot (note "Uploaded to this shot") and sets `shots.filmed_at` if empty.
+
+### Post folders
+
+For each Go idea (not dismissed) of an active project, the Studio machine makes an inbox folder
+`<project folder>/<idea folder>/` (locally, and in OneDrive on a server) and writes its name to
+`ideas.folder`. It never renames or deletes one: a renamed idea keeps its folder. A clip ingested from a
+post folder is matched only against that idea's shots, and `clips.idea_id` is set. Clips of a project
+with no take are the planner's "Needs a home" tray; attaching one is a `manual` take (insert), moving one
+is delete + insert.
+
+### Signing in
+
+The Studio dashboard also accepts the planner's email and password (checked with Supabase), so the team
+has one login. The planner role (`owner`/`team`) carries over.
