@@ -96,7 +96,7 @@ def planner_session():
         # planner's password proves the planner account is theirs.
         return jsonify({"error": "Sign out, then sign in with your planner email and password"}), 403
     try:
-        session = cloud_auth.planner_session(g.user["email"])
+        session = cloud_auth.planner_session(g.user["email"], owner=g.user["role"] == "owner")
     except cloud_auth.AuthError as e:
         if e.status != 403:
             log.warning("Planner session for %s: %s", g.user["email"], e)

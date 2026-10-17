@@ -346,7 +346,9 @@ function visible(stage) {
 
 function renderTabs() {
   $("#tabs").innerHTML = STAGES.map((s) => {
-    if (s.key === "plan") return `<button data-stage="plan" class="${state.stage === "plan" ? "on" : ""}">${s.label}</button>`;
+    if (s.key === "plan") {  // with the planner at this address, Plan sits in the top bar instead
+      return state.cloud?.plan_here ? "" : `<button data-stage="plan" class="${state.stage === "plan" ? "on" : ""}">${s.label}</button>`;
+    }
     const n = visible(s.key).length;
     const hot = s.key === "review" && n ? " hot" : "";
     return `<button data-stage="${s.key}" class="${s.key === state.stage ? "on" : ""}">${s.label}<span class="count${hot}">${n}</span></button>`;
@@ -488,6 +490,7 @@ async function sync() {
         ? (visible("review").length ? "review" : (known ? saved : "library"))
         : (known ? saved : "plan");
     }
+    if (state.stage === "plan" && state.cloud?.plan_here) state.stage = visible("review").length ? "review" : "library";
     // Re-render only on change, so a hover preview isn't cut off every poll.
     if (signature !== state.signature || (cloudChanged && state.stage === "plan")) {
       state.signature = signature;

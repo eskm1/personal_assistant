@@ -124,15 +124,23 @@ def password_login(email: str, password: str) -> dict | None:
     return {"name": prof["name"] or email.split("@")[0], "role": prof["role"]}
 
 
-def planner_session(email: str) -> dict:
+def planner_session(email: str, owner: bool = False) -> dict:
     """{access_token, refresh_token, expires_at, expires_in, token_type} of a new planner
     session for this member (an admin magic link, verified straight away: no email is
-    sent). AuthError 403 when the email isn't a planner member."""
+    sent). AuthError 403 when the email isn't a planner member. The dashboard's owner
+    opens the planner's owner account even when the two use different emails."""
     email = (email or "").strip().lower()
     r = _call("GET", "/rest/v1/profiles", headers=_headers(), params={"email": f"eq.{email}", "select": "id"})
     if r.status_code != 200:
         raise AuthError(502, f"Couldn't read planner profiles (HTTP {r.status_code})")
-    if not r.json():
+    if not r.json() and owner:
+        r = _call("GET", "/rest/v1/profiles", headers=_headers(),
+                  params={"role": "eq.owner", "select": "email", "order": "created_at"})
+        owners = r.json() if r.status_code == 200 else []
+        if not owners:
+            raise AuthError(403, "The planner has no owner account yet: run cloud_setup.py on the laptop")
+        email = owners[0]["email"].strip().lower()
+    elif not r.json():
         raise AuthError(403, "Ask Bryan to invite you to the planner")
     r = _call("POST", "/auth/v1/admin/generate_link", headers=_headers(), json={"type": "magiclink", "email": email})
     if r.status_code == 404 or r.status_code == 422:
