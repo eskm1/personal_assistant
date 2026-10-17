@@ -315,11 +315,11 @@ export function laptopSince() {
   const t = state.laptop?.last_seen;
   return t ? ago(t) : "";
 }
-// "Waiting for the Studio laptop" wording for jobs that need it.
+// "Waiting for Studio" wording for jobs that need it.
 export function laptopWait() {
-  if (laptopOn()) return "The Studio laptop picks it up within a minute.";
+  if (laptopOn()) return "Studio picks it up within a minute.";
   const since = laptopSince();
-  return `Waiting for the Studio laptop (off${since ? ` since ${since}` : ""}). It runs as soon as the laptop is on.`;
+  return `Waiting for Studio (offline${since ? ` since ${since}` : ""}). It runs as soon as Studio is back.`;
 }
 
 // Content under an overlay (viewer, checklist, modal) can't be reached by keyboard or screen readers.

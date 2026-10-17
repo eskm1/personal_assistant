@@ -111,7 +111,7 @@ function renderChecklist() {
     </div>
     <div class="cl-body">${body || `<div class="cl-done"><p><strong>${total.total ? "Nothing left to film here." : "No shots planned yet."}</strong></p>
       <p class="muted">${total.total ? (check.onlyNeeded || check.camera ? "Untick “Still needed only” or pick All to see everything." : "") : "Ideas need a storyboard before they show up here. Parked ideas and ideas already in the edit are left out."}</p></div>`}
-      <p class="muted small cl-foot">Tap a shot when it's filmed. It turns into “Got it” once the footage is uploaded and matched on the Studio laptop. Parked ideas and ideas already in the edit aren't listed.</p></div>`;
+      <p class="muted small cl-foot">Tap a shot when it's filmed. It turns into “Got it” once the footage is uploaded and matched by Studio. Parked ideas and ideas already in the edit aren't listed.</p></div>`;
   root.scrollTop = scroll;
 }
 

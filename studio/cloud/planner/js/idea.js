@@ -264,13 +264,13 @@ function musicHTML(d) {
   }
   if (m.note && (d.brand === "personal" || m.source === "instagram" || !tracks.length)) body += `<p class="muted music-note">${esc(m.note)}</p>`;
   const status = job?.state === "queued" ? `<p class="muted small job-wait"><span class="spin"></span> Queued. ${esc(laptopWait())}</p>`
-    : job?.state === "running" ? `<p class="muted small"><span class="spin"></span> The Studio laptop is looking for tracks. About a minute.</p>`
+    : job?.state === "running" ? `<p class="muted small"><span class="spin"></span> Studio is looking for tracks. About a minute.</p>`
       : job?.state === "failed" ? `<p class="error-text small">Couldn't shortlist: ${esc(job.error || "unknown error")}</p>` : "";
   const again = tracks.length || m.note;
   return `<div class="field"><h3>Music</h3>
     <p>${desc || `<span class="muted">No direction yet. Refine with Claude to get one.</span>`}</p>${body}
     <div class="row mt8"><button class="btn" id="music-shortlist" ${active ? "disabled" : ""}
-      title="Runs on the Studio laptop. Urban Makers: a few Epidemic Sound tracks to try. Personal: a note on what to pick in Instagram.">${active ? "Shortlisting…" : again ? "Shortlist again" : "Shortlist music"}</button></div>
+      title="Runs on Studio. Urban Makers: a few Epidemic Sound tracks to try. Personal: a note on what to pick in Instagram.">${active ? "Shortlisting…" : again ? "Shortlist again" : "Shortlist music"}</button></div>
     ${status}
   </div>`;
 }
@@ -310,16 +310,16 @@ function makeHTML(d) {
   if (d.status === "made" || prod) {
     const label = prod?.status ? PRODUCTION[prod.status] || prod.status : "The editor is on it";
     const link = studio && prod?.id != null
-      ? `<a class="btn" href="${esc(`${studio}/#/production/${encodeURIComponent(prod.id)}`)}" target="_blank" rel="noopener noreferrer" title="Opens the Studio dashboard on the laptop (on the Studio network)">Open the draft on the laptop ↗</a>` : "";
+      ? `<a class="btn" href="${esc(`${studio}/#/production/${encodeURIComponent(prod.id)}`)}" target="_blank" rel="noopener noreferrer" title="Opens the draft on the Studio dashboard">Open the draft ↗</a>` : "";
     return `<div class="decision row"><span><strong>In the edit.</strong> ${esc(label)}${prod?.version ? ` · v${esc(prod.version)}` : ""}${prod?.updated_at ? ` <span class="muted small">(${esc(ago(prod.updated_at))})</span>` : ""}</span>${link}</div>`;
   }
   if (jobActive(job)) {
-    return `<div class="decision row"><span class="small"><span class="spin"></span> <strong>Sent to the editor.</strong> ${job.state === "queued" ? esc(laptopWait()) : "The Studio laptop is starting the edit."}</span></div>`;
+    return `<div class="decision row"><span class="small"><span class="spin"></span> <strong>Sent to the editor.</strong> ${job.state === "queued" ? esc(laptopWait()) : "Studio is starting the edit."}</span></div>`;
   }
   const failed = job?.state === "failed" ? `<span class="error-text small">Last try failed: ${esc(job.error || "unknown error")}</span>` : "";
   if (owner) {
     return `<div class="decision row"><button class="btn primary" id="plan-make" ${d.canMake ? "" : "disabled"}>Make this</button>
-      <span class="muted small">${d.canMake ? "Sends it to the editor on the Studio laptop, cut from the best take of each shot." : "Needs footage for at least one shot."}</span>${failed}</div>`;
+      <span class="muted small">${d.canMake ? "Sends it to Studio's editor, cut from the best take of each shot." : "Needs footage for at least one shot."}</span>${failed}</div>`;
   }
   return `<div class="decision row"><span class="muted small">${esc(ownerName())} sends it to the editor once the footage is in.</span>${failed}</div>`;
 }
@@ -537,7 +537,7 @@ panel().addEventListener("click", async (e) => {
       else must(await sb.from("votes").upsert({ idea_id: d.id, user_id: state.me.id, vote }, { onConflict: "idea_id,user_id" }));
     } else if (t.id === "music-shortlist") {
       must(await sb.from("jobs").insert({ kind: "music", runner: "laptop", idea_id: d.id, project_id: d.project_id, state: "queued", payload: {} }));
-      toast("Asked the Studio laptop for a music shortlist.");
+      toast("Asked Studio for a music shortlist.");
     } else if (ds.musicPick != null) {
       const track = d.music.shortlist[Number(ds.musicPick)];
       const on = d.music.chosen?.recording_id === track.recording_id;
@@ -563,7 +563,7 @@ panel().addEventListener("click", async (e) => {
       const caption = $("#f-caption")?.value ?? d.caption;
       if (caption !== d.caption) must(await sb.from("ideas").update({ caption }).eq("id", d.id));
       must(await sb.from("jobs").insert({ kind: "make", runner: "laptop", idea_id: d.id, project_id: d.project_id, state: "queued", payload: { caption } }));
-      toast("Sent to the editor on the Studio laptop.");
+      toast("Sent to Studio's editor.");
     } else return;
     await loadIdea(true);
   } catch (err) {
@@ -641,7 +641,7 @@ async function loadPicker(projectId, shot) {
   </button>`;
   };
   $("#picker-results").innerHTML = !mine.length && !rest.length
-    ? `<p class="muted">${q ? "No clips match." : "No clips yet. The Studio laptop adds them here as it tags new footage."}</p>`
+    ? `<p class="muted">${q ? "No clips match." : "No clips yet. Studio adds them here as it tags new footage."}</p>`
     : (mine.length ? `<h3>In this project</h3><div class="picker-grid">${mine.map(tile).join("")}</div>` : "")
       + (rest.length ? `<h3>${mine.length ? "Other recent clips" : "Recent clips"}</h3><div class="picker-grid">${rest.map(tile).join("")}</div>` : "");
 }

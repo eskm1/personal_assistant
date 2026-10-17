@@ -152,7 +152,7 @@ function plannerShellHTML() {
     <div class="board" id="plan-board"></div>`;
 }
 
-const folderHint = (folder) => `Inbox folder on the Studio laptop: footage dropped in <code>Studio Inbox\\${esc(folderName(folder) || "…")}</code> is filed to this project and matched to its shots.`;
+const folderHint = (folder) => `Inbox folder: footage dropped in OneDrive <code>Studio Inbox/${esc(folderName(folder) || "…")}</code> is filed to this project and matched to its shots.`;
 function briefPreview(p) {
   const first = (p.brief || "").split("\n")[0].slice(0, 90);
   return first ? esc(first) + ((p.brief || "").length > 90 || (p.brief || "").includes("\n") ? "…" : "")

@@ -19,9 +19,14 @@
   <div id="app" hidden>
     <header class="top">
       <a class="brand-mark" href="#/" aria-label="Studio planner, back to the board">Studio <span class="brand-sub">Planner</span></a>
+      <nav class="tabs" id="tabs" aria-label="Sections">
+        <a href="#/" data-tab="board">Plan</a>
+        <a href="#/references" data-tab="refs">References</a>
+        <a href="#/style" data-tab="style">Style guide</a>
+      </nav>
       <div class="filters">
         <div class="laptop" id="laptop">
-          <button class="laptop-pill" id="laptop-btn" aria-haspopup="true" aria-expanded="false" aria-controls="laptop-info"><span class="dot"></span><span id="laptop-text">Studio laptop…</span></button>
+          <button class="laptop-pill" id="laptop-btn" aria-haspopup="true" aria-expanded="false" aria-controls="laptop-info"><span class="dot"></span><span id="laptop-text">Studio…</span></button>
           <div class="menu laptop-info" id="laptop-info" hidden></div>
         </div>
         <div class="account" id="account">
@@ -34,6 +39,7 @@
     <main id="main">
       <section class="planner" id="planner" aria-label="Plan"></section>
       <section class="team-page" id="team" aria-label="Team" hidden></section>
+      <section class="refs-page" id="refs" aria-label="References and style guide" hidden></section>
     </main>
 
     <div class="viewer plan-mode" id="viewer" role="dialog" aria-modal="true" aria-label="Planned post" hidden>

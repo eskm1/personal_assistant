@@ -1,7 +1,7 @@
 // Studio planner: sign-in, the header (laptop status, account), hash routes and
 // live updates. Views live in board.js, idea.js, checklist.js and team.js.
 import {
-  $, esc, sb, must, landing, state, isOwner, toast, openModal, closeModal, modalOpen, formError,
+  $, $$, esc, sb, must, landing, state, isOwner, toast, openModal, closeModal, modalOpen, formError,
   isTyping, laptopOn, laptopSince,
 } from "./core.js";
 import { showAuth, hideAuth } from "./auth.js";
@@ -9,6 +9,7 @@ import { plan, loadProjects, loadBoard, renderPlanner, selectProject, onBoardRef
 import { view, openIdea, hideViewer, closeIdea, loadIdea, viewerOpen, step, updateArrows } from "./idea.js";
 import { check, openChecklist, hideChecklist, loadChecklist, checklistOpen } from "./checklist.js";
 import { showTeam, hideTeam } from "./team.js";
+import { refsRoute, showRefs, hideRefs, resetRefs, refsOpen, loadRefs } from "./refs.js";
 
 const SET_PASSWORD = "studio.setPassword";
 const session = { started: false, channel: null };
@@ -85,11 +86,13 @@ async function start() {
 
 function stop() {
   if (session.channel) sb.removeChannel(session.channel);
-  session.channel = null;
+  if (session.refChannel) sb.removeChannel(session.refChannel);
+  session.channel = session.refChannel = null;
   session.started = false;
   hideViewer();
   hideChecklist();
   closeModal();
+  resetRefs();
   $("#app").hidden = true;
   state.me = null;
   plan.projects = [];
@@ -105,11 +108,11 @@ function renderLaptop() {
   const since = laptopSince();
   const pill = $("#laptop-btn");
   pill.classList.toggle("on", on);
-  $("#laptop-text").textContent = on ? "Studio laptop on" : since ? `Laptop off since ${since}` : "Studio laptop off";
-  pill.title = on ? "The Studio laptop is on and syncing." : "Footage matching, music shortlists and Make this wait for it.";
+  $("#laptop-text").textContent = on ? "Studio on" : since ? `Studio offline since ${since}` : "Studio offline";
+  pill.title = on ? "Studio is on and syncing." : "Footage matching, music shortlists and Make this wait for it.";
   $("#laptop-info").innerHTML = on
-    ? `<p><strong>The Studio laptop is on.</strong></p><p class="muted small">It syncs about every 30 seconds: new footage is matched to shots, and music shortlists and Make this run there.</p>`
-    : `<p><strong>The Studio laptop is off${since ? ` (last seen ${esc(since)})` : ""}.</strong></p><p class="muted small">Planning works without it. Footage matching, music shortlists and Make this wait for it and run as soon as it's back on.</p>`;
+    ? `<p><strong>Studio is on.</strong></p><p class="muted small">It syncs about every 30 seconds: new footage is matched to shots, and music shortlists, Make this, reference analysis and style guide drafts run there.</p>`
+    : `<p><strong>Studio is offline${since ? ` (last seen ${esc(since)})` : ""}.</strong></p><p class="muted small">Planning works without it. Footage matching, music shortlists, Make this, reference analysis and style guide drafts wait for it and run as soon as it's back.</p>`;
 }
 setInterval(() => { if (state.me) renderLaptop(); }, 30e3);
 // In case a live update was missed (phone asleep), re-read the heartbeat now and then.
@@ -181,7 +184,8 @@ function openPassword() {
   });
 }
 
-// ── Routes: #/project/<id>, #/idea/<id>, #/checklist/<project_id>, #/team ───
+// ── Routes: #/project/<id>, #/idea/<id>, #/checklist/<project_id>, #/team,
+//    #/references[/<id>], #/style[/<brand>] ─────────────────────────────────
 
 async function refreshBoard(force = false) {
   await loadProjects();
@@ -195,10 +199,30 @@ function route() {
   routing = routing.then(doRoute, doRoute).catch((err) => toast(`Couldn't load that: ${err.message}`));
   return routing;
 }
+// The header tab for where we are.
+function setTab(name) {
+  for (const a of $$("#tabs a")) {
+    if (a.dataset.tab === name) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
+  }
+}
+
 async function doRoute() {
   if (!state.me) return;
   const h = location.hash;
   let m;
+  const refRoute = refsRoute(h);
+  if (refRoute) {
+    hideViewer();
+    hideChecklist();
+    hideTeam();
+    $("#planner").hidden = true;
+    setTab(refRoute.page === "style" ? "style" : "refs");
+    await showRefs(refRoute);
+    return;
+  }
+  hideRefs();
+  setTab(h === "#/team" ? "" : "board");
   if ((m = h.match(/^#\/idea\/(\d+)$/))) {
     hideChecklist();
     hideTeam();
@@ -250,14 +274,16 @@ window.addEventListener("hashchange", () => route());
 
 // ── Live updates ────────────────────────────────────────────────────────────
 
-const TABLES = ["projects", "arcs", "ideas", "shots", "clips", "takes", "votes", "comments", "jobs", "laptop_status"];
+const TABLES = ["projects", "arcs", "ideas", "shots", "clips", "takes", "votes", "comments", "jobs", "laptop_status",
+  "reference_videos", "reference_analysis", "style_guides"];
+const REF_TABLES = new Set(["reference_videos", "reference_analysis", "style_guides"]);
 let refreshTimer = null;
 let refreshing = false;
 let again = false;
 
 function startRealtime() {
   const channel = sb.channel("studio-planner");
-  for (const table of TABLES) {
+  for (const table of TABLES.filter((t) => !REF_TABLES.has(t))) {
     channel.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => onChange(table, payload));
   }
   channel.subscribe((status) => {
@@ -265,6 +291,14 @@ function startRealtime() {
     if (status === "SUBSCRIBED") scheduleRefresh();
   });
   session.channel = channel;
+  // Its own channel: until the database update that adds these tables, subscribing
+  // to them fails, and that mustn't take the planning board's live updates down too.
+  const refChannel = sb.channel("studio-references");
+  for (const table of REF_TABLES) {
+    refChannel.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => onChange(table, payload));
+  }
+  refChannel.subscribe();
+  session.refChannel = refChannel;
 }
 
 function onChange(table, payload) {
@@ -272,6 +306,8 @@ function onChange(table, payload) {
     if (payload.new) state.laptop = payload.new;
     renderLaptop();
   }
+  // References and style guides only matter while their pages are open.
+  if (REF_TABLES.has(table) && !refsOpen()) return;
   // A clip the laptop pushed only matters to an open footage picker or board stills.
   scheduleRefresh();
 }
@@ -290,6 +326,7 @@ async function refreshNow() {
     if (viewerOpen()) tasks.push(loadIdea());
     if (checklistOpen() && !check.busy) tasks.push(loadChecklist());
     if (!$("#planner").hidden || viewerOpen()) tasks.push(refreshBoard());
+    if (refsOpen()) tasks.push(loadRefs());
     await Promise.all(tasks.map((t) => t.catch(() => {})));
   } finally {
     refreshing = false;
