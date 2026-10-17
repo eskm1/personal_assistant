@@ -39,6 +39,10 @@ REVIEW = ROOT / "Review"
 APPROVED = ROOT / "Approved"
 LOGS = ROOT / "logs"
 CATALOG_DB = ROOT / "catalog.db"
+# Reference reels (README section 14): videos dropped in <inbox>\References\Ours or
+# \Inspiration become references in the online planner and are moved to REFERENCES.
+REFERENCES = ROOT / "References"
+REFERENCE_INBOX = INBOX / "References"
 
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm"}
 
@@ -112,6 +116,18 @@ CLOUD_SYNC_SECONDS = int(_env("STUDIO_CLOUD_SYNC_SECONDS", "30"))
 
 # Notes marked "remember for future edits" are appended here; the editor reads it.
 PLAYBOOK = ROOT / "playbook.md"
+
+# ── OneDrive (server) ─────────────────────────────────────────────────────────
+# On the server, footage still arrives through OneDrive: onedrive.py pulls it with
+# rclone (remote set up by server_move.py) into INBOX, and moves each picked-up
+# original into the archive folder so OneDrive keeps a backup. Approved reels are
+# copied to the "ready" folder for posting from the phone. Folder names are paths
+# inside OneDrive. Blank inbox = OneDrive intake off (the laptop's synced folder).
+ONEDRIVE_REMOTE = _env("STUDIO_ONEDRIVE_REMOTE", "onedrive")
+ONEDRIVE_INBOX = _env("STUDIO_ONEDRIVE_INBOX").strip("/\\")
+ONEDRIVE_ARCHIVE = _env("STUDIO_ONEDRIVE_ARCHIVE", "Studio Archive").strip("/\\")
+ONEDRIVE_READY = _env("STUDIO_ONEDRIVE_READY", "Studio Ready to post").strip("/\\")
+RCLONE = _env("STUDIO_RCLONE", "rclone")
 
 
 def ensure_folders() -> None:

@@ -122,7 +122,12 @@ def apply() -> dict:
 
 
 def restart() -> None:
-    """Start a fresh worker (it waits for this one to exit) and exit."""
+    """Start a fresh worker (it waits for this one to exit) and exit. On the server,
+    systemd starts the fresh one (studio.service has Restart=always)."""
+    if os.environ.get("INVOCATION_ID"):  # set by systemd for the services it runs
+        log.info("Restarting the worker for the update")
+        logging.shutdown()
+        os._exit(0)
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     exe = str(pythonw if pythonw.exists() else sys.executable)
     flags = (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0

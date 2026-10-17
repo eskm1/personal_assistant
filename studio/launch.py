@@ -7,6 +7,9 @@ dashboard) is running, then open the dashboard in the browser.
   - Not running: starts it in the background with no console window, waits for
     the dashboard to answer, then opens the browser.
 
+Once Studio has moved to a server (server_move.py), the icon opens the server's
+dashboard instead.
+
 Run with pythonw so no window flashes. install_shortcut.ps1 puts it on the desktop.
 """
 import os
@@ -46,6 +49,10 @@ def start_worker() -> None:
 
 
 def main() -> int:
+    moved = settings.ROOT / "MOVED_TO_SERVER.txt"  # written by server_move.py
+    if moved.exists():
+        webbrowser.open(moved.read_text(encoding="utf-8").strip().splitlines()[0])
+        return 0
     if not dashboard_up():
         start_worker()
         deadline = time.time() + 60

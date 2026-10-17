@@ -261,7 +261,8 @@ typically tens of cents.
 
 Any draft can be opened in the free [DaVinci Resolve](https://www.blackmagicdesign.com/products/davinciresolve)
 for finishing touches. On the draft's review screen press **Make Resolve project** (a minute
-or two; no API cost), then **Show folder**. Or from PowerShell: `worker.py --resolve <id>`.
+or two; no API cost), then **Show folder** (on the laptop) or **Download (.zip)** (anywhere else;
+the zip carries the original clips in a Footage folder to relink to). Or from PowerShell: `worker.py --resolve <id>`.
 The folder, `Studio\Renders\production_<id>_v<n>_resolve`, holds:
 
 - `timeline.fcpxml`: the cut, pointing at your **original** clips (full quality, and you can
@@ -416,10 +417,16 @@ While the worker runs, it syncs about every 30 seconds:
 - it pushes each library clip (title, quality verdict and tips, a still) and every matched take
   (with a still), so the planner shows what's filmed;
 - it runs what only this laptop can do: **Shortlist music** (Epidemic Sound) and **Make this**
-  (the editor), and keeps each made idea's status (draft ready, approved, posted) up to date.
+  (the editor), and keeps each made idea's status (draft ready, approved, posted) up to date;
+- it analyses the reference reels on the planner's **References** tab and drafts the style guide
+  (section 14).
 
 The dashboard's Plan tab then links to the planner and shows when the laptop last synced.
-`python worker.py --cloud-check` tests the connection and shows what's waiting;
+**After an update that adds online features** (such as References), bring the online database
+and functions up to date once: `.\venv\Scripts\python cloud_setup.py --update`. Until then the
+sync keeps working and the Plan tab says "Online database needs an update".
+`python worker.py --cloud-check` tests the connection and shows what's waiting (including
+references waiting for analysis and the style guide in force);
 `python worker.py --cloud-import` (with the worker stopped) moves a plan made here before the
 switch to the online planner, once (votes and comments stay here).
 
@@ -450,6 +457,29 @@ log; one wireless mic for speech.
 
 Give Studio your best reels and some you admire; it measures how they're edited and proposes a
 house style for the playbook (the rules the idea generator and editor follow).
+
+### Reference guides (online planner)
+
+With the online planner (section 12), the team keeps the reference library there: **References**
+tab > add a link, say whether it's **ours** (one of our best) or **inspiration** (another
+account), and a few words on why it works. Or drop the video file itself in
+`Studio Inbox\References\Ours` or `Studio Inbox\References\Inspiration` (made by the worker);
+it becomes a reference and moves to `Studio\References`. Then, on the laptop, automatically:
+
+- each new reference is analysed (two per sync, so footage isn't held up): the numbers below plus
+  a strip of stills the planner shows; a failure says why (e.g. Instagram wants a login) and is
+  retried a day later;
+- once nothing is waiting, if the references differ from the ones the style guide was built
+  from, Claude drafts a new **style guide**: the house style, a short report, and **what
+  changed** (and why, tied to the references added or retired and their notes). **Update style
+  guide** in the planner drafts one on demand (after editing notes, say). A rejected draft isn't
+  drafted again until the references change;
+- when Bryan approves a draft, the laptop writes it into `playbook.md` (replacing the previous
+  house style) on its next sync.
+
+Retire a reference rather than deleting it when it no longer represents the style.
+
+### Study from the command line
 
 1. Make a text file, say `reels.txt`, with links under two headings, and a few words on why:
 

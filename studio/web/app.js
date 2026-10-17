@@ -10,7 +10,7 @@ const STAGES = [
   { key: "producing", label: "Being edited", hint: "Edits in progress, including drafts you sent back. They return to To review when the new version renders." },
   { key: "library", label: "Library", hint: "Raw clips, tagged by Claude and quality-checked. Fix a wrong account or format, or leave a note on how a clip should be used." },
   { key: "ingesting", label: "Ingesting", hint: "Clips being transcribed and tagged right now, plus any that failed and will be retried." },
-  { key: "cloud", label: "In the cloud", hint: "Uploads sitting in the OneDrive inbox. The laptop picks each one up once it finishes syncing." },
+  { key: "cloud", label: "In the cloud", hint: "Uploads sitting in the OneDrive inbox. Studio picks each one up once it finishes uploading." },
   { key: "done", label: "Done", hint: "Approved, posted and rejected edits." },
 ];
 const BRAND = { personal: "Personal", urban_makers: "Urban Makers", unsure: "Brand unsure" };
@@ -404,12 +404,13 @@ function renderCloudPlan() {
     : "";
   root.innerHTML = `<div class="plan-empty" id="cloud-plan">
     <h2>Planning has moved online</h2>
-    <p class="muted">Projects, ideas and shot lists live on the online planner now, so the team can plan while this laptop is off. Footage that lands here is still checked, matched to the planned shots and shown there.</p>
+    <p class="muted">Projects, ideas and shot lists live on the online planner now, so the team can plan any time. Footage that lands here is still checked, matched to the planned shots and shown there.</p>
     ${url ? `<a class="btn primary" href="${esc(url)}" target="_blank" rel="noopener">Open the planner</a>`
           : `<p class="muted small">Set STUDIO_PLANNER_URL in studio\\.env to link the planner here.</p>`}
-    <p class="muted small">${c.last_ok ? `Laptop last synced ${esc(ago(c.last_ok))}` : "Waiting for the laptop's first sync…"}${esc(online)}</p>
+    <p class="muted small">${c.last_ok ? `Last synced ${esc(ago(c.last_ok))}` : "Waiting for the first sync…"}${esc(online)}</p>
+    ${c.note ? `<p class="small"><strong>${esc(c.note)}</strong></p>` : ""}
     ${c.last_error ? `<p class="small">Last sync failed ${esc(ago(c.last_error_at))}: ${esc(c.last_error)}. It tries again every 30 seconds.</p>` : ""}
-    ${(c.jobs || []).length ? `<p class="muted small">Recent laptop jobs: ${c.jobs.map(esc).join("; ")}</p>` : ""}
+    ${(c.jobs || []).length ? `<p class="muted small">Recent Studio jobs: ${c.jobs.map(esc).join("; ")}</p>` : ""}
   </div>`;
 }
 
@@ -464,7 +465,7 @@ async function sync() {
     if (state.stage === "plan" && !state.cloud && $("#viewer").hidden && $("#checklist").hidden) await loadPlan();
     if (!$("#checklist").hidden && !check.busy) await loadChecklist();
   } catch (e) {
-    if (e.message !== "signed out") $("#updated").textContent = `Can't reach the laptop (${e.message})`;
+    if (e.message !== "signed out") $("#updated").textContent = `Can't reach Studio (${e.message})`;
   }
 }
 
@@ -1059,8 +1060,9 @@ function resolveHTML(d) {
     none: `<p class="muted">Finish this by hand in the free DaVinci Resolve: the cut from your original clips, with captions, graphics and music on their own layers.</p>
       <div class="row" style="margin-top:10px"><button class="btn" id="resolve-build">Make Resolve project</button></div>`,
     building: `<p class="muted">Building the project (captions and graphics render as their own layers; a minute or two)…</p>`,
-    ready: `<p class="muted">In <code>${esc(r.folder)}</code>. In Resolve: File &gt; Import &gt; Timeline &gt; <strong>timeline.fcpxml</strong>.</p>
-      <div class="row" style="margin-top:10px"><button class="btn" id="resolve-open">Show folder</button>
+    ready: `<p class="muted">${r.can_open ? `In <code>${esc(r.folder)}</code>.` : "Download it (the original clips come along), unzip, then"} In Resolve: File &gt; Import &gt; Timeline &gt; <strong>timeline.fcpxml</strong>. The zip's HOW TO OPEN.txt has the steps.</p>
+      <div class="row" style="margin-top:10px">${r.can_open ? `<button class="btn" id="resolve-open">Show folder</button>` : ""}
+      <a class="btn" href="/api/production/${d.id}/resolve/download" download>Download (.zip)</a>
       <button class="btn" id="resolve-build">Rebuild</button></div>`,
     failed: `<p><strong>Couldn't build it:</strong> ${esc(r.error || "")}</p>
       <div class="row" style="margin-top:10px"><button class="btn" id="resolve-build">Try again</button></div>`,
@@ -1192,7 +1194,7 @@ function renderPanel() {
 
   if (d.kind === "inbox") {
     panel.innerHTML = `${head}<div class="box"><p>${esc(d.size_mb)} MB in the OneDrive inbox.
-      ${d.status === "uploading" ? "Still syncing to the laptop." : "Synced; the worker picks it up on its next pass (within a minute)."}</p></div>`;
+      ${d.status === "uploading" ? "Still uploading." : "Synced; the worker picks it up on its next pass (within a minute)."}</p></div>`;
     return;
   }
 
@@ -1238,7 +1240,8 @@ function renderPanel() {
       <div><h3>Notes</h3>${notesHTML(d.notes, d.version, true)}</div>
       ${composerHTML("What should change? e.g. \"Cut the first two seconds\", \"Music too loud here\"")}
       <div><h3>Post caption</h3><textarea id="caption" placeholder="The caption you'll post. You have the final say.">${esc(d.caption)}</textarea>
-        ${canDecide && owner ? "" : `<div class="row" style="margin-top:8px"><button class="btn" id="caption-save">Save caption</button></div>`}</div>
+        <div class="row" style="margin-top:8px">${canDecide && owner ? "" : `<button class="btn" id="caption-save">Save caption</button>`}
+        ${d.video ? `<a class="btn" href="${d.video}&download=1" download>Download video</a>` : ""}</div></div>
       ${canDecide ? (owner ? `<div class="decision row">
         <button class="btn primary" id="decide-changes" ${openNow ? "" : "disabled title=\"Add a note first\""}>Request changes${openNow ? ` (${openNow})` : ""}</button>
         <button class="btn good" id="decide-approve">Approve</button>
@@ -1394,7 +1397,7 @@ $("#panel").addEventListener("click", async (e) => {
       const res = await api(`/api/production/${d.id}/resolve/open`, {});
       if (!res.opened) {
         navigator.clipboard?.writeText(res.folder).catch(() => {});
-        toast("Folder path copied. It's on the Studio laptop.");
+        toast("Folder path copied.");
       }
     } else if (id === "caption-save") {
       await api(`/api/production/${d.id}/decision`, { decision: "caption", caption: $("#caption").value });
@@ -2146,7 +2149,7 @@ async function init() {
   try {
     state.me = await api("/api/me");
   } catch (err) {
-    if (err.message !== "signed out") $("#updated").textContent = `Can't reach the laptop (${err.message})`;
+    if (err.message !== "signed out") $("#updated").textContent = `Can't reach Studio (${err.message})`;
     return;
   }
   renderAccount();

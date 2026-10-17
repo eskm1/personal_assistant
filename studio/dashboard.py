@@ -11,6 +11,7 @@ Runs inside the worker process (worker.py starts it on a thread) or on its own:
 Everyone signs in (auth.py): Bryan as owner, colleagues by invite. Media is only
 ever served for files the catalogue points at, never by raw path.
 """
+import io
 import json
 import logging
 import mimetypes
@@ -19,11 +20,12 @@ import re
 import sqlite3
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 from datetime import timedelta
 
-from flask import Flask, abort, g, jsonify, redirect, render_template_string, request, send_file, session
+from flask import Flask, Response, abort, g, jsonify, redirect, render_template_string, request, send_file, session
 from flask.sessions import SecureCookieSessionInterface
 
 import auth
@@ -564,7 +566,10 @@ def _resolve_state(production: dict) -> dict:
     if job and job["version"] == production["version"] and job["state"] in ("building", "failed"):
         return {"state": job["state"], "error": job.get("error")}
     folder = resolve_export.existing(production)
-    return {"state": "ready", "folder": str(folder)} if folder else {"state": "none"}
+    # Explorer can only open the folder when the browser is on the Windows laptop itself;
+    # everywhere else (the server, a phone) it's a zip download.
+    return ({"state": "ready", "folder": str(folder), "can_open": os.name == "nt" and is_local()}
+            if folder else {"state": "none"})
 
 
 def _run_resolve(production_id: int) -> None:
@@ -598,6 +603,50 @@ def build_resolve(production_id: int):
     return jsonify({"ok": True})
 
 
+class _ZipSink(io.RawIOBase):
+    """Where zipfile writes; the download hands each piece on as soon as it's written."""
+    def __init__(self):
+        self.parts = []
+
+    def writable(self):
+        return True
+
+    def write(self, b):
+        self.parts.append(bytes(b))
+        return len(b)
+
+    def take(self) -> bytes:
+        out, self.parts = b"".join(self.parts), []
+        return out
+
+
+def _zip_stream(files: list[tuple[str, Path]]):
+    """A zip of the files, made while it downloads (no copy on disk). Video doesn't
+    compress, so the files are stored as they are."""
+    sink = _ZipSink()
+    with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
+        for name, path in files:
+            info = zipfile.ZipInfo.from_file(path, name)
+            with open(path, "rb") as src, z.open(info, "w", force_zip64=True) as dst:
+                while chunk := src.read(1 << 20):
+                    dst.write(chunk)
+                    yield sink.take()
+    yield sink.take()
+
+
+@app.get("/api/production/<int:production_id>/resolve/download")
+@owner_only
+def download_resolve(production_id: int):
+    import resolve_export
+    row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    files = resolve_export.download_files(db(), dict(row)) if row else []
+    if not files:
+        abort(404)
+    name = f"{files[0][0].split('/')[0]}.zip"
+    return Response(_zip_stream(files), mimetype="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
 @app.post("/api/production/<int:production_id>/resolve/open")
 @owner_only
 def open_resolve(production_id: int):
@@ -606,7 +655,6 @@ def open_resolve(production_id: int):
     folder = resolve_export.existing(dict(row)) if row else None
     if folder is None:
         abort(404)
-    # Explorer can only open on the laptop itself, i.e. when the browser is on it too.
     opened = os.name == "nt" and is_local()
     if opened:
         os.startfile(folder)  # noqa: S606 - a folder Studio wrote, opened in Explorer
@@ -685,6 +733,12 @@ def production_media(production_id: int, what: str):
     row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
     if row is None or what not in ("thumb", "video"):
         abort(404)
+    if what == "video" and request.args.get("download"):
+        if not row["video_path"] or not Path(row["video_path"]).is_file():
+            abort(404)
+        name = re.sub(r"[^\w\- ]+", "", row["title"] or "Studio post").strip()[:60] or "Studio post"
+        return send_file(row["video_path"], as_attachment=True,
+                         download_name=f"{name} v{row['version']}{Path(row['video_path']).suffix}")
     return _file_response(row["thumb_path"] if what == "thumb" else row["video_path"])
 
 

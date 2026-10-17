@@ -112,6 +112,8 @@ def inbox_files() -> list[Path]:
         return []
     found = []
     for p in INBOX.iterdir():
+        if p.is_dir() and p.name.lower() == "references":
+            continue  # reference reels, not footage (cloud_sync registers them)
         if p.is_dir() and not p.name.startswith((".", "~")):
             try:
                 found += [q for q in p.iterdir() if q.is_file()]
@@ -506,6 +508,11 @@ def main() -> int:
 
     settings.ensure_folders()
     _setup_logging()
+    moved = ROOT / "MOVED_TO_SERVER.txt"  # written by server_move.py on the laptop it moved from
+    if moved.exists() and not args.check:
+        print(f"Studio runs on the server now: {moved.read_text(encoding='utf-8').strip()}\n"
+              f"(To use this machine again instead, delete {moved}.)")
+        return 0
     if args.check:
         return check()
     if args.cloud_check:

@@ -222,8 +222,10 @@ _HOW_TO = """How to open "{title}" in DaVinci Resolve (free version is fine)
 
 If a clip shows black bars or looks zoomed oddly: Project Settings (cog, bottom
 right) > Image Scaling > "Mismatched resolution files" > "Scale full frame with crop".
-If Resolve says media is offline, the original clips moved; use Relink Media and
-point it at your Studio Library folder.
+If Resolve says media is offline (red clips), the original clips aren't where the
+timeline expects them, e.g. after downloading this as a zip: select the clips in
+the Media Pool, right-click > Relink Selected Clips..., and choose the Footage
+folder next to this file (or your Studio Library folder).
 
 The Studio draft this came from: {draft}
 """
@@ -292,3 +294,23 @@ def build(conn, production_id: int) -> Path:
         raise
     log.info("Resolve project for production %s written to %s", production_id, folder)
     return folder
+
+
+def download_files(conn, production: dict) -> list[tuple[str, Path]]:
+    """What the zip download holds, as (name in the zip, file): the project folder,
+    plus the original clips under Footage/ to relink to (the timeline points at
+    where they are on the Studio machine)."""
+    folder = existing(production)
+    if folder is None:
+        return []
+    top = folder.name
+    files = [(f"{top}/{p.relative_to(folder).as_posix()}", p) for p in sorted(folder.rglob("*")) if p.is_file()]
+    ids = list(dict.fromkeys(c["clip_id"] for c in json.loads(production["edl"] or "{}").get("cuts", [])))
+    seen = set()
+    for cid in ids:
+        row = conn.execute("SELECT video_path FROM clips WHERE id = ?", (cid,)).fetchone()
+        path = Path(row["video_path"]) if row else None
+        if path and path.is_file() and path.name.lower() not in seen:
+            seen.add(path.name.lower())  # Resolve relinks by file name
+            files.append((f"{top}/Footage/{path.name}", path))
+    return files

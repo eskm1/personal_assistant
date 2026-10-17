@@ -14,7 +14,13 @@ STUDIO_CLOUD_SYNC_SECONDS (30 s) it:
   4. pushes a summary and a still of each library clip, and the takes the
      tagger matched (with a still near each take's start);
   5. runs the jobs only the laptop can do (music shortlists with the Epidemic
-     key, "Make this"), and keeps each made idea's production status current.
+     key, "Make this"), and keeps each made idea's production status current;
+  6. reference reels (CONTRACT.md, "Reference guides"): registers videos dropped
+     in Studio Inbox\\References\\Ours / \\Inspiration, analyses new references
+     (two per tick at most), drafts a new style guide when a brand's set of
+     analysed references changes (or on a "style" job), and writes the approved
+     guide into the playbook. If the online database predates these tables, it
+     says "run cloud_setup.py --update" and skips this step.
 
 Plain HTTPS to PostgREST (/rest/v1) and Storage (/storage/v1) with the service
 key; no extra packages. The key never leaves for anywhere but
@@ -26,6 +32,7 @@ import hashlib
 import json
 import logging
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -51,7 +58,7 @@ VERDICTS = ("good", "check", "retake")
 
 # What the dashboard shows (Plan tab) and --cloud-check prints.
 status: dict = {"last_ok": None, "last_error": None, "last_error_at": None, "last_attempt": None,
-                "counts": {}, "jobs": []}
+                "counts": {}, "jobs": [], "note": None, "refs": None, "ref_problems": []}
 _tick_lock = threading.Lock()
 _last_tick = 0.0
 _context_hashes: dict[str, str] = {}
@@ -231,7 +238,7 @@ def _heartbeat(api: Client) -> None:
     v = updater.version()
     api.insert("laptop_status", {
         "id": 1, "last_seen": _now(), "version": f"{v['commit']} {v['date'][:10]}".strip(),
-        "info": {"subject": v.get("subject", ""), "sync": status.get("counts", {})},
+        "info": {"subject": v.get("subject", ""), "sync": status.get("counts", {}), "note": status.get("note")},
     }, on_conflict="id", resolution="merge-duplicates", returning=False)
 
 
@@ -544,7 +551,7 @@ def run_jobs(api: Client, conn, idea_map: dict[int, int]) -> list[str]:
     api.update("jobs", {"runner": "eq.laptop", "state": "eq.running", "started_at": f"lt.{stale}"},
                {"state": "queued", "started_at": None})
     done = []
-    for job in api.select("jobs", {"runner": "eq.laptop", "state": "eq.queued"}):
+    for job in api.select("jobs", {"runner": "eq.laptop", "state": "eq.queued", "kind": "neq.style"}):
         local_id = idea_map.get(job["idea_id"])
         if local_id is None:
             created = _ts(job["created_at"])
@@ -607,6 +614,365 @@ def push_productions(api: Client, conn, remote_ideas: list[dict]) -> int:
     return n
 
 
+# ── Step 6: reference reels and the style guide ──────────────────────────────
+
+REF_SIDES = {"ours": "Ours", "inspiration": "Inspiration"}   # inbox subfolders of Studio Inbox\References
+REFS_PER_TICK = 2            # analyses per tick, so ingest isn't starved
+REF_TICK_BUDGET = 150        # seconds: no new analysis starts after the tick has run this long
+REF_RETRY_HOURS = 24         # a failed analysis is retried after this long
+REF_STALE_MINUTES = 30       # an analysis still 'running' this long died with a worker
+SCHEMA_RECHECK_SECONDS = 600
+NEEDS_UPDATE = "Online database needs an update: run cloud_setup.py --update"
+_refs_missing_until = 0.0    # the reference tables weren't there; don't ask again before this
+DRAFT_RETRY_SECONDS = 3600   # an automatic draft that failed is retried after this long (a job retries now)
+_draft_failed: dict[str, tuple[list[int], float]] = {}
+STATE_FILE = "cloud_state.json"
+
+
+def _missing_table(e: Exception) -> bool:
+    text = str(e)
+    return isinstance(e, CloudError) and ("PGRST205" in text or "Could not find the table" in text
+                                          or ("HTTP 404" in text and "/rest/v1/" in text))
+
+
+def _state() -> dict:
+    try:
+        return json.loads((settings.ROOT / STATE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_state(values: dict) -> None:
+    path = settings.ROOT / STATE_FILE
+    data = {**_state(), **values}
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    tmp.replace(path)
+
+
+
+
+def _title_from(name: str) -> str:
+    stem = Path(name).stem
+    return re.sub(r"\s+", " ", re.sub(r"[_\-.]+", " ", stem)).strip()[:200] or stem
+
+
+def reference_intake(api: Client, refs: list[dict]) -> list[str]:
+    """Videos dropped in Studio Inbox\\References\\Ours or \\Inspiration become
+    references (brand urban_makers); the file moves to Studio\\References so the
+    inbox stays tidy. Dropping a file with a name already in use replaces that
+    reference's video and analyses it again."""
+    store = settings.REFERENCES
+    by_name = {r["file_name"]: r for r in refs if r.get("file_name")}
+    added = []
+    for side, folder_name in REF_SIDES.items():
+        folder = settings.REFERENCE_INBOX / folder_name
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            files = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in settings.VIDEO_EXTS
+                           and not p.name.startswith((".", "~")))
+        except OSError as e:
+            log.warning("Couldn't read %s: %s", folder, e)
+            continue
+        for f in files:
+            try:
+                st = f.stat()
+                if st.st_size == 0 or time.time() - st.st_mtime < settings.STABLE_SECONDS:
+                    continue  # still syncing
+                with open(f, "rb") as fh:
+                    fh.read(1)
+            except OSError:
+                continue
+            name = f.name[:200]
+            store.mkdir(parents=True, exist_ok=True)
+            row = by_name.get(name)
+            if row is None:
+                row = api.insert("reference_videos", {"brand": "urban_makers", "side": side, "file_name": name,
+                                                      "title": _title_from(name), "added_by": None})[0]
+                by_name[name] = row
+                refs.append(row)
+                added.append(f"{side}: {name}")
+            else:
+                if row["side"] != side or row["status"] != "active":
+                    api.update("reference_videos", {"id": f"eq.{row['id']}"}, {"side": side, "status": "active"})
+                api.update("reference_analysis", {"reference_id": f"eq.{row['id']}"},
+                           {"state": "pending", "error": None})
+                added.append(f"{side}: {name} (replaced)")
+            f.replace(store / name)
+            log.info("Reference added from the inbox: %s (%s)", name, side)
+    return added
+
+
+def _due(analysis: dict, now: datetime) -> bool:
+    """Should this reference be analysed (again) now?"""
+    import style_study
+    state = analysis["state"]
+    if state == "pending":
+        return True
+    updated = _ts(analysis.get("updated_at"))
+    age = now - datetime.fromisoformat(updated) if updated else timedelta(days=999)
+    if state == "failed":
+        return age > timedelta(hours=REF_RETRY_HOURS) or (analysis.get("analyser") or 0) < style_study.ANALYSER
+    if state == "done":
+        return (analysis.get("analyser") or 0) < style_study.ANALYSER
+    return state == "running" and age > timedelta(minutes=REF_STALE_MINUTES)
+
+
+def analyse_reference(api: Client, ref: dict, analysis: dict, client=None) -> str:
+    """Claim one reference's analysis, run it and write the result. Returns a line for the log."""
+    import style_study
+    claimed = api.update("reference_analysis", {"reference_id": f"eq.{ref['id']}", "state": f"eq.{analysis['state']}"},
+                         {"state": "running", "error": None})
+    if not claimed:
+        return ""
+    name = ref.get("title") or ref.get("url") or ref.get("file_name")
+    work = settings.REFERENCES / ".work" / str(ref["id"])
+    try:
+        if ref.get("url"):
+            source = ref["url"]
+        else:
+            source = settings.REFERENCES / ref["file_name"]
+            if not source.exists():
+                raise RuntimeError(f"{ref['file_name']} isn't in Studio\\References on the laptop any more: "
+                                   "drop it in Studio Inbox\\References again")
+        result = style_study.analyse(source, work / "stills", download_dir=work, client=client,
+                                     ref=f"ref:{ref['id']}")
+        paths = []
+        for n, still in enumerate(result["stills"], 1):
+            path = f"refs/{ref['id']}/{n}.jpg"
+            api.upload(path, Path(still).read_bytes())
+            paths.append(path)
+        old = set(claimed[0].get("stills") or [])
+        stale = sorted(old - set(paths))
+        if stale:  # a shorter strip than last time: remove the extras
+            try:
+                api.request("DELETE", f"/storage/v1/object/{BUCKET}", json_body={"prefixes": stale})
+            except CloudError as e:
+                log.warning("Couldn't remove old stills of reference %s: %s", ref["id"], e)
+        done = api.update("reference_analysis", {"reference_id": f"eq.{ref['id']}", "state": "eq.running"},
+                          {"state": "done", "measured": result["measured"], "look": result["look"], "stills": paths,
+                           "error": None, "analyser": style_study.ANALYSER, "analysed_at": _now()})
+        m = result["measured"]
+        log.info("Reference %s analysed: %s: %.0fs, %s cuts, %d stills", ref["id"], name, m["duration"], m["cuts"],
+                 len(paths))
+        return f"reference #{ref['id']}: analysed" + ("" if done else " (changed meanwhile: again next tick)")
+    except CloudError as e:
+        if "can't reach" in str(e):
+            raise  # offline: the stale check puts it back
+        message = f"Couldn't save the analysis: {e}"
+    except Exception as e:
+        if isinstance(e, RuntimeError):
+            log.warning("Reference %s (%s) not analysed: %s", ref["id"], name, e)
+        else:
+            log.exception("Reference %s (%s) not analysed", ref["id"], name)
+        message = str(e) if isinstance(e, RuntimeError) else f"{type(e).__name__}: {e}"
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    api.update("reference_analysis", {"reference_id": f"eq.{ref['id']}", "state": "eq.running"},
+               {"state": "failed", "error": (message or "failed")[:1000], "analyser": style_study.ANALYSER})
+    return f"reference #{ref['id']}: failed ({message[:100]})"
+
+
+def _guide_inputs(refs: list[dict], analyses: dict[int, dict], brand: str) -> list[dict]:
+    """The brand's current set: active references whose analysis is done, with their numbers."""
+    out = []
+    for r in refs:
+        a = analyses.get(r["id"])
+        if r["brand"] == brand and r["status"] == "active" and a and a["state"] == "done" and a.get("measured"):
+            out.append({**r, "measured": a["measured"], "look": a.get("look")})
+    return sorted(out, key=lambda r: r["id"])
+
+
+def draft_style_guide(api: Client, brand: str, refs: list[dict], analyses: dict[int, dict],
+                      guides: list[dict], client=None) -> dict:
+    """Draft a new style guide for a brand from its current set. Returns the inserted row."""
+    import style_study
+    current = _guide_inputs(refs, analyses, brand)
+    if not current:
+        raise RuntimeError(f"No analysed references for {style_study.BRAND_NAMES.get(brand, brand)} yet: "
+                           "add some on the References tab (the laptop analyses them first)")
+    mine = [g for g in guides if g["brand"] == brand]
+    active = next((g for g in mine if g["status"] == "active"), None)
+    ids = [r["id"] for r in current]
+    before = set(active["reference_ids"]) if active else set()
+    by_id = {r["id"]: r for r in refs}
+    added = [r for r in current if r["id"] not in before]
+    removed_ids = sorted(before - set(ids))
+    removed = [by_id.get(i) or {"id": i, "title": f"reference #{i} (deleted)"} for i in removed_ids]
+    version = max((g["version"] for g in mine), default=0) + 1
+    result = style_study.draft_guide(brand, current, active, added, removed, client=client,
+                                     ref=f"guide:{brand}:v{version}")
+    row = api.insert("style_guides", {
+        "brand": brand, "version": version, "status": "draft", "content": result["content"],
+        "report": result["report"], "changes": result["changes"], "reference_ids": ids,
+        "added_ids": [r["id"] for r in added], "removed_ids": removed_ids, "usage": result["usage"]})[0]
+    guides.append(row)
+    log.info("Style guide v%s drafted for %s (%d references, %d added, %d retired; US$%.2f)", version, brand,
+             len(ids), len(added), len(removed_ids), result["usage"]["cost_usd"])
+    return row
+
+
+def apply_active_guide(guides: list[dict]) -> str | None:
+    """Write the active Urban Makers guide into the playbook when it changed. Returns a line, or None."""
+    import style_study
+    active = next((g for g in guides if g["brand"] == "urban_makers" and g["status"] == "active"), None)
+    if not active:
+        return None  # nothing approved yet: the playbook stays as it is
+    digest = hashlib.sha256(active["content"].encode()).hexdigest()[:16]
+    applied = _state().get("applied_guide") or {}
+    if applied.get("id") == active["id"] and applied.get("hash") == digest:
+        return None
+    when = (_ts(active.get("approved_at")) or _now())[:10]
+    style_study.apply_section(active["content"], f"Style guide v{active['version']} (Urban Makers), approved {when}, "
+                                                 "from the planner's References.")
+    _save_state({"applied_guide": {"id": active["id"], "version": active["version"], "hash": digest,
+                                   "applied_at": _now()}})
+    log.info("Style guide v%s is in the playbook now", active["version"])
+    return f"style guide v{active['version']} applied to the playbook"
+
+
+def sync_references(api: Client, started: float, client=None) -> dict:
+    """Intake, analyses, drafts and applying, each step on its own: one failing
+    never stops the others or the rest of the sync. Returns counts."""
+    global _refs_missing_until
+    out: dict = {}
+    if time.time() < _refs_missing_until:
+        return {"skipped": "database needs an update"}
+    try:
+        refs = api.select("reference_videos")
+        analyses = {a["reference_id"]: a for a in api.select("reference_analysis", {"order": "reference_id"})}
+        guides = api.select("style_guides", {"order": "version.desc"})
+    except CloudError as e:
+        if not _missing_table(e):
+            raise
+        if status.get("note") != NEEDS_UPDATE:
+            log.warning("%s (the reference guide tables aren't online yet; checking again in 10 minutes)",
+                        NEEDS_UPDATE)
+        status["note"] = NEEDS_UPDATE
+        _refs_missing_until = time.time() + SCHEMA_RECHECK_SECONDS
+        return {"skipped": "database needs an update"}
+    if status.get("note") == NEEDS_UPDATE:
+        status["note"] = None
+        log.info("Reference guide tables found online")
+    lines: list[str] = []
+    problems: list[str] = []
+
+    def step(name, fn):
+        try:
+            return fn()
+        except Exception as e:
+            message = str(e) if isinstance(e, CloudError) else f"{type(e).__name__}: {e}"
+            problems.append(f"{name}: {message[:200]}")
+            if not isinstance(e, (CloudError, RuntimeError)):
+                log.exception("Cloud sync, %s failed", name)
+            return None
+
+    # Folder intake
+    intake = step("reference intake", lambda: reference_intake(api, refs)) or []
+    if intake:
+        out["refs_added"] = len(intake)
+        analyses = {a["reference_id"]: a for a in api.select("reference_analysis", {"order": "reference_id"})}
+
+    # Analyses (active references only; at most REFS_PER_TICK, within the tick's time budget)
+    now = datetime.now(timezone.utc)
+    due = [r for r in refs if r["status"] == "active" and analyses.get(r["id"]) and _due(analyses[r["id"]], now)]
+    due.sort(key=lambda r: (analyses[r["id"]]["state"] != "pending", r["id"]))
+    for r in due[:REFS_PER_TICK]:
+        if time.time() - started > REF_TICK_BUDGET:
+            break
+        line = step(f"reference #{r['id']}", lambda r=r: analyse_reference(api, r, analyses[r["id"]], client))
+        if line:
+            lines.append(line)
+            out["analysed"] = out.get("analysed", 0) + 1
+    if out.get("analysed"):
+        analyses = {a["reference_id"]: a for a in api.select("reference_analysis", {"order": "reference_id"})}
+
+    # Style jobs ("Update style guide"): draft even when the set didn't change
+    drafted: set[str] = set()
+
+    def run_style_jobs():
+        for job in api.select("jobs", {"runner": "eq.laptop", "state": "eq.queued", "kind": "eq.style"}):
+            claimed = api.update("jobs", {"id": f"eq.{job['id']}", "state": "eq.queued"},
+                                 {"state": "running", "started_at": _now()})
+            if not claimed:
+                continue
+            brand = (job.get("payload") or {}).get("brand") or "urban_makers"
+            try:
+                if brand not in ("urban_makers", "personal"):
+                    raise RuntimeError(f"unknown brand {brand!r}")
+                row = draft_style_guide(api, brand, refs, analyses, guides, client)
+                drafted.add(brand)
+                _finish(api, job, {"guide_id": row["id"], "version": row["version"]})
+                lines.append(f"style #{job['id']}: v{row['version']} drafted")
+            except CloudError as e:
+                if "can't reach" in str(e):
+                    raise
+                _finish(api, job, error=str(e)[:1000])
+                lines.append(f"style #{job['id']}: failed ({str(e)[:100]})")
+            except Exception as e:
+                if not isinstance(e, RuntimeError):
+                    log.exception("Style job %s failed", job["id"])
+                message = str(e) if isinstance(e, RuntimeError) else f"{type(e).__name__}: {e}"
+                _finish(api, job, error=message[:1000])
+                lines.append(f"style #{job['id']}: failed ({message[:100]})")
+    step("style jobs", run_style_jobs)
+
+    # Automatic drafts: when a brand's set of analysed references differs from its newest guide's
+    def auto_drafts():
+        for brand in ("urban_makers", "personal"):
+            if brand in drafted:
+                continue
+            if any(r["brand"] == brand and r["status"] == "active" and analyses.get(r["id"])
+                   and (analyses[r["id"]]["state"] in ("pending", "running") or _due(analyses[r["id"]], now))
+                   for r in refs):
+                continue  # wait until every analysis is in
+            ids = [r["id"] for r in _guide_inputs(refs, analyses, brand)]
+            newest = next((g for g in guides if g["brand"] == brand), None)  # by version, any status
+            if not ids or (newest and sorted(newest["reference_ids"]) == ids):
+                continue
+            failed = _draft_failed.get(brand)
+            if failed and failed[0] == ids and time.time() - failed[1] < DRAFT_RETRY_SECONDS:
+                continue  # it failed for this set a moment ago: don't pay for it every 30 s
+            try:
+                row = draft_style_guide(api, brand, refs, analyses, guides, client)
+            except Exception:
+                _draft_failed[brand] = (ids, time.time())
+                raise
+            _draft_failed.pop(brand, None)
+            lines.append(f"style guide v{row['version']} drafted ({brand})")
+    step("style guide draft", auto_drafts)
+
+    # The approved guide into the playbook
+    applied = step("applying the style guide", lambda: apply_active_guide(
+        api.select("style_guides", {"order": "version.desc", "status": "eq.active"})))
+    if applied:
+        lines.append(applied)
+        out["applied"] = 1
+        step("context", lambda: _push_context(api))
+
+    status["refs"] = _refs_summary(refs, analyses, guides)
+    if lines:
+        out["lines"] = lines
+    if problems:  # logged once each; the status (and --cloud-check) keep them
+        for p in problems:
+            if p not in status.get("ref_problems", []):
+                log.warning("Cloud sync: %s", p)
+    status["ref_problems"] = problems
+    return out
+
+
+def _refs_summary(refs: list[dict], analyses: dict[int, dict], guides: list[dict]) -> dict:
+    active = [r for r in refs if r["status"] == "active"]
+    states = [analyses.get(r["id"], {}).get("state") for r in active]
+    um = [g for g in guides if g["brand"] == "urban_makers"]
+    live = next((g for g in um if g["status"] == "active"), None)
+    draft = next((g for g in um if g["status"] == "draft"), None)
+    return {"references": len(active), "ours": sum(r["side"] == "ours" for r in active),
+            "retired": len(refs) - len(active), "waiting": states.count("pending") + states.count("running"),
+            "failed": states.count("failed"), "guide_version": live["version"] if live else None,
+            "draft_version": draft["version"] if draft else None}
+
+
 # ── The tick ──────────────────────────────────────────────────────────────────
 
 def sync_once(conn, api: Client | None = None) -> dict:
@@ -625,6 +991,16 @@ def sync_once(conn, api: Client | None = None) -> dict:
     jobs = run_jobs(api, conn, maps["ideas"])
     counts["jobs"] = len(jobs)
     counts["productions"] = push_productions(api, conn, remote["ideas"])
+    try:  # reference reels and the style guide: never stops the rest of the sync
+        refs = sync_references(api, started)
+    except Exception as e:
+        message = str(e) if isinstance(e, CloudError) else f"{type(e).__name__}: {e}"
+        if [message] != status.get("ref_problems"):
+            log.warning("Cloud sync, references failed (will retry): %s", message)
+        status["ref_problems"] = [message]
+        refs = {}
+    jobs += refs.pop("lines", [])
+    counts["refs"] = {k: v for k, v in refs.items() if k != "skipped"}
     counts["online"] = {"projects": len(remote["projects"]), "ideas": len(remote["ideas"]),
                         "shots": len(remote["shots"]), "takes": len(remote["takes"]) + len(new_takes),
                         "clips": conn.execute("SELECT COUNT(*) FROM clips WHERE cloud_hash IS NOT NULL").fetchone()[0]}
@@ -674,7 +1050,8 @@ def dashboard_info() -> dict | None:
     online = (status.get("counts") or {}).get("online", {})
     return {"planner_url": settings.PLANNER_URL if url_allowed(settings.PLANNER_URL or "") else "",
             "last_ok": status["last_ok"], "last_error": status["last_error"],
-            "last_error_at": status["last_error_at"], "online": online, "jobs": status.get("jobs", [])[:5]}
+            "last_error_at": status["last_error_at"], "online": online, "jobs": status.get("jobs", [])[:5],
+            "note": status.get("note"), "references": status.get("refs")}
 
 
 # ── Command line: --cloud-check and --cloud-import ───────────────────────────
@@ -709,6 +1086,7 @@ def check(conn) -> int:
     print(f"Connection  : OK (last check-in {laptop[0]['last_seen'] if laptop else 'never'})")
     print("Online      : " + ", ".join(f"{n} {t}" for t, n in counts.items()))
     print(f"Laptop jobs : {len(queued)} queued" + (f" ({', '.join(j['kind'] for j in queued)})" if queued else ""))
+    _check_references(api)
     clips = conn.execute("SELECT COUNT(*) FROM clips WHERE status IN ('tagged', 'transcribed')").fetchone()[0]
     pushed = conn.execute("SELECT COUNT(*) FROM clips WHERE cloud_hash IS NOT NULL").fetchone()[0]
     print(f"Clips       : {pushed} of {clips} library clips pushed (the next sync sends new or changed ones)")
@@ -719,6 +1097,32 @@ def check(conn) -> int:
     else:
         print("Local plan  : nothing left to import")
     return 0
+
+
+def _check_references(api: Client) -> None:
+    try:
+        refs = api.select("reference_videos", {"select": "id,brand,side,status"})
+        analyses = {a["reference_id"]: a for a in api.select(
+            "reference_analysis", {"select": "reference_id,state,error,analyser,updated_at", "order": "reference_id"})}
+        guides = api.select("style_guides", {"select": "id,brand,version,status,reference_ids", "order": "version.desc"})
+    except CloudError as e:
+        print(f"References  : {NEEDS_UPDATE}" if _missing_table(e) else f"References  : FAILED ({e})")
+        return
+    s = _refs_summary(refs, analyses, guides)
+    print(f"References  : {s['references']} active ({s['ours']} ours, {s['references'] - s['ours']} inspiration)"
+          + (f", {s['retired']} retired" if s["retired"] else "")
+          + f"; {s['waiting']} waiting for analysis" + (f", {s['failed']} failed" if s["failed"] else ""))
+    for r in refs:
+        a = analyses.get(r["id"]) or {}
+        if r["status"] == "active" and a.get("state") == "failed":
+            print(f"              #{r['id']} failed: {(a.get('error') or '')[:150]}")
+    guide = (f"v{s['guide_version']} active" if s["guide_version"] else "none approved yet")
+    if s["draft_version"]:
+        guide += f"; v{s['draft_version']} draft waiting for approval"
+    print(f"Style guide : {guide}")
+    applied = _state().get("applied_guide")
+    if applied:
+        print(f"Playbook    : style guide v{applied.get('version')} applied {applied.get('applied_at', '')[:16]}")
 
 
 def import_local(conn, api: Client | None = None) -> dict:

@@ -30,7 +30,7 @@
   {% elif mode == "expired" %}
     <h1>Invite link expired</h1><p>This link was already used or is more than a week old. Ask Bryan for a new one.</p>
   {% else %}
-    <h1>Set up on the laptop</h1><p>The first account can only be made on the Studio laptop itself: open http://127.0.0.1:8765 there.</p>
+    <h1>Set up on the Studio machine</h1><p>The first account can only be made on the Studio machine itself: on the laptop, open http://127.0.0.1:8765 there; on a server, run <code>worker.py --add-user</code> over SSH.</p>
   {% endif %}
 
   {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
