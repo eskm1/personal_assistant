@@ -17,5 +17,8 @@ waitress==3.0.2
 python-dotenv==1.2.2
 requests==2.34.2
 
+# Style study: downloads public reels to measure (worker.py --style-study)
+yt-dlp==2026.8.19
+
 # NVIDIA GPU only — the CUDA libraries faster-whisper needs on Windows. Install with:
 #   pip install -r requirements-gpu.txt

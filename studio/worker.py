@@ -493,6 +493,11 @@ def main() -> int:
                       help="check the online planner (Supabase) connection and what would sync")
     mode.add_argument("--cloud-import", action="store_true",
                       help="push the local plan (projects, arcs, ideas, shots, takes) to the online planner once")
+    mode.add_argument("--style-study", type=Path, metavar="LINKS",
+                      help="measure reels (a text file of links, or a folder of videos) and propose a house style")
+    mode.add_argument("--style-apply", nargs="?", const="latest", metavar="STUDY",
+                      help="put a style study's house style into the playbook (default: the latest)")
+    parser.add_argument("--keep-videos", action="store_true", help="with --style-study: keep the downloads")
     mode.add_argument("--trial", metavar="FOCUS", help="ideas -> one edited draft, with advice and costs")
     parser.add_argument("--no-claude", action="store_true", help="skip Claude tagging")
     parser.add_argument("--no-dashboard", action="store_true", help="don't serve the review dashboard")
@@ -533,6 +538,20 @@ def main() -> int:
         return 0
     if args.trial:
         return trial(conn, args.trial)
+    if args.style_study:
+        import style_study
+        study = style_study.run(args.style_study, keep_videos=args.keep_videos)
+        print(f"\nDone. Read {study / 'report.md'}\nProposed playbook section: {study / 'house_style.md'}\n"
+              f"If you're happy with it: python worker.py --style-apply")
+        return 0
+    if args.style_apply:
+        import style_study
+        study = style_study.latest() if args.style_apply == "latest" else args.style_apply
+        if not study:
+            print("No finished style study yet. Run --style-study first.")
+            return 1
+        print(f"House style from {study} added to {style_study.apply(study)}")
+        return 0
     if args.check_quality:
         check_quality(conn, args.all)
         return 0

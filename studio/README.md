@@ -445,6 +445,33 @@ slow-motion; Z fc shutter 1/50 or 1/100 and GoPro anti-flicker 50 Hz under site 
 the iPhone; fixed white balance; neutral colour (Z fc *Standard*/*Neutral*, GoPro *Natural*), no
 log; one wireless mic for speech.
 
+
+## 14. Style study: measure reels you admire
+
+Give Studio your best reels and some you admire; it measures how they're edited and proposes a
+house style for the playbook (the rules the idea generator and editor follow).
+
+1. Make a text file, say `reels.txt`, with links under two headings, and a few words on why:
+
+   ```
+   Ours:
+   https://www.instagram.com/reel/AAA/  most saves we've had, the kitchen reveal
+   Inspiration:
+   https://www.instagram.com/reel/BBB/  love the pace and the before/after
+   ```
+
+   (Or put video files in a folder; files named `ours...` count as yours.)
+2. `.\venv\Scripts\python worker.py --style-study reels.txt`
+3. Read `Studio\Style\<date>\report.md`, and `house_style.md` (the proposed playbook section).
+4. Happy with it: `.\venv\Scripts\python worker.py --style-apply`. Run another study later and
+   apply it again; it replaces the earlier house style instead of adding a second one.
+
+Measured on the laptop, no API cost: cuts (including jump cuts and punch-ins), shot lengths, first
+cut, speaking pace, pauses, loudness, and how far the music sits under the voice. Claude then looks
+at about a dozen stills per reel for captions, layouts, B-roll, hook and call to action (about
+US$0.05 a reel) and writes the report (cents). Public posts only; downloads are deleted after
+measuring. If Instagram asks for a login, set `STUDIO_YTDLP_COOKIES_BROWSER=chrome` (or `edge`) in
+`.env` so the download uses your browser's Instagram sign-in.
 ## Day to day
 
 **Updates install themselves.** Every 10 minutes, when Studio is idle (nothing uploading,
