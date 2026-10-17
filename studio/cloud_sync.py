@@ -1230,7 +1230,7 @@ def dashboard_info() -> dict | None:
     import cloud_auth
     import planner_site
     online = (status.get("counts") or {}).get("online", {})
-    here = planner_site.available() and bool(cloud_auth.anon_key())
+    here = planner_site.here()
     return {"planner_url": settings.PLANNER_URL if url_allowed(settings.PLANNER_URL or "") else "",
             # The planner served by this dashboard (one address, one login), when it can be.
             "plan_here": "/plan/" if here else "", "plan_problem": None if here else cloud_auth.anon_problem(),

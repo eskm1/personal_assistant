@@ -218,4 +218,7 @@ key). `GET /api/planner-session` (dashboard cookie, same origin) returns
 `{access_token, refresh_token, expires_at, expires_in, token_type}` for the signed-in user, which the
 planner passes to `supabase.auth.setSession`; 401 signed out, 403 `{error}` when the user isn't a planner
 member or hasn't proven the planner email (a team account must have signed in once with the planner's
-password; owners always may).
+password; owners always may). `GET /api/nav` (dashboard cookie) returns `{review: <drafts ready for
+review>, studio: {on, last_sync}}` for the shared top bar's Review badge; the planner polls it about
+once a minute under /plan/ (401 there signs the planner out too). The top bar itself (`shell.js`,
+`shell.css`) lives in the planner's folder and is served to the dashboard as `/static/shell.*`.

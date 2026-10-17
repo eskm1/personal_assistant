@@ -24,15 +24,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; }
 button, select, textarea, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
 
-/* ── Header ─────────────────────────────────────────── */
-.top {
-  position: sticky; top: 0; z-index: 5;
-  display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
-  padding: 12px 24px; background: rgba(11, 11, 13, .92); backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--line);
-}
-.brand-mark { font-weight: 800; font-size: 18px; letter-spacing: .02em; }
-.filters { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+/* ── Header: shell.css (the top bar and phone tab bar shared with Review) ── */
 .seg { display: flex; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; }
 .seg button { background: none; border: 0; padding: 6px 12px; border-radius: 999px; color: var(--muted); }
 .seg button.on { background: var(--surface-2); color: var(--text); }
@@ -147,16 +139,7 @@ img.broken { visibility: hidden; }
 .st-filmed.badge, .sb-badge.st-filmed { background: var(--filmed); color: #021a3a; }
 .st-retake.badge, .sb-badge.st-retake { background: var(--bad); color: #fff; }
 
-/* ── Account menu ───────────────────────────────────── */
-.account { position: relative; }
-.account-btn {
-  display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--line);
-  border-radius: 999px; padding: 3px 12px 3px 3px;
-}
-.avatar {
-  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px;
-  background: var(--accent); color: #fff;
-}
+/* ── Menus (the account menu and the status pill's are in shell.css) ── */
 .menu {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 8; min-width: 220px; padding: 6px;
   background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
@@ -395,7 +378,7 @@ code { background: var(--surface-2); border-radius: 4px; padding: 1px 5px; font-
 .bryan strong { color: var(--text); }
 
 /* ── On-site checklist (phone first) ────────────────── */
-.checklist { position: fixed; inset: 0; z-index: 15; background: var(--bg); overflow-y: auto; overscroll-behavior: contain; }
+.checklist { position: fixed; inset: 0 0 var(--shell-bottom, 0px); z-index: 15; background: var(--bg); overflow-y: auto; overscroll-behavior: contain; }
 .cl-loading { padding: 24px 16px; }
 .cl-head {
   position: sticky; top: 0; z-index: 2; background: rgba(11, 11, 13, .96); backdrop-filter: blur(8px);
@@ -449,8 +432,6 @@ code { background: var(--surface-2); border-radius: 4px; padding: 1px 5px; font-
 .cl-foot { text-align: center; margin-top: 24px; line-height: 1.5; }
 
 @media (max-width: 860px) {
-  .top { padding: 10px 16px; gap: 10px; }
-  .filters { margin-left: 0; }
   main { padding: 12px 16px 40px; }
   .viewer { overflow-y: auto; background: var(--bg); }
   .viewer-inner { display: block; height: auto; }
@@ -458,10 +439,7 @@ code { background: var(--surface-2); border-radius: 4px; padding: 1px 5px; font-
   .player-frame { height: 70vh; margin: 0 auto; }
   .nav { display: none; }
   .panel { border-left: 0; padding-top: 16px; }
-  .account-name { display: none; }
-  .filters { flex-wrap: wrap; }
   .updated { white-space: nowrap; }
-  .account-btn { padding: 3px; }
   .hide-mobile { display: none; }
   .plan-bar-actions { margin-left: 0; width: 100%; }
   .plan-bar-actions .btn { flex: 1; }
@@ -493,24 +471,8 @@ a { color: var(--personal); }
 .mt8 { margin-top: 8px !important; }
 .push-right { margin-left: auto; }
 .noscript { padding: 24px; color: var(--text); }
-.brand-mark { color: var(--text); text-decoration: none; white-space: nowrap; }
-.brand-sub { font-weight: 600; color: var(--muted); font-size: 14px; margin-left: 4px; }
-.top .filters { min-width: 0; }
 a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; color: var(--text); }
 a.btn.primary { color: #fff; }
-
-/* Studio laptop status */
-.laptop { position: relative; min-width: 0; }
-.laptop-pill {
-  display: flex; align-items: center; gap: 8px; max-width: 100%; background: var(--surface); border: 1px solid var(--line);
-  border-radius: 999px; padding: 6px 12px; font-size: 12px; color: var(--muted); white-space: nowrap;
-}
-.laptop-pill #laptop-text { overflow: hidden; text-overflow: ellipsis; }
-.laptop-pill .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #5a5a66; }
-.laptop-pill.on { color: var(--text); }
-.laptop-pill.on .dot { background: var(--good); box-shadow: 0 0 0 3px rgba(60, 207, 142, .18); }
-.laptop-info { width: 300px; max-width: calc(100vw - 32px); padding: 12px 14px; gap: 6px; }
-.laptop-info p { margin: 0; line-height: 1.45; }
 
 /* Sign-in */
 .auth { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
@@ -571,13 +533,6 @@ h2.cl-arc { margin: 22px 0 4px; }
 /* Phones: 44 px touch targets, no sideways scrolling outside the board. */
 @media (max-width: 860px) {
   html, body { overflow-x: hidden; }
-  .top { flex-wrap: nowrap; justify-content: space-between; gap: 8px; padding: 8px 16px; }
-  .brand-sub { display: none; }
-  .filters { gap: 8px; margin-left: auto; flex-wrap: nowrap; min-width: 0; }
-  .laptop-pill { min-height: 44px; padding: 6px 10px; }
-  .laptop-pill #laptop-text { max-width: 150px; }
-  .account-btn { min-height: 44px; min-width: 44px; justify-content: center; }
-  .avatar { width: 32px; height: 32px; }
   .btn, a.btn { min-height: 44px; }
   .btn.small { min-height: 44px; padding: 8px 12px; }
   .plan-details summary { min-height: 44px; }
@@ -621,15 +576,6 @@ h2.cl-arc { margin: 22px 0 4px; }
 .chip.failed, .chip.rejected { color: var(--bad); }
 .chip.ok { color: var(--good); }
 .chip.wait { color: var(--warn); }
-
-/* Section tabs in the header */
-.tabs { display: flex; gap: 4px; min-width: 0; }
-.tabs a {
-  display: inline-flex; align-items: center; justify-content: center; padding: 7px 12px; border-radius: 999px;
-  color: var(--muted); text-decoration: none; font-weight: 600; white-space: nowrap;
-}
-.tabs a:hover { color: var(--text); background: var(--surface); }
-.tabs a[aria-current="page"] { color: var(--text); background: var(--surface-2); }
 
 /* References */
 .refs-wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
@@ -754,9 +700,6 @@ h2.cl-arc { margin: 22px 0 4px; }
 .ar-warn { color: var(--warn); font-size: 12px; }
 
 @media (max-width: 860px) {
-  .top { flex-wrap: wrap; row-gap: 6px; }
-  .tabs { order: 3; flex: 1 1 100%; }
-  .tabs a { flex: 1; min-height: 44px; padding: 6px 8px; }
   .refs-head .seg { width: 100%; }
   .refs-head .seg button, .refs-filters .seg button { flex: 1; }
   .refs-filters .seg { flex: 1 1 100%; }
@@ -790,8 +733,7 @@ h2.cl-arc { margin: 22px 0 4px; }
 .view-seg button { font-weight: 600; padding: 7px 14px; }
 .view-seg button.on { background: var(--accent); color: #fff; }
 .plan-bar { row-gap: 10px; }
-.quick-add-row { display: none; margin-bottom: 10px; }
-.quick-add-row .btn { width: 100%; }
+.plan-title { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: .01em; }
 .shoot-missing { max-width: 640px; display: flex; flex-direction: column; gap: 8px; }
 .shoot-missing p { margin: 0; line-height: 1.5; }
 .sp-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); gap: 16px; align-items: start; }
@@ -980,7 +922,8 @@ body.has-tray .toast { bottom: auto; top: 76px; }
 @media (max-width: 860px) {
   .view-seg { order: -1; width: 100%; }
   .view-seg button { flex: 1; }
-  .quick-add-row { display: block; }
+  .plan-title { order: -3; font-size: 20px; }
+  .plan-bar #plan-project { order: -2; flex: 1 1 0; min-width: 0; }
   .phase { min-height: 56px; min-width: 128px; }
   .sd-card { padding: 12px; }
   .sd-head .btn { margin-left: auto; }
@@ -991,9 +934,12 @@ body.has-tray .toast { bottom: auto; top: 76px; }
   .sp-thumb { width: 44px; }
   .sp-thumbs { grid-row: 1; }
   .shot-place { grid-template-columns: minmax(0, 1fr); }
-  .up-tray { right: 0; left: 0; bottom: 0; width: auto; max-width: none; border-radius: 14px 14px 0 0; max-height: 50vh; }
+  /* Just above the phone tab bar (shell.css), or at the bottom while a viewer has the screen. */
+  .up-tray { right: 0; left: 0; bottom: var(--shell-bottom, 0px); width: auto; max-width: none; border-radius: 14px 14px 0 0; max-height: 50vh; }
+  body:has(.viewer:not([hidden])) .up-tray { bottom: 0; }
   .up-toggle { min-height: 44px; }
-  body.has-tray .cl-body, body.has-tray main { padding-bottom: 160px; }
+  body.has-tray .cl-body { padding-bottom: 160px; }
+  body.has-tray main { padding-bottom: calc(160px + var(--shell-bottom, 0px)); }
   .folder-line .btn { min-width: 64px; }
   .nh-clip .btn, .sp-u-shots .btn { width: 100%; }
   .cl-item .cl-up { padding-left: 0; }

@@ -1,18 +1,29 @@
-// Studio dashboard: a Reels-style grid of every video by stage, a review screen
-// to leave timed notes and approve or send drafts back for changes, and a
-// planning board where the team plans posts before filming them.
+// Studio dashboard (Review): a Reels-style grid of every video by stage, a review
+// screen to leave timed notes and approve or send drafts back for changes, and, on a
+// machine without the online planner, a planning board. The top bar and phone tab bar
+// are the shell shared with Plan (/static/shell.js).
 "use strict";
 
+// The planner is served here too (data-plan-here on <html>): Studio opens on Plan. An
+// address with a Review route (#/production/12, #/tab/library…) still opens it here.
+const PLAN_HERE = document.documentElement.dataset.planHere || "";
+const toPlan = (hash) => PLAN_HERE && (!hash || hash === "#" || hash === "#/" || /^#\/(tab\/plan|plan\/\d+|plan-idea\/\d+|checklist\/\d+)$/.test(hash));
+const LEAVING = toPlan(location.hash);
+if (LEAVING) location.replace(PLAN_HERE);
+
+// Review's stages, in the order of the row under the top bar. Plan is the local planning
+// board, only on a machine without the online planner; it's the top bar's Plan there.
 const STAGES = [
-  { key: "plan", label: "Plan", hint: "Plan posts before filming. Throw ideas in, let Claude sort them into series with a shot list for each, vote, and tick shots off on site. Footage dropped in the project's inbox folder is matched to its shots automatically." },
   { key: "review", label: "To review", hint: "Drafts waiting for you. Leave notes on the moments that need work, then approve it or send it back. The next draft opens straight away." },
-  { key: "ideas", label: "Ideas", hint: "Posts Claude planned from your library. Open one to play its segments, edit the caption, then choose Make this to send it to the editor, or add it to a plan." },
   { key: "producing", label: "Being edited", hint: "Edits in progress, including drafts you sent back. They return to To review when the new version renders." },
+  { key: "done", label: "Done", hint: "Approved, posted and rejected edits." },
   { key: "library", label: "Library", hint: "Raw clips, tagged by Claude and quality-checked. Fix a wrong account or format, or leave a note on how a clip should be used." },
+  { key: "ideas", label: "Ideas", hint: "Posts Claude planned from your library. Open one to play its segments, edit the caption, then choose Make this to send it to the editor, or add it to a plan." },
   { key: "ingesting", label: "Ingesting", hint: "Clips being transcribed and tagged right now, plus any that failed and will be retried." },
   { key: "cloud", label: "In the cloud", hint: "Uploads sitting in the OneDrive inbox. Studio picks each one up once it finishes uploading." },
-  { key: "done", label: "Done", hint: "Approved, posted and rejected edits." },
+  { key: "plan", label: "Plan", hint: "Plan posts before filming. Throw ideas in, let Claude sort them into series with a shot list for each, vote, and tick shots off on site. Footage dropped in the project's inbox folder is matched to its shots automatically." },
 ];
+const shell = window.StudioShell;
 const BRAND = { personal: "Personal", urban_makers: "Urban Makers", unsure: "Brand unsure" };
 const FORMAT = { talking_head: "Talking head", day_in_the_life: "Day in the life", compilation: "Compilation", other: "Other" };
 const STATUS = {
@@ -111,7 +122,7 @@ async function api(path, body) {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
   if (res.status === 401) {
-    location.href = "/login";
+    location.href = `/login?next=${encodeURIComponent(`/${location.hash}`)}`;
     throw new Error("signed out");
   }
   const data = await res.json().catch(() => ({}));
@@ -170,6 +181,43 @@ function pbarHTML(p) {
 
 // ── Account ─────────────────────────────────────────────────────────────────
 
+// ── The top bar: Studio on/offline, sections, account (shell.js) ───────────
+
+$("#laptop-info").innerHTML = `<p><strong id="studio-state">Studio…</strong></p>
+  <p class="muted small" id="updated"></p><p class="muted small" id="sync-line" hidden></p><p class="muted small" id="costs" hidden></p>`;
+
+// Studio is on while the board keeps loading.
+function renderStatus() {
+  const age = state.lastSync ? (Date.now() - state.lastSync) / 1000 : null;
+  const on = age != null && age < 40 && !state.syncError;
+  $("#laptop-btn").classList.toggle("on", on);
+  $("#laptop-text").textContent = on ? "Studio on" : age != null || state.syncError ? "Studio offline" : "Studio…";
+  $("#laptop-btn").title = on ? "Studio is on." : "Studio isn't answering right now.";
+  $("#studio-state").textContent = on ? "Studio is on." : age != null || state.syncError ? "Studio isn't answering right now." : "Checking Studio…";
+  $("#updated").textContent = state.syncError ? `Can't reach Studio (${state.syncError}). This page keeps trying.`
+    : age == null ? "" : age < 5 ? "Up to date" : `Updated ${Math.round(age)}s ago`;
+  const c = state.cloud;
+  $("#sync-line").hidden = !c;
+  if (c) $("#sync-line").textContent = c.last_ok ? `Synced with the planner ${ago(c.last_ok)}.` : "Waiting for the first sync with the planner.";
+}
+
+// Where the top bar's sections go from here: the planner at /plan/ when it's served
+// here; otherwise the local Plan tab and the online planner's own address, if any.
+function shellLinks() {
+  if (!shell) return;
+  if (PLAN_HERE) {
+    const pid = Number(recall("studio.project")) || 0;
+    shell.setLinks({ today: pid ? `/plan/#/today/${pid}` : "/plan/#/today" });
+    return;
+  }
+  const online = safeSrc(state.cloud?.planner_url).replace(/\/+$/, "");
+  shell.setLinks({
+    plan: "#/tab/plan", review: "#/tab/review", library: "#/tab/library",
+    today: !state.cloud && plan.pid ? `#/checklist/${plan.pid}` : "#/tab/plan",
+    refs: online && `${online}/#/references`, style: online && `${online}/#/style`,
+  });
+}
+
 function renderAccount() {
   const me = state.me;
   if (!me) return;
@@ -186,29 +234,24 @@ function renderAccount() {
 function versionHTML(v) {
   if (!v) return "";
   const when = v.date ? new Date(v.date).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "";
-  const status = v.error ? `<span class="small" style="color:var(--bad)">Last update failed: ${esc(v.error)}</span>`
+  const status = v.error ? `<span class="small bad-text">Last update failed: ${esc(v.error)}</span>`
     : v.requested ? `<span class="muted small">Update requested: Studio restarts by itself when it's idle.</span>`
     : v.auto_minutes ? `<span class="muted small">Updates itself every ${esc(v.auto_minutes)} min when idle.</span>` : "";
-  return `<div class="menu-head" style="border-top:1px solid var(--line)">
+  return `<div class="menu-head menu-version">
       <span class="muted small" title="${esc(v.subject)}">Version ${esc(v.commit)}${when ? ` · ${esc(when)}` : ""}</span>${status}</div>
     ${isOwner() ? `<button role="menuitem" data-account="update">Update now</button>
       <button role="menuitem" data-account="restart">Restart Studio</button>` : ""}`;
 }
-function setAccountMenu(open) {
-  $("#account-menu").hidden = !open;
-  $("#account-btn").setAttribute("aria-expanded", String(open));
-}
-$("#account-btn").addEventListener("click", () => setAccountMenu($("#account-menu").hidden));
 document.addEventListener("click", (e) => {
-  if (!e.target.closest("#account")) setAccountMenu(false);
   // Close arc menus when clicking anywhere else.
   document.querySelectorAll("details.col-menu[open]").forEach((d) => { if (!d.contains(e.target)) d.open = false; });
 });
+// The shell opens and closes the menu; the choices are made here. With the planner here,
+// the team is managed there (its invites make planner accounts, which sign in here too).
 $("#account-menu").addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-account]");
   if (!btn) return;
-  setAccountMenu(false);
-  if (btn.dataset.account === "team") openTeam();
+  if (btn.dataset.account === "team") (PLAN_HERE ? location.assign("/plan/#/team") : openTeam());
   else if (btn.dataset.account === "password") openPassword();
   else if (btn.dataset.account === "update" || btn.dataset.account === "restart") {
     const restart = btn.dataset.account === "restart";
@@ -221,8 +264,12 @@ $("#account-menu").addEventListener("click", async (e) => {
     } catch (err) { toast(`Couldn't start the update: ${err.message}`); }
   }
   else if (btn.dataset.account === "signout") {
+    // Out of Plan too: its sign-in on this address lives in this browser's storage.
+    try {
+      for (const key of Object.keys(localStorage)) if (/^sb-.+-auth-token$/.test(key)) localStorage.removeItem(key);
+    } catch { /* private mode */ }
     await fetch("/logout", { method: "POST" }).catch(() => {});
-    location.href = "/login";
+    location.href = PLAN_HERE ? "/login?next=/plan/" : "/login";
   }
 });
 
@@ -345,14 +392,21 @@ function visible(stage) {
 }
 
 function renderTabs() {
-  $("#tabs").innerHTML = STAGES.map((s) => {
-    if (s.key === "plan") {  // with the planner at this address, Plan sits in the top bar instead
-      return state.cloud?.plan_here ? "" : `<button data-stage="plan" class="${state.stage === "plan" ? "on" : ""}">${s.label}</button>`;
-    }
+  // Plan (the local board) is the top bar's Plan, not one of these.
+  $("#tabs").innerHTML = STAGES.filter((s) => s.key !== "plan").map((s) => {
     const n = visible(s.key).length;
     const hot = s.key === "review" && n ? " hot" : "";
-    return `<button data-stage="${s.key}" class="${s.key === state.stage ? "on" : ""}">${s.label}<span class="count${hot}">${n}</span></button>`;
+    const on = s.key === state.stage;
+    return `<button data-stage="${s.key}" class="${on ? "on" : ""}"${on ? ` aria-current="page"` : ""}>${s.label}<span class="count${hot}">${n}</span></button>`;
   }).join("");
+  $("#subnav").hidden = state.stage === "plan";
+  shell?.setCurrent(state.stage === "plan" ? "plan" : "review");
+  shell?.setBadge(state.items.filter((i) => i.stage === "review").length);
+  if (state.tabsFor !== state.stage) {  // on a phone, the stage's tab scrolls into view
+    state.tabsFor = state.stage;
+    const on = $("#tabs .on");
+    if (on) $("#tabs").scrollLeft = Math.max(0, on.offsetLeft - $("#tabs").offsetLeft - 16);
+  }
   $("#stage-hint").textContent = state.stage === "plan" && state.cloud
     ? "The team plans on the online planner. Footage dropped in a project's inbox folder is still matched to its shots here, and shows up there."
     : state.stage === "cloud" ? cloudHint() : STAGES.find((s) => s.key === state.stage).hint;
@@ -468,8 +522,8 @@ async function sync() {
     state.ideasJob = data.ideas_job || {};
     const cloudBefore = JSON.stringify(state.cloud ?? null);
     state.cloud = data.cloud || null;
-    $("#places").hidden = !state.cloud?.plan_here;
     state.machine = data.machine || null;
+    state.syncError = "";
     const cloudChanged = cloudBefore !== JSON.stringify(state.cloud);
     const costs = $("#costs");
     costs.hidden = !data.costs;
@@ -478,6 +532,8 @@ async function sync() {
       costs.textContent = `API this month: ${money(c.usd)}`;
       costs.title = Object.entries(c.by_kind).map(([k, v]) => `${k}: ${money(v.usd)} (${v.calls} calls)`).join("\n");
     }
+    if (cloudChanged) shellLinks();
+    renderStatus();
     if (wasRunning && !state.ideasJob.running && state.ideasJob.count != null) {
       toast(state.ideasJob.count ? `${state.ideasJob.count} new idea${state.ideasJob.count > 1 ? "s" : ""}` : "No new ideas this time. Try a different focus or add more clips.");
     }
@@ -490,7 +546,7 @@ async function sync() {
         ? (visible("review").length ? "review" : (known ? saved : "library"))
         : (known ? saved : "plan");
     }
-    if (state.stage === "plan" && state.cloud?.plan_here) state.stage = visible("review").length ? "review" : "library";
+    if (state.stage === "plan" && PLAN_HERE) state.stage = visible("review").length ? "review" : "library";
     // Re-render only on change, so a hover preview isn't cut off every poll.
     if (signature !== state.signature || (cloudChanged && state.stage === "plan")) {
       state.signature = signature;
@@ -500,16 +556,11 @@ async function sync() {
     if (state.stage === "plan" && !state.cloud && $("#viewer").hidden && $("#checklist").hidden) await loadPlan();
     if (!$("#checklist").hidden && !check.busy) await loadChecklist();
   } catch (e) {
-    if (e.message !== "signed out") $("#updated").textContent = `Can't reach Studio (${e.message})`;
+    if (e.message !== "signed out") { state.syncError = e.message; renderStatus(); }
   }
 }
 
-setInterval(() => {
-  if (state.lastSync) {
-    const s = Math.round((Date.now() - state.lastSync) / 1000);
-    $("#updated").textContent = s < 5 ? "Up to date" : `Updated ${s}s ago`;
-  }
-}, 1000);
+setInterval(() => { if (state.lastSync) renderStatus(); }, 1000);
 
 // Hover previews: play a muted loop of the video under the pointer.
 $("#grid").addEventListener("mouseover", (e) => {
@@ -539,14 +590,10 @@ $("#grid").addEventListener("click", (e) => {
 $("#tabs").addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-stage]");
   if (!btn) return;
-  if (btn.dataset.stage === "plan" && state.cloud?.plan_here) {  // the planner, at this same address
-    location.assign(state.cloud.plan_here);
-    return;
-  }
   state.stage = btn.dataset.stage;
   store("studio.stage", state.stage);
-  if (state.stage === "plan") history.replaceState(null, "", plan.pid ? `#/plan/${plan.pid}` : "#/tab/plan");
-  else if (location.hash) history.replaceState(null, "", location.pathname);
+  // The address names the stage, so a reload (or Studio's own restart) comes back here.
+  history.replaceState(null, "", `#/tab/${state.stage}`);
   render();
 });
 $("#brand-filter").addEventListener("click", (e) => {
@@ -577,6 +624,7 @@ function selectProject(pid) {
   plan.editingArc = null;
   plan.addingArc = false;
   store("studio.project", String(pid));
+  shellLinks();  // Today follows the project
 }
 
 async function loadPlan(force = false) {
@@ -1019,7 +1067,7 @@ function closeViewer(silent = false) {
     history.pushState(null, "", plan.pid ? `#/plan/${plan.pid}` : "#/tab/plan");
     render();
     loadPlan(true).catch(() => {});
-  } else if (location.hash) history.pushState(null, "", location.pathname);
+  } else history.pushState(null, "", `#/tab/${state.stage || "review"}`);
 }
 
 function renderPlayer(item) {
@@ -2096,7 +2144,6 @@ $("#checklist").addEventListener("change", (e) => {
 document.addEventListener("keydown", (e) => {
   const typing = ["TEXTAREA", "INPUT", "SELECT"].includes(e.target.tagName);
   if (!$("#modal").hidden) { if (e.key === "Escape") closeModal(); return; }
-  if (e.key === "Escape" && !$("#account-menu").hidden) { setAccountMenu(false); $("#account-btn").focus(); return; }
   if (!$("#checklist").hidden) { if (e.key === "Escape" && !typing) closeChecklist(); return; }
   if ($("#viewer").hidden) return;
   if (e.key === "Escape") { if (typing) e.target.blur(); else closeViewer(); return; }
@@ -2122,15 +2169,17 @@ $("#next").addEventListener("click", () => step(1));
 // Deep links (#/production/12, #/plan-idea/4, #/checklist/1) and the back button.
 async function routeFromHash() {
   const hash = location.hash;
+  if (toPlan(hash)) { location.assign(PLAN_HERE); return; }  // Plan lives at /plan/ here
   const closeOverlays = () => {
     if (!$("#viewer").hidden) closeViewer(true);
     if (!$("#checklist").hidden) closeChecklist(false);
   };
-  // #/tab/library etc.: links in Telegram digests open a tab directly.
+  // #/tab/library etc.: links in Telegram digests and the top bar open a tab directly.
   const tab = hash.match(/^#\/tab\/(\w+)$/);
   if (tab && STAGES.some((s) => s.key === tab[1])) {
     closeOverlays();
     state.stage = tab[1];
+    if (state.stage !== "plan") store("studio.stage", state.stage);
     render();
     return;
   }
@@ -2192,9 +2241,10 @@ async function init() {
     return;
   }
   renderAccount();
-  await loadProjects().catch(() => {});
+  if (!PLAN_HERE) await loadProjects().catch(() => {});
+  shellLinks();
   await sync();
   await routeFromHash();
   setInterval(sync, POLL_MS);
 }
-init();
+if (!LEAVING) init();

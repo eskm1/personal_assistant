@@ -106,7 +106,9 @@ def _auth():
         return jsonify({"error": "signed out"}), 401
     if not auth.users_exist(db()):
         return redirect("/setup")
-    return redirect("/login?next=" + request.full_path.rstrip("?") if request.path != "/" else "/login")
+    if request.path == "/":  # Studio opens on Plan when the planner is here
+        return redirect("/login?next=/plan/" if _plan_here() else "/login")
+    return redirect("/login?next=" + request.full_path.rstrip("?"))
 
 
 @app.after_request
@@ -203,7 +205,7 @@ def invite_page(token: str):
     except ValueError as e:
         return _page("invite", str(e), token=token), 400
     _start_session(dict(db().execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()))
-    return redirect("/#/tab/plan")
+    return redirect("/plan/" if _plan_here() else "/#/tab/plan")
 
 
 @app.post("/logout")
@@ -399,9 +401,31 @@ def _idea_item(row: sqlite3.Row) -> dict:
     }
 
 
+def _plan_here() -> bool:
+    import planner_site
+    return planner_site.here()
+
+
 @app.get("/")
 def index():
-    return send_file(WEB / "index.html")
+    """Review. With the planner here too, the page is marked so app.js opens Plan when
+    the address has no Review route (#/tab/..., #/production/12 and so on)."""
+    page = (WEB / "index.html").read_text(encoding="utf-8")
+    if _plan_here():
+        page = page.replace("<html lang=\"en\">", '<html lang="en" data-plan-here="/plan/">', 1)
+    response = Response(page, mimetype="text/html")
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.get("/api/nav")
+def nav():
+    """For the top bar on Plan: drafts waiting for review, and whether Studio is on
+    (it answered, so it is; last_sync is the planner sync)."""
+    waiting = db().execute("SELECT COUNT(*) FROM productions WHERE status = 'ready'").fetchone()[0]
+    response = jsonify({"review": waiting, "studio": {"on": True, "last_sync": cloud_sync.status.get("last_ok")}})
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _version_commit() -> str:

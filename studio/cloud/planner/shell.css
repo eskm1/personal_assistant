@@ -1,0 +1,136 @@
+/* Studio's app shell (shell.js): the same top bar, phone tab bar and More sheet in Plan
+   (the planner) and Review (the dashboard serves this file as /static/shell.css).
+   Uses each page's colour variables (--bg, --surface, --line, --text, --muted, --accent, --good). */
+:root { --shell-top-h: 56px; --shell-tab-h: 0px; --shell-bottom: 0px; }
+
+.shell .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ── Top bar ────────────────────────────────────────── */
+.shell-top {
+  position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 20px;
+  height: var(--shell-top-h); padding: 0 24px; background: rgba(11, 11, 13, .92); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.shell-mark {
+  font-weight: 800; font-size: 18px; letter-spacing: .02em; color: var(--text); text-decoration: none; white-space: nowrap;
+  border-radius: 8px;
+}
+.shell-nav { display: flex; align-self: stretch; gap: 2px; min-width: 0; }
+.shell-nav a {
+  position: relative; display: inline-flex; align-items: center; gap: 7px; padding: 0 12px;
+  color: var(--muted); font-size: 15px; font-weight: 600; text-decoration: none; white-space: nowrap;
+}
+.shell-nav a::after {
+  content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0;
+  background: transparent;
+}
+.shell-nav a:hover { color: var(--text); }
+.shell-nav a[aria-current="page"] { color: var(--text); }
+.shell-nav a[aria-current="page"]::after { background: var(--accent); }
+.shell-badge {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px;
+  border-radius: 999px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; line-height: 1;
+}
+.shell-right { margin-left: auto; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.shell a:focus-visible, .shell button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.shell-nav a:focus-visible { outline-offset: -4px; border-radius: 10px; }
+
+/* Studio on / offline */
+.laptop { position: relative; min-width: 0; }
+.laptop-pill {
+  display: flex; align-items: center; gap: 8px; max-width: 100%; min-height: 34px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 12px; color: var(--muted); white-space: nowrap;
+}
+.laptop-pill #laptop-text { overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.laptop-pill .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #5a5a66; }
+.laptop-pill.on { color: var(--text); }
+.laptop-pill.on .dot { background: var(--good); box-shadow: 0 0 0 3px rgba(60, 207, 142, .18); }
+.laptop-info { width: 300px; max-width: calc(100vw - 32px); padding: 12px 14px; gap: 6px; }
+.laptop-info p { margin: 0; line-height: 1.45; }
+
+/* Account */
+.account { position: relative; flex: none; }
+.account-btn {
+  display: flex; align-items: center; gap: 8px; min-height: 34px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 999px; padding: 3px 12px 3px 3px;
+}
+.avatar {
+  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px;
+  background: var(--accent); color: #fff;
+}
+.shell .menu a { color: var(--text); text-decoration: none; padding: 9px 10px; border-radius: 8px; }
+.shell .menu a:hover { background: var(--line); }
+.shell .menu-version { border-top: 1px solid var(--line); border-bottom: 0; margin: 4px 0 0; padding-top: 10px; }
+
+/* ── Phone tab bar and More (shown at 720 px and below) ── */
+.shell-tabbar { display: none; }
+.shell-icon { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.shell-sheet { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, .6); display: flex; align-items: flex-end; }
+.shell-sheet-card {
+  width: 100%; max-height: 85vh; overflow-y: auto; background: var(--surface); border-top: 1px solid var(--line);
+  border-radius: 16px 16px 0 0; padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+}
+.shell-sheet-head { display: flex; align-items: center; justify-content: space-between; min-height: 48px; }
+.shell-sheet-head h2 { margin: 0; font-size: 17px; }
+.shell-sheet-close {
+  width: 48px; height: 48px; border: 0; background: none; color: var(--muted); font-size: 26px; line-height: 1; border-radius: 50%;
+}
+.shell-sheet-links { display: flex; flex-direction: column; gap: 4px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.shell-sheet-links a {
+  display: flex; align-items: center; gap: 14px; min-height: 52px; padding: 0 12px; border-radius: 12px;
+  color: var(--text); text-decoration: none; font-size: 16px; font-weight: 600;
+}
+.shell-sheet-links a[aria-current="page"] { background: var(--surface-2); color: var(--accent); }
+.shell-sheet-account { display: flex; flex-direction: column; gap: 2px; padding-top: 8px; }
+.shell-sheet-account .menu-head { border: 0; padding: 8px 12px; margin: 0; display: flex; flex-direction: column; gap: 2px; }
+.shell-sheet-account button {
+  min-height: 48px; padding: 0 12px; border: 0; border-radius: 12px; background: none; text-align: left; font-size: 16px;
+}
+.shell-sheet-account button:hover, .shell-sheet-links a:hover { background: var(--surface-2); }
+
+@media (max-width: 1000px) {
+  .shell-top { gap: 12px; }
+  .shell-nav a { padding: 0 9px; }
+  .account-name { display: none; }
+  .account-btn { padding: 3px; }
+  .laptop-pill #laptop-text { max-width: 150px; }
+}
+
+@media (max-width: 720px) {
+  :root { --shell-top-h: 52px; --shell-tab-h: 60px; --shell-bottom: calc(var(--shell-tab-h) + env(safe-area-inset-bottom)); }
+  .shell-top { gap: 8px; padding: 0 16px; }
+  .shell-nav { display: none; }
+  .shell-right { gap: 8px; }
+  .laptop-pill { min-height: 44px; padding: 6px 10px; }
+  .laptop-pill #laptop-text { max-width: 140px; }
+  .account-btn { min-height: 44px; min-width: 44px; justify-content: center; }
+  .avatar { width: 32px; height: 32px; }
+  .shell .menu button, .shell .menu a { min-height: 44px; }
+
+  .shell-tabbar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 16; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    height: var(--shell-bottom); padding: 0 4px env(safe-area-inset-bottom);
+    background: rgba(16, 16, 20, .97); backdrop-filter: blur(8px); border-top: 1px solid var(--line);
+  }
+  .shell-tab {
+    position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    min-height: 48px; height: var(--shell-tab-h); padding: 0; border: 0; background: none; border-radius: 12px;
+    color: var(--muted); font-size: 12px; font-weight: 600; text-decoration: none;
+  }
+  .shell-tab[aria-current="page"], .shell-tab.on { color: var(--text); }
+  .shell-tab[aria-current="page"] .shell-icon, .shell-tab.on .shell-icon { color: var(--accent); }
+  .shell-tab[aria-current="page"]::before, .shell-tab.on::before {
+    content: ""; position: absolute; top: 0; left: 28%; right: 28%; height: 3px; border-radius: 0 0 3px 3px; background: var(--accent);
+  }
+  .shell-tab:focus-visible { outline-offset: -3px; }
+  .shell-tab .shell-badge { position: absolute; top: 5px; left: calc(50% + 6px); min-width: 18px; height: 18px; font-size: 11px; padding: 0 5px; }
+  /* Content scrolls clear of the bar; a full-screen viewer has its own controls, so the bar steps aside. */
+  .shell ~ main { padding-bottom: calc(40px + var(--shell-bottom)); }
+  body:has(.viewer:not([hidden])) .shell-tabbar { display: none; }
+  body.shell-sheet-open { overflow: hidden; }
+  .toast { bottom: calc(16px + var(--shell-bottom)); max-width: calc(100vw - 32px); }
+  body:has(.viewer:not([hidden])) .toast { bottom: 24px; }
+}
+@media (min-width: 721px) {
+  .shell-sheet { display: none !important; }
+}

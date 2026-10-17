@@ -43,7 +43,7 @@ export function showAuth(view, opts = {}) {
       <button class="auth-link" data-auth-go="signout">Sign out</button>`,
     gone: `<h1>No access</h1><p>${esc(opts.email || "This account")} isn't on the Studio team any more. Ask the owner if that's a mistake.</p>
       <button class="auth-link" data-auth-go="signout">Sign in as someone else</button>`,
-    blocked: `<h1>No access to planning</h1>${error}<a class="auth-link" href="${underPlan ? "/" : "#/"}">Back to Studio</a>
+    blocked: `<h1>No access to planning</h1>${error}<a class="auth-link" href="${underPlan ? "/#/tab/review" : "#/"}">Back to Studio</a>
       <button class="auth-link" data-auth-go="signout">Sign in as someone else</button>`,
     noconfig: `<h1>Not set up yet</h1><p>This site has no Supabase settings. Set SUPABASE_URL and SUPABASE_ANON_KEY and build again (node build-config.mjs).</p>`,
     loading: `<p class="muted"><span class="spin"></span> Loading…</p>`,

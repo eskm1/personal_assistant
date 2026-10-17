@@ -54,6 +54,20 @@ def available() -> bool:
     return cloud_sync.enabled() and (PLANNER / "index.html").is_file()
 
 
+def here() -> bool:
+    """The planner opens at /plan/ on this machine (with its public key): Studio then
+    opens on Plan, and Review is the dashboard next to it."""
+    return available() and bool(cloud_auth.anon_key())
+
+
+@bp.get("/static/shell.js")
+@bp.get("/static/shell.css")
+def shell_file():
+    """The top bar and phone tab bar shared by Review and Plan: one copy, in the
+    planner's folder (Netlify serves it from there too)."""
+    return send_from_directory(PLANNER, Path(request.path).name, max_age=0)
+
+
 @bp.get("/plan")
 def plan_root():
     return redirect("/plan/")

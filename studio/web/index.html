@@ -6,28 +6,18 @@
   <title>Studio</title>
   <link rel="icon" href="/static/studio.ico">
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/shell.css">
 </head>
 <body>
-  <header class="top">
-    <div class="brand-mark">Studio</div>
-    <nav class="places" id="places" aria-label="Studio" hidden>
-      <a href="/" class="on" aria-current="page">Review</a><a href="/plan/">Plan</a>
-    </nav>
-    <nav class="tabs" id="tabs" aria-label="Stages"></nav>
-    <div class="filters">
-      <div class="seg" id="brand-filter" role="group" aria-label="Account">
-        <button data-brand="" class="on">All</button>
-        <button data-brand="personal">Personal</button>
-        <button data-brand="urban_makers">Urban Makers</button>
-      </div>
-      <span class="updated" id="costs" title="" hidden></span>
-      <span class="updated" id="updated"></span>
-      <div class="account" id="account">
-        <button class="account-btn" id="account-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu"></button>
-        <div class="menu" id="account-menu" role="menu" hidden></div>
-      </div>
+  <div class="shell" id="shell" data-half="review"></div>
+  <div class="subnav" id="subnav">
+    <nav class="tabs" id="tabs" aria-label="Review stages"></nav>
+    <div class="seg" id="brand-filter" role="group" aria-label="Account">
+      <button data-brand="" class="on">All</button>
+      <button data-brand="personal">Personal</button>
+      <button data-brand="urban_makers">Urban Makers</button>
     </div>
-  </header>
+  </div>
 
   <main>
     <p class="stage-hint" id="stage-hint"></p>
@@ -62,6 +52,7 @@
   </div>
 
   <div class="toast" id="toast" role="status" hidden></div>
+  <script src="/static/shell.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

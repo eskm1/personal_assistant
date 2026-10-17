@@ -30,8 +30,9 @@ over that server's processor for minutes at a time and slow the website down.
   **Studio Archive** in OneDrive, so OneDrive keeps a copy and the inbox shows only what's still waiting.
 - **Reference reels you saved as videos** go in **Studio Inbox > References > Ours** or **> Inspiration**.
 - **Dashboard**: **https://studio.theurbanmakers.com**, on any phone or computer, with the same
-  accounts as now (or your planner email and password). No Tailscale needed. The planner is there
-  too, at **/plan/**, already signed in. Team accounts need an @theurbanmakers.com email.
+  accounts as now (or your planner email and password). No Tailscale needed. It opens on **Plan**
+  (the planner, at **/plan/**, already signed in); **Review** is the next tab. Team accounts need an
+  @theurbanmakers.com email.
 - **Uploading from the planner**: on a shot, **Film**, **From library** or **Choose file** sends the
   video straight to the server, which files it in the post's folder and attaches it to that shot.
 - **Approved reels** are copied to **Studio Ready to post** in OneDrive, so you can post them from

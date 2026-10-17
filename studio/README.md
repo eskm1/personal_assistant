@@ -436,8 +436,14 @@ While the worker runs, it syncs about every 30 seconds:
 - it runs **Place by phase** (the planner's shoot plan): Claude puts each unplaced shot of the
   project's Go and proposed ideas into the renovation phase whose work it shows.
 
-**One address, one login.** The dashboard also serves the planner at **/plan/** (the header's
-**Review** and **Plan**), behind the dashboard's sign-in, and opens it signed in. The sign-in page
+**One address, one login, one app.** The dashboard also serves the planner at **/plan/**, behind the
+dashboard's sign-in, and opens it signed in; https://studio.theurbanmakers.com/ opens on **Plan**
+(links to a draft, `/#/production/12` or `/#/tab/library`, still open it in Review). Both halves have
+the same top bar (`cloud/planner/shell.js` and `shell.css`, which the dashboard serves as
+`/static/shell.*`): **Plan**, **Review** (with the number of drafts waiting), **References**, **Style
+guide**, Studio on/offline and the account menu. On a phone it's a bottom tab bar: **Plan**, **Today**
+(on site, for the current project), **Review** and **More** (References, Style guide, Library and the
+account). Review's stages are a second row under it. The sign-in page
 takes the planner's email and password too, and the planner role (owner or team) carries over.
 Only **@theurbanmakers.com** addresses can sign in as team (`STUDIO_ALLOWED_EMAIL_DOMAINS`; `*` =
 anyone); owner accounts can use any address. /plan/ needs the planner's public key: Studio reads it

@@ -1,8 +1,9 @@
-// Studio planner: sign-in, the header (laptop status, account), hash routes and
-// live updates. Views live in board.js, idea.js, checklist.js and team.js.
+// Studio planner: sign-in, the header (laptop status, account, the shared top bar from
+// ../shell.js), hash routes and live updates. Views live in board.js, idea.js,
+// checklist.js and team.js.
 import {
-  $, $$, esc, sb, must, landing, state, isOwner, toast, openModal, closeModal, modalOpen, formError,
-  isTyping, laptopOn, laptopSince, underPlan,
+  $, esc, sb, must, landing, state, isOwner, toast, openModal, closeModal, modalOpen, formError,
+  isTyping, laptopOn, laptopSince, underPlan, recall, store,
 } from "./core.js";
 import { showAuth, hideAuth } from "./auth.js";
 import { plan, loadProjects, loadBoard, renderPlanner, selectProject, onBoardRefresh } from "./board.js";
@@ -103,7 +104,6 @@ async function enter(sess, opts = {}) {
   }
   hideAuth();
   $("#app").hidden = false;
-  $("#tab-review").hidden = !underPlan;
   if (opts.passwordSet) toast("Password set. Welcome in.");
   await start();
 }
@@ -120,6 +120,8 @@ async function start() {
   if (!session.started) {
     session.started = true;
     startRealtime();
+    loadMachine();
+    pollNav();
   }
   await route();
 }
@@ -165,6 +167,9 @@ setInterval(async () => {
   if (data) { state.laptop = data; renderLaptop(); }
 }, 60e3);
 
+// The account menu: the same items as Review's. Served at /plan/, the owner also gets
+// the Studio machine's version, Update now and Restart Studio (the dashboard's /api/update).
+const machine = { me: null };
 function renderAccount() {
   const me = state.me;
   $("#account-btn").innerHTML = `<span class="avatar" aria-hidden="true">${esc((me.name || "?").slice(0, 1).toUpperCase())}</span><span class="account-name">${esc(me.name)}</span>`;
@@ -173,29 +178,70 @@ function renderAccount() {
       <span class="muted small">${esc(me.email)} · ${isOwner() ? "Owner" : "Team"}</span></div>
     ${isOwner() ? `<button role="menuitem" data-account="team">Team…</button>` : ""}
     <button role="menuitem" data-account="password">Change password</button>
-    <button role="menuitem" data-account="signout">Sign out</button>`;
+    <button role="menuitem" data-account="signout">Sign out</button>
+    ${isOwner() && machine.me?.role === "owner" ? versionHTML(machine.me.version) : ""}`;
 }
-function setMenu(which, open) {
-  const [btn, menu] = which === "account" ? ["#account-btn", "#account-menu"] : ["#laptop-btn", "#laptop-info"];
-  $(menu).hidden = !open;
-  $(btn).setAttribute("aria-expanded", String(open));
-  if (open) $(menu).querySelector("button")?.focus();
+function versionHTML(v) {
+  if (!v) return "";
+  const when = v.date ? new Date(v.date).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "";
+  const status = v.error ? `<span class="small bad-text">Last update failed: ${esc(v.error)}</span>`
+    : v.requested ? `<span class="muted small">Update requested: Studio restarts by itself when it's idle.</span>`
+    : v.auto_minutes ? `<span class="muted small">Updates itself every ${esc(v.auto_minutes)} min when idle.</span>` : "";
+  return `<div class="menu-head menu-version">
+      <span class="muted small" title="${esc(v.subject)}">Version ${esc(v.commit)}${when ? ` · ${esc(when)}` : ""}</span>${status}</div>
+    <button role="menuitem" data-account="update">Update now</button>
+    <button role="menuitem" data-account="restart">Restart Studio</button>`;
 }
-$("#account-btn").addEventListener("click", () => { setMenu("laptop", false); setMenu("account", $("#account-menu").hidden); });
-$("#laptop-btn").addEventListener("click", () => { setMenu("account", false); setMenu("laptop", $("#laptop-info").hidden); });
-document.addEventListener("click", (e) => {
-  if (!e.target.closest("#account")) setMenu("account", false);
-  if (!e.target.closest("#laptop")) setMenu("laptop", false);
-});
+async function loadMachine() {
+  if (!underPlan) return;
+  try {
+    const res = await fetch("/api/me", { credentials: "same-origin", headers: { Accept: "application/json" } });
+    machine.me = res.ok ? await res.json() : null;
+  } catch { machine.me = null; }
+  if (state.me) renderAccount();
+}
 $("#account-menu").addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-account]");
   if (!btn) return;
-  setMenu("account", false);
   const what = btn.dataset.account;
   if (what === "team") location.hash = "#/team";
   else if (what === "password") openPassword();
   else if (what === "signout") await signOutEverywhere();
+  else if (what === "update" || what === "restart") {
+    const restart = what === "restart";
+    try {
+      const res = await fetch("/api/update", {
+        method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(restart ? { restart: true } : {}),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+      toast(restart ? "Studio restarts as soon as it's idle (usually within a minute)."
+        : "Checking for updates. If there's one, Studio restarts by itself in about a minute.");
+      await loadMachine();
+    } catch (err) { toast(`Couldn't start the update: ${err.message}`); }
+  }
 });
+
+// The Review badge: drafts waiting, from the dashboard this page is served by. On the
+// planner's own address there's no dashboard login, so no badge.
+async function pollNav() {
+  if (!underPlan || !state.me || !window.StudioShell) return;
+  let res;
+  try {
+    res = await fetch("/api/nav", { credentials: "same-origin", headers: { Accept: "application/json" } });
+  } catch { return; }
+  if (res.status === 401) {
+    // Signed out of Studio (elsewhere, or the login ran out): sign out here too.
+    signingOut = true;
+    await sb.auth.signOut({ scope: "local" }).catch(() => {});
+    location.href = "/login?next=/plan/";
+    return;
+  }
+  const j = res.ok ? await res.json().catch(() => null) : null;
+  if (j) window.StudioShell.setBadge(j.review);
+}
+setInterval(() => { if (!document.hidden) pollNav(); }, 60e3);
+window.addEventListener("focus", () => pollNav());
 
 function openPassword() {
   openModal(`<h2 id="modal-title">Change password</h2>
@@ -239,17 +285,16 @@ function route() {
   routing = routing.then(doRoute, doRoute).catch((err) => toast(`Couldn't load that: ${err.message}`));
   return routing;
 }
-// The header tab for where we are.
-function setTab(name) {
-  for (const a of $$("#tabs a")) {
-    if (a.dataset.tab === name) a.setAttribute("aria-current", "page");
-    else a.removeAttribute("aria-current");
-  }
+// The top bar: where we are, and Today for the current (or last) project.
+function setSection(name) {
+  const pid = plan.pid || Number(recall("studio.project")) || 0;
+  window.StudioShell?.setLinks({ today: pid ? `#/today/${pid}` : "#/today" });
+  window.StudioShell?.setCurrent(name);
 }
 
 async function doRoute() {
   if (!state.me) return;
-  const h = location.hash;
+  let h = location.hash;
   let m;
   const refRoute = refsRoute(h);
   if (refRoute) {
@@ -257,12 +302,18 @@ async function doRoute() {
     hideChecklist();
     hideTeam();
     $("#planner").hidden = true;
-    setTab(refRoute.page === "style" ? "style" : "refs");
+    setSection(refRoute.page === "style" ? "style" : "refs");
     await showRefs(refRoute);
     return;
   }
   hideRefs();
-  setTab(h === "#/team" ? "" : "board");
+  // #/today on its own (the Today tab before a project is picked): the current project's.
+  if (h === "#/today") {
+    await loadProjects();
+    h = plan.pid ? `#/today/${plan.pid}` : "#/";
+    history.replaceState(null, "", h);
+  }
+  setSection(h === "#/team" ? "" : /^#\/(?:today|checklist)\//.test(h) ? "today" : "plan");
   if ((m = h.match(/^#\/idea\/(\d+)$/))) {
     hideChecklist();
     hideTeam();
@@ -282,6 +333,8 @@ async function doRoute() {
   if ((m = h.match(/^#\/(?:today|checklist)\/(\d+)$/))) {
     hideViewer();
     hideTeam();
+    if (Number(m[1]) !== plan.pid) store("studio.project", m[1]);
+    setSection("today");
     await openChecklist(Number(m[1]));
     return;
   }
@@ -301,6 +354,7 @@ async function doRoute() {
   await loadProjects();
   if (m && plan.projects.some((p) => p.id === Number(m[1]))) selectProject(Number(m[1]));
   if (plan.pid && location.hash !== `#/project/${plan.pid}`) history.replaceState(null, "", `#/project/${plan.pid}`);
+  setSection("plan");
   renderPlanner(true);
   await loadBoard();
   renderPlanner(true);
@@ -384,7 +438,7 @@ async function refreshNow() {
   }
 }
 document.addEventListener("studio:refresh", () => scheduleRefresh(50));
-document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleRefresh(50); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { scheduleRefresh(50); pollNav(); } });
 window.addEventListener("online", () => scheduleRefresh(50));
 // A slow safety net if live updates drop; also expires stale jobs on screen.
 setInterval(() => { if (!document.hidden) scheduleRefresh(0); }, 60e3);
@@ -394,12 +448,6 @@ setInterval(() => { if (!document.hidden) scheduleRefresh(0); }, 60e3);
 document.addEventListener("keydown", (e) => {
   const typing = isTyping(e.target) || e.target.tagName === "SELECT";
   if (modalOpen()) { if (e.key === "Escape") closeModal(); return; }
-  if (e.key === "Escape" && (!$("#account-menu").hidden || !$("#laptop-info").hidden)) {
-    const which = $("#account-menu").hidden ? "laptop" : "account";
-    setMenu(which, false);
-    $(which === "account" ? "#account-btn" : "#laptop-btn").focus();
-    return;
-  }
   if (checklistOpen()) {
     if (e.key === "Escape" && !typing) location.hash = `#/project/${check.pid}`;
     return;

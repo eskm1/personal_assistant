@@ -4,9 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="strict-origin-when-cross-origin">
-  <title>Studio planner</title>
+  <title>Studio</title>
   <link rel="icon" href="favicon.ico">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="shell.css">
 </head>
 <body>
   <noscript><p class="noscript">Studio needs JavaScript.</p></noscript>
@@ -17,25 +18,7 @@
   </div>
 
   <div id="app" hidden>
-    <header class="top">
-      <a class="brand-mark" href="#/" aria-label="Studio planner, back to the board">Studio <span class="brand-sub">Planner</span></a>
-      <nav class="tabs" id="tabs" aria-label="Sections">
-        <a href="#/" data-tab="board">Plan</a>
-        <a href="#/references" data-tab="refs">References</a>
-        <a href="#/style" data-tab="style">Style guide</a>
-        <a href="/" id="tab-review" data-tab="review" hidden>Review</a>
-      </nav>
-      <div class="filters">
-        <div class="laptop" id="laptop">
-          <button class="laptop-pill" id="laptop-btn" aria-haspopup="true" aria-expanded="false" aria-controls="laptop-info"><span class="dot"></span><span id="laptop-text">Studio…</span></button>
-          <div class="menu laptop-info" id="laptop-info" hidden></div>
-        </div>
-        <div class="account" id="account">
-          <button class="account-btn" id="account-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu"></button>
-          <div class="menu" id="account-menu" role="menu" hidden></div>
-        </div>
-      </div>
-    </header>
+    <div class="shell" id="shell" data-half="plan"></div>
 
     <main id="main">
       <section class="planner" id="planner" aria-label="Plan"></section>
@@ -69,6 +52,7 @@
 
   <script src="vendor/supabase.js"></script>
   <script src="config.js"></script>
+  <script src="shell.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

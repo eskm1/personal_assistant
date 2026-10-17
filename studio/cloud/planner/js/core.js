@@ -398,7 +398,9 @@ export function laptopWait() {
 // Content under an overlay (viewer, checklist, modal) can't be reached by keyboard or screen readers.
 export function syncInert() {
   const overlay = !$("#viewer").hidden || !$("#checklist").hidden;
-  $(".top").inert = overlay;
+  $("#shell-top").inert = overlay;
+  // Today on site is one of the phone tabs, so the tab bar stays usable over it.
+  $("#shell-tabbar").inert = !$("#viewer").hidden;
   $("#main").inert = overlay;
   $("#app").inert = !$("#modal").hidden;
 }

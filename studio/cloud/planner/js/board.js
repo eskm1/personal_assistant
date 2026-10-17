@@ -135,11 +135,13 @@ function plannerShellHTML() {
   const archived = plan.projects.filter((x) => x.status !== "active");
   const opt = (x) => `<option value="${esc(x.id)}" ${x.id === plan.pid ? "selected" : ""}>${esc(x.name)}</option>`;
   return `<div class="plan-bar">
+      <h1 class="plan-title">Plan</h1>
       <select id="plan-project" aria-label="Project">${active.map(opt).join("")}
         ${archived.length ? `<optgroup label="Archived">${archived.map(opt).join("")}</optgroup>` : ""}</select>
       <span class="chip" id="plan-archived" ${p.status === "archived" ? "" : "hidden"}>Archived</span>
       <span class="plan-progress" id="plan-progress"></span>
       <div class="plan-bar-actions">
+        <button class="btn primary" id="plan-add-one" title="Add one idea to this project: a line, and a link if you have one">New idea</button>
         <button class="btn" id="plan-checklist" title="What to film on today's (or the next) site visit, made for phones">Today on site</button>
         <button class="btn" id="plan-new">New project</button>
       </div>
@@ -166,7 +168,6 @@ function plannerShellHTML() {
     </details>
     <section class="shoot" id="shoot-view" aria-label="Shoot plan" hidden></section>
     <div id="ideas-view">
-    <div class="quick-add-row"><button class="btn primary" id="plan-add-one">+ Add an idea</button></div>
     <div class="dump" id="plan-dump-box">
       <label class="sr-only" for="plan-dump">Ideas to add</label>
       <textarea id="plan-dump" data-draft rows="3" maxlength="20000" placeholder="Throw ideas in: one per line, or paste a messy brain-dump"></textarea>
