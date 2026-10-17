@@ -637,6 +637,8 @@ def main() -> int:
     if not args.once:
         retry_failed(conn, use_claude)  # pick up anything a crash or outage left behind
         rebuild_previews(conn)
+        import subtitles
+        subtitles.fix_once(conn)  # captions in English / Simplified Chinese only (once)
     editor_on = not args.once and not args.no_editor
     import cloud_sync
     if cloud_sync.enabled():

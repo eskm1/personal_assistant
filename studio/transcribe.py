@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from settings import WHISPER_DEVICE, WHISPER_LANGUAGE, WHISPER_MODEL
+from settings import WHISPER_DEVICE, WHISPER_LANGUAGE, WHISPER_LANGUAGES, WHISPER_MODEL
 
 log = logging.getLogger("studio.transcribe")
 
@@ -91,22 +91,56 @@ def _load_wav(wav_path: Path) -> np.ndarray:
     return pcm.astype(np.float32) / 32768.0
 
 
+# Nudges Whisper towards Simplified characters; simplified() catches the rest.
+_ZH_PROMPT = "以下是普通话的句子，用简体中文。"
+
+
+def simplified(text: str) -> str:
+    """Chinese text in Simplified characters (Whisper often writes Traditional)."""
+    import zhconv
+    return zhconv.convert(text, "zh-cn")
+
+
+def _language(audio: np.ndarray) -> tuple[str | None, float | None]:
+    """The clip's language, chosen among WHISPER_LANGUAGES only (Whisper alone may
+    hear Singlish as Malay). A fixed WHISPER_LANGUAGE wins."""
+    if WHISPER_LANGUAGE:
+        return WHISPER_LANGUAGE, None
+    if not WHISPER_LANGUAGES:
+        return None, None  # any language
+    if len(WHISPER_LANGUAGES) == 1:
+        return WHISPER_LANGUAGES[0], None
+    try:
+        _, _, probs = _model.detect_language(audio, vad_filter=True, language_detection_segments=2)
+    except Exception as e:  # e.g. no speech at all: the first language is as good as any
+        log.info("Language detection failed (%s); using %s", e, WHISPER_LANGUAGES[0])
+        return WHISPER_LANGUAGES[0], None
+    allowed = [(lang, p) for lang, p in probs if lang in WHISPER_LANGUAGES]
+    lang, p = max(allowed, key=lambda x: x[1]) if allowed else (WHISPER_LANGUAGES[0], 0.0)
+    return lang, p
+
+
 def _transcribe_once(wav_path: Path) -> dict:
+    audio = _load_wav(wav_path)
+    language, picked_p = _language(audio)
     segments, info = _model.transcribe(
-        _load_wav(wav_path),
-        language=WHISPER_LANGUAGE,
+        audio,
+        language=language,
+        initial_prompt=_ZH_PROMPT if language == "zh" else None,
         word_timestamps=True,
         vad_filter=True,  # skips silence, which also stops Whisper inventing words in it
     )
+    zh = (language or info.language) == "zh"
+    fix = simplified if zh else (lambda t: t)
     out_segments, words = [], []
     for seg in segments:  # a generator: decoding happens while iterating
-        out_segments.append({"start": round(seg.start, 2), "end": round(seg.end, 2), "text": seg.text.strip(),
+        out_segments.append({"start": round(seg.start, 2), "end": round(seg.end, 2), "text": fix(seg.text.strip()),
                              "logprob": round(seg.avg_logprob, 3)})  # Whisper's confidence, for quality.py
         for w in seg.words or []:
-            words.append({"start": round(w.start, 2), "end": round(w.end, 2), "word": w.word.strip()})
+            words.append({"start": round(w.start, 2), "end": round(w.end, 2), "word": fix(w.word.strip())})
     return {
-        "language": info.language,
-        "language_probability": round(info.language_probability, 3),
+        "language": language or info.language,
+        "language_probability": round(picked_p if picked_p is not None else info.language_probability, 3),
         "device": _device,
         "text": " ".join(s["text"] for s in out_segments).strip(),
         "segments": out_segments,

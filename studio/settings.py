@@ -68,6 +68,10 @@ WHISPER_DEVICE = _env("WHISPER_DEVICE", "auto").lower()
 WHISPER_MODEL = _env("WHISPER_MODEL")
 # Blank = auto-detect per clip (handles English, Mandarin, Singlish mixes).
 WHISPER_LANGUAGE = _env("WHISPER_LANGUAGE") or None
+# The languages clips are spoken (and subtitled) in. Auto-detection picks the likeliest
+# of these, so Singlish isn't heard as Malay. Chinese always comes out in Simplified
+# characters.
+WHISPER_LANGUAGES = tuple(x.strip() for x in _env("WHISPER_LANGUAGES", "en,zh").split(",") if x.strip())
 
 # ── Claude ────────────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")

@@ -501,7 +501,39 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
     if not cuts:
         raise RuntimeError("the edit plan kept no usable footage")
     edl["cuts"] = cuts
+    return _render(conn, production, clips, edl, plan, version, find_track)
 
+
+def rerender(conn, production_id: int, find_track=None) -> Path:
+    """Render the current draft again from its edit plan, as a new version: picks up
+    changed transcripts (captions) with no new Claude plan. Keeps the draft's music."""
+    production = dict(conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone())
+    if not production.get("edl"):
+        raise RuntimeError("this production has no finished draft to render again")
+    edl = json.loads(production["edl"])
+    ids = list(dict.fromkeys(c["clip_id"] for c in edl["cuts"]))
+    rows = conn.execute(f"SELECT * FROM clips WHERE id IN ({','.join('?' * len(ids))})", ids).fetchall()
+    clips = {r["id"]: dict(r) for r in rows if Path(r["video_path"]).exists()}
+    if set(ids) - set(clips):
+        raise RuntimeError("some of the draft's clips are no longer in the library")
+    music_before = json.loads(production["music"] or "{}")
+    kept = Path(music_before["file"]) if music_before.get("file") else None
+    if kept and kept.exists():
+        find_track = lambda brief, seconds, out_dir, ref="": (kept, music_before)  # noqa: E731 - same track again
+    plan = json.loads(production["plan"] or "{}")
+    if music_before.get("recording_id") and not (kept and kept.exists()):
+        plan.setdefault("music_plan", {})["chosen"] = {
+            "title": music_before.get("title", ""), "artist": music_before.get("artist", ""),
+            "recording_id": music_before["recording_id"]}
+    catalog.set_production_status(conn, production_id, "producing")
+    return _render(conn, production, clips, edl, plan, production["version"] + 1, find_track, placed=True)
+
+
+def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version: int, find_track=None,
+            placed: bool = False) -> Path:
+    """Render an edit plan (EDL) to the next draft: cut, captions, graphics, music, QA."""
+    production_id = production["id"]
+    cuts = edl["cuts"]
     RENDERS.mkdir(parents=True, exist_ok=True)
     final = RENDERS / f"production_{production_id}_v{version}.mp4"
     with tempfile.TemporaryDirectory(prefix="studio-edit-") as tmp:
@@ -510,7 +542,7 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
         words = timeline(cuts, clips)
         chunks = caption_chunks(words, total)
         overlay = None
-        graphics = place_graphics(edl.get("graphics", []), cuts, total)
+        graphics = edl.get("graphics", []) if placed else place_graphics(edl.get("graphics", []), cuts, total)
         edl["graphics"] = graphics
         if chunks or edl["hook_text"].strip() or graphics:
             overlay = work / "overlay.webm"

@@ -8,6 +8,7 @@ anthropic==1.13.0
 
 # Local Whisper with word timestamps (CPU, or CUDA on an NVIDIA GPU)
 faster-whisper==1.2.1
+zhconv==1.4.3
 
 # Review dashboard (waitress serves it on Windows without extra setup)
 flask==3.1.3
