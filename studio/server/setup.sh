@@ -150,7 +150,7 @@ cmd_install() {
   need_root install "$domain"
   # shellcheck disable=SC1091
   . /etc/os-release
-  [ "${VERSION_ID:-}" = "24.04" ] || fail "this script is written for Ubuntu 24.04; this server runs ${PRETTY_NAME:-something else}."
+  [ "${VERSION_ID:-}" = "24.04" ] || fail "this script is written for Ubuntu 24.04; this server runs ${PRETTY_NAME:-something else}. In the Hetzner console: open the server > Rebuild > Ubuntu 24.04 (it's empty, nothing is lost), then run server_move.py again."
 
   step "1/11 System packages (ffmpeg, Python, fonts, Chrome libraries)"
   local missing=() p

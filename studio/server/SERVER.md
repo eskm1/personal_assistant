@@ -63,7 +63,7 @@ In the Hetzner Cloud console (console.hetzner.com), make a **new project** calle
 stays apart from the website's server. Open it and click **Add server**:
 
 - **Location**: Nuremberg, Falkenstein or Helsinki
-- **Image**: Ubuntu 24.04
+- **Image**: Ubuntu **24.04** (not the newer 26.04, which the setup isn't made for yet)
 - **Type**: Shared vCPU, **x86 (Intel/AMD)** > **CPX42** (8 vCPU, 16 GB, 320 GB). Not Arm64:
   the headless Chrome that renders captions has no Arm build for Linux. If CPX42 is sold out
   there, try another of the three locations.
