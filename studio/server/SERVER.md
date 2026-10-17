@@ -107,7 +107,8 @@ asks you for three things:
    Inbox belongs to. If `rclone` isn't installed, it first tells you to run
    `winget install Rclone.Rclone`.
 3. **The move itself**: it stops Studio on the laptop, then copies the library, the drafts and the
-   catalogue to the server. This is the slow part: about 10 minutes per 10 GB on a home fibre line.
+   catalogue to the server. This is the slow part: about 10 minutes per 10 GB on a home fibre line. If the
+   connection drops partway, run the command again; the copy starts over from the beginning.
 
 When it's done it prints **Done: open https://studio.theurbanmakers.com**. Sign in with your usual
 account.
@@ -133,8 +134,13 @@ If anything stops it (a typo, the Wi-Fi), run the same command again. Finished s
   If a reference says it "needs a login", save the reel to your phone and drop it in
   Studio Inbox > References > Inspiration. Or put a `cookies.txt` exported from a browser signed in
   to a spare Instagram account in `/home/studio/Studio` on the server.
+- **Accounts** move across with the catalogue, so everyone signs in as before. The dashboard's
+  first-time setup page only works on the machine itself, so a new owner account on a fresh
+  server is made over SSH:
+  `ssh root@<server address>`, then
+  `cd /home/studio/personal_assistant/studio && sudo -u studio -H venv/bin/python worker.py --add-user you@example.com Bryan --owner`.
 - **Checking on it** (rarely needed): in PowerShell on the laptop, run
-  `ssh root@<server address> "bash /root/studio-setup.sh status"`. It shows whether Studio is
+  `ssh root@<server address> bash /root/studio-server/setup.sh status`. It shows whether Studio is
   running, its latest log lines and the disk use.
 - **Going back to the laptop**: delete `Studio\MOVED_TO_SERVER.txt` on the laptop and re-enable the
   Studio Worker task in Task Scheduler. The laptop's copy of the library is as it was on the day of

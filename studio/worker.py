@@ -425,7 +425,7 @@ def check_editor() -> bool:
             return False
 
     ok &= line("Node.js", render.node_version)
-    if line("HyperFrames", render.hyperframes_version, "in studio\\render run: npm ci"):
+    if line("HyperFrames", render.hyperframes_version, f"in studio{os.sep}render run: npm ci"):
         if line("Chrome", render.browser_path):
             ok &= line("Render test", lambda: f"2-second vertical test rendered in {render.smoke_test():.0f}s")
         else:

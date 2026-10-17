@@ -29,6 +29,11 @@ It runs on its own machine and shares nothing with the bot on the server except 
 Telegram bot token, which it uses to send messages only. The server's auto-deploy
 ignores this folder.
 
+**Studio can also run on a rented server** (a Hetzner CPX42 at about €30 a month) instead of the
+laptop, so it works around the clock with the laptop off. Footage still comes in through OneDrive and
+the dashboard is at https://studio.theurbanmakers.com. See section 15 and
+[server/SERVER.md](server/SERVER.md). The steps below set up the laptop.
+
 ## 1. Keep the laptop awake at home
 
 The laptop is the server now. When you take it out, uploads queue in OneDrive and are
@@ -502,6 +507,27 @@ at about a dozen stills per reel for captions, layouts, B-roll, hook and call to
 US$0.05 a reel) and writes the report (cents). Public posts only; downloads are deleted after
 measuring. If Instagram asks for a login, set `STUDIO_YTDLP_COOKIES_BROWSER=chrome` (or `edge`) in
 `.env` so the download uses your browser's Instagram sign-in.
+## 15. Moving Studio to a server
+
+[server/SERVER.md](server/SERVER.md) has the whole move, about 45 minutes once: rent a Hetzner
+CPX42 (8 vCPU, 16 GB, EU location, with backups ticked), add one GoDaddy record (`studio` > the server's
+address), then run one command on the laptop:
+
+```powershell
+.\venv\Scripts\python server_move.py <server address>
+```
+
+It installs everything on the server (`server/setup.sh`), connects GitHub (for updates) and
+OneDrive (for footage), copies your settings, library, drafts and catalogue across, starts Studio
+there and retires the laptop's copy. After that:
+
+- footage still goes in the OneDrive **Studio Inbox**; the server collects it (`onedrive.py`) and
+  moves the originals to **Studio Archive**; approved reels land in **Studio Ready to post**;
+- the dashboard is https://studio.theurbanmakers.com (log in as before), with **Download video**
+  and, for Resolve, **Download (.zip)**;
+- updates and **Restart Studio** work as before (systemd restarts the worker);
+- checking on it: `ssh root@<server address> bash /root/studio-server/setup.sh status`.
+
 ## Day to day
 
 **Updates install themselves.** Every 10 minutes, when Studio is idle (nothing uploading,

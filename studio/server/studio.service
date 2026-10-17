@@ -1,0 +1,27 @@
+# The Studio worker and its dashboard, kept running by systemd.
+# Installed by: sudo bash setup.sh start
+# The self-updater exits after an update; Restart=always starts the new version.
+[Unit]
+Description=Studio worker and dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=studio
+Group=studio
+WorkingDirectory=/home/studio/personal_assistant/studio
+ExecStart=/home/studio/personal_assistant/studio/venv/bin/python worker.py
+Restart=always
+RestartSec=5
+Nice=5
+Environment=PYTHONUNBUFFERED=1
+# HyperFrames is pinned in render/package-lock.json; don't let it update itself.
+Environment=HYPERFRAMES_NO_UPDATE_CHECK=1
+Environment=HYPERFRAMES_NO_TELEMETRY=1
+NoNewPrivileges=yes
+PrivateTmp=yes
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

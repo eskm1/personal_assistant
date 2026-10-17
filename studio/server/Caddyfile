@@ -1,0 +1,15 @@
+# Studio's HTTPS front door. setup.sh install <domain> fills in the domain and
+# copies this to /etc/caddy/Caddyfile. Caddy gets and renews the certificate by
+# itself once the domain's A record points at this server.
+__STUDIO_DOMAIN__ {
+	# Browsers only ever talk to Studio over HTTPS from now on.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	# Room for full-length phone videos uploaded from the browser.
+	request_body {
+		max_size 4GB
+	}
+
+	# The dashboard (waitress) listens on this server only; Caddy is the only way in.
+	reverse_proxy 127.0.0.1:8765
+}

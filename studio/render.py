@@ -17,6 +17,10 @@ RENDER_DIR = Path(__file__).resolve().parent / "render"
 MIN_NODE = 22
 
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+# How to fix a missing piece, on the Windows laptop or on the Linux server.
+_WIN = os.name == "nt"
+_NODE_FIX = "winget install OpenJS.NodeJS.LTS" if _WIN else "sudo bash server/setup.sh install <domain>"
+_RENDER_DIR = "studio\\render" if _WIN else "studio/render"
 
 
 def _node() -> str | None:
@@ -35,9 +39,9 @@ def _cli() -> Path | None:
 def hyperframes(args: list[str], cwd: Path | None = None, timeout: int = 1800) -> subprocess.CompletedProcess:
     node, cli = _node(), _cli()
     if not node:
-        raise RuntimeError("Node.js not found; install it with: winget install OpenJS.NodeJS.LTS")
+        raise RuntimeError(f"Node.js not found; install it with: {_NODE_FIX}")
     if not cli:
-        raise RuntimeError("HyperFrames isn't installed; run npm ci in studio\\render")
+        raise RuntimeError(f"HyperFrames isn't installed; run npm ci in {_RENDER_DIR}")
     return subprocess.run([node, str(cli), *args], cwd=cwd or RENDER_DIR, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=timeout, creationflags=_NO_WINDOW)
 
@@ -45,13 +49,13 @@ def hyperframes(args: list[str], cwd: Path | None = None, timeout: int = 1800) -
 def node_version() -> str:
     node = _node()
     if not node:
-        raise RuntimeError("not found; install it with: winget install OpenJS.NodeJS.LTS")
+        raise RuntimeError(f"not found; install it with: {_NODE_FIX}")
     version = subprocess.run([node, "--version"], capture_output=True, text=True,
                              creationflags=_NO_WINDOW).stdout.strip()
     major = int(re.match(r"v(\d+)", version).group(1)) if re.match(r"v(\d+)", version) else 0
     if major < MIN_NODE:
         raise RuntimeError(f"{version} is too old; HyperFrames needs Node {MIN_NODE}+ "
-                           "(winget upgrade OpenJS.NodeJS.LTS)")
+                           + ("(winget upgrade OpenJS.NodeJS.LTS)" if _WIN else f"({_NODE_FIX})"))
     return version
 
 
@@ -67,7 +71,7 @@ def browser_path() -> str:
     result = hyperframes(["browser", "path"], timeout=120)
     path = (result.stdout or "").strip().splitlines()[-1:] or [""]
     if result.returncode != 0 or not path[0]:
-        raise RuntimeError("Chrome for rendering is missing; in studio\\render run: npx hyperframes browser ensure")
+        raise RuntimeError(f"Chrome for rendering is missing; in {_RENDER_DIR} run: npx hyperframes browser ensure")
     return path[0]
 
 

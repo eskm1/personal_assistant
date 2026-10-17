@@ -110,6 +110,7 @@ def apply() -> dict:
             if npm:
                 log.info("Update changed the renderer's packages; running npm ci")
                 _run([npm, "ci", "--no-audit", "--no-fund"], HERE / "render", "npm ci")
+                _ensure_browser()
         _run([sys.executable, "-c", f"import {_MODULES}"], HERE, "checking the new version", timeout=300)
     except (UpdateError, OSError, subprocess.TimeoutExpired) as e:
         # --keep goes back without touching anything else on the laptop.
@@ -119,6 +120,18 @@ def apply() -> dict:
             "at": time.strftime("%Y-%m-%d %H:%M")}
     STATE.write_text(json.dumps(info, indent=2), encoding="utf-8")
     return info
+
+
+def _ensure_browser() -> None:
+    """A new HyperFrames may pin a newer Chrome: fetch it now rather than during the
+    next render. Not fatal: the render would fetch it anyway."""
+    import render
+    try:
+        result = render.hyperframes(["browser", "ensure"], timeout=900)
+        if result.returncode != 0:
+            log.warning("Couldn't fetch the renderer's Chrome after the update: %s", (result.stderr or "")[-300:])
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+        log.warning("Couldn't fetch the renderer's Chrome after the update: %s", e)
 
 
 def restart() -> None:
