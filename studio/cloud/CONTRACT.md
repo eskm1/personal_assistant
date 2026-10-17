@@ -115,3 +115,34 @@ not a JWT) goes ONLY in the `apikey` header; a legacy `service_role` JWT (`eyJ..
 
 `worker.py --cloud-import` pushes an existing local plan (projects, arcs, ideas, shots, takes) up
 once. When the cloud is enabled, the local dashboard's Plan tab becomes a link to the planner.
+
+## Reference guides and the style guide (migration 20261017000000_references.sql)
+
+The team keeps a library of reference reels in the planner (**References** tab): their own
+best-performing reels (`side='ours'`) and other accounts' (`side='inspiration'`), each with a
+plain-language note on why it works (`why`), for a brand (default `urban_makers`). References
+are retired (status `retired`), not deleted, when they stop representing the style.
+
+| Data | Written by | Notes |
+|---|---|---|
+| reference_videos | members in the planner (links); the laptop for files dropped in `Studio Inbox\References\Ours` / `...\Inspiration` (`file_name`, `url` null) | url must be https |
+| reference_analysis | laptop only | a `pending` row is created by trigger for each reference; laptop sets running -> done/failed with `measured`, `look`, `stills` (thumbs bucket `refs/<id>/<n>.jpg`); `analyser` version bump = re-analyse |
+| style_guides | laptop inserts drafts; owner approves (status -> active, previous active -> archived by trigger), rejects, or edits `content` before approving | `reference_ids` = the active, analysed references it was built from; `added_ids`/`removed_ids` vs the previous active guide |
+| jobs kind `style` | any member queues "Update style guide" (runner laptop) | result `{guide_id, version}` |
+
+**Laptop (cloud_sync, each tick):** analyse pending references (download -> `style_study.measure`
+-> stills -> `style_study.look`, upload stills, delete the download), at most 2 per tick so ingest
+isn't starved; then, if the set of active analysed references of a brand differs from the latest
+draft-or-active guide's `reference_ids` and nothing is pending, draft a new guide automatically
+(also on a `style` job): Claude gets the previous active guide, every active reference's numbers,
+look and why-note, and which were added/removed (with their notes), and writes `content`,
+`report`, `changes`. When a guide becomes active, the laptop writes its `content` into
+`playbook.md` between the style-study markers (replacing an earlier one) and remembers which
+guide id it applied.
+
+**Planner:** References tab: add link (+ side, why, brand), edit why, retire/restore, see
+analysis state and a strip of stills plus key numbers (shot length, first cut, words/s, music
+under voice). Style guide view: the active guide (Markdown rendered safely as text), its report,
+version history; a banner when references changed since it ("2 added, 1 retired"); the newest
+draft with its "What changed" and Approve / Reject / Edit (owner); "Update style guide" queues a
+`style` job (shows waiting-for-laptop when it's off).

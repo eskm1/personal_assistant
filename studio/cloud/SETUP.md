@@ -92,3 +92,17 @@ Then:
 - **Security**: invite-only sign-in; every table is locked to members by row-level rules; stills
   are in a private bucket. The secret key lives only in the laptop's `.env` and in Supabase; never
   paste it anywhere else.
+
+## When an update changes the online database
+
+Studio updates itself on the laptop, and Netlify redeploys the planner by itself. New database
+tables or Claude functions (for example the References and Style guide features) need one command
+on the laptop, which the dashboard's Plan card tells you about when it's due:
+
+```powershell
+cd $env:USERPROFILE\personal_assistant\studio
+.\venv\Scripts\python cloud_setup.py --update
+```
+
+It applies the new database changes and redeploys the functions; the first time it may open the
+browser to sign the Supabase tool in, or ask for the database password.

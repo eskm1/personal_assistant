@@ -120,10 +120,33 @@ def make_owner(url: str, key: str, email: str, name: str, password: str) -> None
         raise ValueError(f"couldn't create the account (HTTP {r.status_code}: {r.text[:160]})")
 
 
+def update() -> int:
+    """Bring an already set-up project up to date with this version of Studio."""
+    env = read_env(ENV_FILE)
+    try:
+        ref = project_ref(env.get("STUDIO_SUPABASE_URL", ""))
+    except ValueError:
+        raise SystemExit("Run the full setup first: .\\venv\\Scripts\\python cloud_setup.py")
+    say(f"Updating Supabase project {ref} (it may open the browser to sign in, or ask for the database password).")
+    if not (CLOUD / "supabase" / ".temp" / "project-ref").exists():
+        npx("login")
+        npx("link", "--project-ref", ref)
+    say("\nApplying new database changes ...")
+    npx("db", "push")
+    say("\nRedeploying the Claude functions ...")
+    npx("functions", "deploy", *FUNCTIONS, "--use-api")
+    say("\nDone. Nothing else to do; the planner picks the changes up by itself.")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Set up the online planner's Supabase backend.")
     parser.add_argument("--skip-cli", action="store_true", help="skip steps 1-5 (already done)")
+    parser.add_argument("--update", action="store_true",
+                        help="after a Studio update: apply new database changes and redeploy the functions")
     args = parser.parse_args()
+    if args.update:
+        return update()
     env = read_env(ENV_FILE)
     say("Studio online planner setup. You need: a Supabase project (supabase.com, free plan,\n"
         "region Southeast Asia (Singapore)) and its dashboard open in your browser.")
