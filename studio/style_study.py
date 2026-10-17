@@ -53,7 +53,7 @@ JUMP_MIN, JUMP_RATIO = 0.004, 4  # a jump cut / punch-in: a smaller spike, well 
 MAX_STILLS = 12
 # Bump when measure()/look() change: the sync re-analyses references made by an older one
 # (reference_analysis.analyser).
-ANALYSER = 1
+ANALYSER = 2  # 2: downloads on the server found ffmpeg (every reel there had failed)
 # Instagram sign-in for downloads on a machine with no browser (the server): a
 # Netscape-format cookies.txt exported from a browser signed in to a spare account.
 COOKIES_FILE = ROOT / "cookies.txt"
@@ -95,8 +95,11 @@ def download(url: str, out_dir: Path) -> Path:
         "quiet": True, "noprogress": True, "noplaylist": True, "restrictfilenames": True,
         "socket_timeout": 30, "retries": 2,
     }
-    if settings.FFMPEG:
-        opts["ffmpeg_location"] = str(Path(settings.FFMPEG).parent)
+    # Where ffmpeg is (it joins a reel's picture and sound): FFMPEG may be a full path (the
+    # laptop) or just "ffmpeg" on the PATH (the server), so look it up either way.
+    ffmpeg = shutil.which(settings.FFMPEG or "ffmpeg")
+    if ffmpeg:
+        opts["ffmpeg_location"] = ffmpeg
     browser = settings._env("STUDIO_YTDLP_COOKIES_BROWSER")  # e.g. "chrome" if Instagram asks for a login
     if browser:
         opts["cookiesfrombrowser"] = (browser,)

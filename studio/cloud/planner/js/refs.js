@@ -406,7 +406,8 @@ function detailHTML(id) {
       <p class="muted small">Analysed ${esc(ago(a.analysed_at || a.updated_at))}.</p>`;
   } else if (a.state === "failed") {
     analysis = `<p class="error-text">Studio couldn't analyse it: ${esc(str(a.error) || "unknown error")}</p>
-      <p class="muted small">${r.url ? "Check the link opens without signing in (private accounts can't be downloaded)." : "Check the file in the References folder plays."} Changing the link analyses it again.</p>`;
+      <p class="muted small">${!r.url ? "Check the file in the References folder plays. "
+        : /login|private|sign in|cookies/i.test(str(a.error)) ? "Check the link opens without signing in (private accounts can't be downloaded). " : ""}Studio tries again within a day; changing the link analyses it again now.</p>`;
   } else if (a.state === "running") {
     analysis = `<p><span class="spin"></span> Studio is analysing it: cuts, pace, music, and a look at a dozen stills.</p>`;
   } else {
