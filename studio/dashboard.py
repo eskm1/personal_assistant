@@ -17,6 +17,7 @@ import logging
 import mimetypes
 import os
 import re
+import shutil
 import sqlite3
 import threading
 import time
@@ -403,7 +404,19 @@ def board():
         "costs": usage.month_summary(db()) if is_owner() else None,
         # Planning online (cloud_sync.py): the Plan tab links to the planner instead.
         "cloud": cloud_sync.dashboard_info(),
+        "machine": _machine_info(),
     })
+
+
+def _machine_info() -> dict:
+    """Free disk and, on the server, the OneDrive link: shown on the In the cloud tab."""
+    import onedrive
+    free = shutil.disk_usage(settings.ROOT).free
+    info = {"disk_free_gb": round(free / 1e9, 1)}
+    if onedrive.configured():
+        st = onedrive.status()
+        info["onedrive"] = {k: st.get(k) for k in ("inbox", "last_pull", "waiting", "uploading", "pulling", "last_error")}
+    return info
 
 
 # ── Detail ────────────────────────────────────────────────────────────────────

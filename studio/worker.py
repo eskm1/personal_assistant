@@ -617,7 +617,12 @@ def main() -> int:
     if cloud_sync.enabled():
         log.info("Online planning on: syncing with %s every %ss", settings.SUPABASE_URL, settings.CLOUD_SYNC_SECONDS)
     cloud_sync.tick(conn, force=True)  # the plan to match footage against, before the first ingest
+    import onedrive
+    if onedrive.configured():
+        log.info("OneDrive intake on: collecting from %s", settings.ONEDRIVE_INBOX)
     while True:
+        # On the server: copy new uploads from OneDrive into the inbox (in the background).
+        onedrive.tick(conn, force=args.once, background=not args.once)
         for path in inbox_videos():
             try:
                 ingest(conn, path, use_claude)
@@ -631,7 +636,8 @@ def main() -> int:
         busy = _busy(conn, editor_on)
         notify.digest.flush(busy=busy)
         import updater
-        updater.tick(idle=not busy and not (dashboard_busy() if not args.no_dashboard else False))
+        updater.tick(idle=not busy and not onedrive.busy()
+                     and not (dashboard_busy() if not args.no_dashboard else False))
         time.sleep(POLL_SECONDS)
 
 

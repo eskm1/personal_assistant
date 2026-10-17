@@ -340,7 +340,7 @@ function renderTabs() {
   }).join("");
   $("#stage-hint").textContent = state.stage === "plan" && state.cloud
     ? "The team plans on the online planner. Footage dropped in a project's inbox folder is still matched to its shots here, and shows up there."
-    : STAGES.find((s) => s.key === state.stage).hint;
+    : state.stage === "cloud" ? cloudHint() : STAGES.find((s) => s.key === state.stage).hint;
   renderToolbar();
 }
 
@@ -390,6 +390,21 @@ function render() {
 
 // Planning online (Supabase): the Plan tab links to the planner and shows how the
 // laptop's sync is going, instead of the local board.
+// The In the cloud tab on the server: what's waiting in OneDrive, and free disk.
+function cloudHint() {
+  const m = state.machine || {};
+  const o = m.onedrive;
+  const disk = m.disk_free_gb != null ? ` ${m.disk_free_gb} GB free on Studio's disk.` : "";
+  if (!o) return STAGES.find((s) => s.key === "cloud").hint + disk;
+  const parts = [`Uploads in the OneDrive folder "${o.inbox}". Studio collects each one within a couple of minutes of it finishing.`];
+  if (o.pulling) parts.push(`Collecting ${o.pulling} now.`);
+  else if (o.waiting) parts.push(`${o.waiting} waiting in OneDrive.`);
+  if (o.uploading) parts.push(`${o.uploading} still uploading.`);
+  if (o.last_error) parts.push(`OneDrive problem: ${o.last_error}.`);
+  else if (o.last_pull) parts.push(`Last checked ${ago(o.last_pull)}.`);
+  return parts.join(" ") + disk;
+}
+
 function renderCloudPlan() {
   const c = state.cloud;
   const root = $("#planner");
@@ -436,6 +451,7 @@ async function sync() {
     state.ideasJob = data.ideas_job || {};
     const cloudBefore = JSON.stringify(state.cloud ?? null);
     state.cloud = data.cloud || null;
+    state.machine = data.machine || null;
     const cloudChanged = cloudBefore !== JSON.stringify(state.cloud);
     const costs = $("#costs");
     costs.hidden = !data.costs;
