@@ -138,7 +138,8 @@ If anything stops it (a typo, the Wi-Fi), run the same command again. Finished s
   first-time setup page only works on the machine itself, so a new owner account on a fresh
   server is made over SSH:
   `ssh root@<server address>`, then
-  `cd /home/studio/personal_assistant/studio && sudo -u studio -H venv/bin/python worker.py --add-user you@example.com Bryan --owner`.
+  `cd /home/studio/personal_assistant/studio && sudo -u studio -H venv/bin/python worker.py --add-user you@example.com Bryan --owner`. A forgotten password: the same, with
+  `worker.py --reset-password you@example.com`.
 - **Checking on it** (rarely needed): in PowerShell on the laptop, run
   `ssh root@<server address> bash /root/studio-server/setup.sh status`. It shows whether Studio is
   running, its latest log lines and the disk use.

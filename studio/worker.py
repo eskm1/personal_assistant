@@ -24,6 +24,7 @@ Usage (from the studio folder, inside its venv):
   python worker.py --resolve 12     make a DaVinci Resolve project of production 12's draft
   python worker.py --check-quality  quality-check clips from before the check existed (--all: every clip)
   python worker.py --add-user a@b.com "Name" [--owner]  make a dashboard account
+  python worker.py --reset-password a@b.com             set a new password for one
   python worker.py --cloud-check   check the online planner connection and what the next sync does
   python worker.py --cloud-import  push the plan made on this dashboard to the online planner, once
   add --no-claude to transcribe and catalogue without tagging (no API calls)
@@ -475,6 +476,37 @@ def check() -> int:
     return 0 if ok else 1
 
 
+def accounts(args) -> int:
+    """--add-user / --reset-password: dashboard accounts, from the machine Studio runs on."""
+    import getpass
+    import auth
+    import catalog
+    conn = catalog.connect()
+    password = getpass.getpass("Password (10+ characters): ")
+    if args.reset_password:
+        row = conn.execute("SELECT id, name FROM users WHERE email = ?",
+                           (args.reset_password.strip().lower(),)).fetchone()
+        if row is None:
+            emails = ", ".join(r["email"] for r in conn.execute("SELECT email FROM users")) or "none yet"
+            print(f"No account with that email. Accounts: {emails}")
+            return 1
+        try:
+            auth.set_password(conn, row["id"], password)
+        except ValueError as e:
+            print(f"Not changed: {e}")
+            return 1
+        print(f"New password set for {row['name']}.")
+        return 0
+    try:
+        auth.create_user(conn, args.add_user[0], args.add_user[1], password,
+                         auth.OWNER if args.owner else auth.TEAM)
+    except ValueError as e:
+        print(f"Not created: {e}")
+        return 1
+    print(f"Account made for {args.add_user[1]} ({'owner' if args.owner else 'team'}).")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Studio worker: tag phone footage as it arrives.")
     mode = parser.add_mutually_exclusive_group()
@@ -491,6 +523,7 @@ def main() -> int:
     mode.add_argument("--add-user", nargs=2, metavar=("EMAIL", "NAME"),
                       help="make a dashboard account (asks for the password); add --owner for Bryan")
     parser.add_argument("--owner", action="store_true", help="with --add-user: an owner account")
+    mode.add_argument("--reset-password", metavar="EMAIL", help="set a new password for a dashboard account")
     mode.add_argument("--cloud-check", action="store_true",
                       help="check the online planner (Supabase) connection and what would sync")
     mode.add_argument("--cloud-import", action="store_true",
@@ -519,6 +552,8 @@ def main() -> int:
         import catalog
         import cloud_sync
         return cloud_sync.check(catalog.connect())
+    if args.add_user or args.reset_password:  # accounts: fine while Studio runs
+        return accounts(args)
     restarted = os.environ.pop("STUDIO_RESTARTED", "") == "1"
     if not _single_instance(wait=60 if restarted else 0):
         if args.cloud_import:
@@ -563,18 +598,6 @@ def main() -> int:
         return 0
     if args.check_quality:
         check_quality(conn, args.all)
-        return 0
-    if args.add_user:
-        import getpass
-        import auth
-        password = getpass.getpass("Password (10+ characters): ")
-        try:
-            auth.create_user(conn, args.add_user[0], args.add_user[1], password,
-                             auth.OWNER if args.owner else auth.TEAM)
-        except ValueError as e:
-            print(f"Not created: {e}")
-            return 1
-        print(f"Account made for {args.add_user[1]} ({'owner' if args.owner else 'team'}).")
         return 0
     if args.cloud_import:
         import cloud_sync
