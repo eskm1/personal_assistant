@@ -10,6 +10,11 @@ The first account is made at /setup, which only answers on the laptop itself
 (not through a tunnel), or with `worker.py --add-user`. Sessions are signed
 cookies that last 30 days; changing a password or removing someone signs them
 out everywhere.
+
+When planning is online, the planner's email and password work here too
+(checked with Supabase, cloud_auth.py): the first sign-in makes the local
+account, with the planner role. Team accounts must use an email at one of
+STUDIO_ALLOWED_EMAIL_DOMAINS (theurbanmakers.com); owners are always let in.
 """
 import hashlib
 import secrets
@@ -21,6 +26,7 @@ from pathlib import Path
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import catalog
+import settings
 from settings import ROOT
 
 OWNER, TEAM = "owner", "team"
@@ -42,6 +48,19 @@ def secret_key() -> bytes:
     return path.read_bytes()
 
 
+def email_allowed(email: str, role: str = TEAM) -> bool:
+    """Owners always; everyone else only with an email at an allowed domain."""
+    domains = settings.ALLOWED_EMAIL_DOMAINS
+    if role == OWNER or not domains or "*" in domains:
+        return True
+    return (email or "").strip().lower().rpartition("@")[2] in domains
+
+
+def domain_hint() -> str:
+    domains = [d for d in settings.ALLOWED_EMAIL_DOMAINS if d != "*"]
+    return f"Use your @{domains[0]} email." if domains else ""
+
+
 def users_exist(conn) -> bool:
     return conn.execute("SELECT 1 FROM users WHERE disabled = 0 LIMIT 1").fetchone() is not None
 
@@ -50,6 +69,8 @@ def create_user(conn, email: str, name: str, password: str, role: str = TEAM) ->
     email, name = email.strip().lower(), name.strip()
     if "@" not in email or not name:
         raise ValueError("enter a name and an email address")
+    if not email_allowed(email, role):
+        raise ValueError(domain_hint())
     if len(password) < MIN_PASSWORD:
         raise ValueError(f"use at least {MIN_PASSWORD} characters for the password")
     if conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
@@ -74,20 +95,58 @@ def _failed(key: str) -> None:
         _FAILS.setdefault(key, []).append(time.time())
 
 
-def login(conn, email: str, password: str, client_ip: str) -> dict:
-    """The user row on success; raises ValueError with a message to show otherwise."""
+def login(conn, email: str, password: str, client_ip: str, planner=None) -> dict:
+    """The user row on success; raises ValueError with a message to show otherwise.
+    planner(email, password) -> {"name", "role"} or None: the planner's check, tried
+    when the local password doesn't match (the throttle covers both)."""
     email = email.strip().lower()
     for key in (f"ip:{client_ip}", f"email:{email}"):
         if _throttled(key):
             raise ValueError("Too many wrong attempts. Try again in 15 minutes.")
     row = conn.execute("SELECT * FROM users WHERE email = ? AND disabled = 0", (email,)).fetchone()
     if row is None or not check_password_hash(row["password_hash"], password):
-        _failed(f"ip:{client_ip}")
-        _failed(f"email:{email}")
-        raise ValueError("That email and password don't match.")
+        found = planner(email, password) if planner and password else None
+        if not found:
+            _failed(f"ip:{client_ip}")
+            _failed(f"email:{email}")
+            raise ValueError("That email and password don't match.")
+        row = planner_user(conn, email, found["name"], found["role"])
+    elif planner and row["role"] != OWNER and not row["planner_ok"]:
+        # Same password in the planner? Then the email is proven theirs (the planner opens here).
+        try:
+            if planner(email, password):
+                conn.execute("UPDATE users SET planner_ok = 1 WHERE id = ?", (row["id"],))
+                row = conn.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
+        except ValueError:
+            pass
+    if not email_allowed(row["email"], row["role"]):
+        raise ValueError(domain_hint())
     conn.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (catalog.now(), row["id"]))
     conn.commit()
     return dict(row)
+
+
+def planner_user(conn, email: str, name: str, role: str):
+    """The local account for someone who signed in with their planner password: made
+    the first time (no usable local password), with the planner's role after that.
+    The last owner is never demoted. A removed account stays removed."""
+    role = OWNER if role == OWNER else TEAM
+    row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    if row is not None and row["disabled"]:
+        raise ValueError("This account was removed from Studio. Ask Bryan to add you again.")
+    if row is None:
+        if not email_allowed(email, role):
+            raise ValueError(domain_hint())
+        conn.execute("INSERT INTO users (email, name, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+                     (email, (name or email.split("@")[0]).strip()[:80], role,
+                      generate_password_hash(secrets.token_urlsafe(32)), catalog.now()))
+    elif row["role"] != role:
+        owners = conn.execute("SELECT COUNT(*) FROM users WHERE role = ? AND disabled = 0", (OWNER,)).fetchone()[0]
+        if not (row["role"] == OWNER and owners <= 1):
+            conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, row["id"]))
+    conn.execute("UPDATE users SET planner_ok = 1 WHERE email = ?", (email,))
+    conn.commit()
+    return conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
 
 
 def current(conn, session) -> dict | None:
@@ -95,7 +154,7 @@ def current(conn, session) -> dict | None:
     if not uid:
         return None
     row = conn.execute("SELECT * FROM users WHERE id = ? AND disabled = 0", (uid,)).fetchone()
-    if row is None or row["session_version"] != version:
+    if row is None or row["session_version"] != version or not email_allowed(row["email"], row["role"]):
         return None
     return dict(row)
 

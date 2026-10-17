@@ -34,6 +34,9 @@ export const PLAN_FORMATS = ["talking_head", "day_in_the_life", "compilation"];
 export const FRAMING = { wide: "Wide", medium: "Medium", close: "Close-up", detail: "Detail", pov: "POV", overhead: "Overhead" };
 export const KIND = { talking: "Talking to camera", broll: "B-roll", detail: "Detail", before_after: "Before / after", reaction: "Reaction", screen: "Screen" };
 export const CAMERA = { iphone: "iPhone", zfc: "Z fc", gopro: "GoPro", any: "Any camera" };
+// The cameras by their full names, in the order the shoot plan groups shots.
+export const CAMERA_LONG = { iphone: "iPhone 16 Pro", zfc: "Nikon Z fc", gopro: "GoPro", any: "Any camera" };
+export const CAMERA_ORDER = ["iphone", "zfc", "gopro", "any"];
 export const SHOT_STATE = { needed: "Needed", filmed: "Filmed: waiting for upload", got: "Got it", retake: "Retake" };
 export const DECISION = { go: "Go", parked: "Parked", proposed: "Not decided" };
 export const VERDICT = { good: "Good", check: "Check", retake: "Retake" };
@@ -91,6 +94,51 @@ export function options(values, labels, current, blank) {
   return (blank != null ? `<option value="">${esc(blank)}</option>` : "")
     + values.map((v) => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(labels[v] || v)}</option>`).join("");
 }
+// Site days and phases are calendar dates ("2026-10-20"), read as local days.
+const pad2 = (n) => String(n).padStart(2, "0");
+export const isoDay = (d = new Date()) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+export const todayISO = () => isoDay(new Date());
+export function parseDay(iso) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+}
+// The local calendar day of a timestamp.
+export const dayOf = (ts) => { const t = Date.parse(ts || ""); return t ? isoDay(new Date(t)) : ""; };
+const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// "Mon 20 Oct"
+export function dayLabel(iso, { weekday = true, year = false } = {}) {
+  const d = parseDay(iso);
+  if (!d) return "";
+  return `${weekday ? `${WD[d.getDay()]} ` : ""}${d.getDate()} ${MON[d.getMonth()]}${year ? ` ${d.getFullYear()}` : ""}`;
+}
+// "Mon 20 – Tue 21 Oct", "From Mon 20 Oct", "No dates yet"
+export function dayRange(a, b) {
+  if (a && b && a === b) return dayLabel(a);
+  if (a && b) {
+    const da = parseDay(a), db = parseDay(b);
+    const head = da.getMonth() === db.getMonth() && da.getFullYear() === db.getFullYear() ? `${WD[da.getDay()]} ${da.getDate()}` : dayLabel(a);
+    return `${head} – ${dayLabel(b)}`;
+  }
+  if (a) return `From ${dayLabel(a)}`;
+  if (b) return `Until ${dayLabel(b)}`;
+  return "No dates yet";
+}
+// A table or column from a database update that hasn't been applied yet.
+export function missingTable(err) {
+  return /PGRST205|PGRST204|42P01|42703|Could not find the table|schema cache|does not exist/i.test(`${err?.code || ""} ${err?.message || ""}`);
+}
+// Filmed = ticked on site, or footage is in.
+export const isFilmed = (s) => !!s.filmed_at || (s.takes || []).length > 0;
+export function copyText(text) {
+  const done = () => toast("Copied.");
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text).then(done, () => toast(text, 8000));
+  toast(text, 8000);
+  return Promise.resolve();
+}
+// Served by the Studio dashboard at /plan/ (one app with the dashboard) rather than on its own.
+export const underPlan = /^\/plan(\/|$)/.test(location.pathname);
+
 export function store(key, value) { try { localStorage.setItem(key, value); } catch { /* private mode */ } }
 export function recall(key) { try { return localStorage.getItem(key); } catch { return null; } }
 export function plural(n, word, many = `${word}s`) { return `${n} ${n === 1 ? word : many}`; }
@@ -227,6 +275,26 @@ export function pbarHTML(p) {
   return `<span class="pbar" role="img" aria-label="${esc(label)}" title="${esc(label)}">${["got", "filmed", "retake", "needed"]
     .map((k) => (p[k] ? `<i class="${k}" data-f="${Number(p[k]) || 0}"></i>` : "")).join("")}</span>`;
 }
+// A thin "done of total" bar.
+export function fbarHTML(done, total, label = "") {
+  if (!total) return `<span class="pbar thin none"></span>`;
+  const l = label || `${done} of ${total} filmed`;
+  return `<span class="pbar thin" role="img" aria-label="${esc(l)}" title="${esc(l)}">${done ? `<i class="got" data-f="${Number(done) || 0}"></i>` : ""}${total - done ? `<i class="needed" data-f="${Number(total - done) || 0}"></i>` : ""}</span>`;
+}
+const cleanFolder = (s) => String(s || "").replace(/[<>:"/\\|?*]/g, "").trim().slice(0, 80);
+// Where camera clips for a Go idea go: its post folder in the Studio Inbox.
+export function folderLineHTML(project, idea) {
+  if (!idea?.folder || idea.decision !== "go" || idea.status === "dismissed") return "";
+  const pf = cleanFolder(project?.folder) || cleanFolder(project?.name);
+  const parts = ["OneDrive", "Studio Inbox", pf, idea.folder].filter(Boolean);
+  const path = ["Studio Inbox", pf, idea.folder].filter(Boolean).join("/");
+  return `<div class="folder-line"><span class="folder-text">Camera clips: ${parts.map(esc).join(" › ")}</span>
+    <button type="button" class="btn small ghost" data-copy="${esc(path)}" aria-label="Copy the folder path ${esc(path)}">Copy</button></div>`;
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest?.("[data-copy]");
+  if (b) copyText(b.dataset.copy);
+});
 function paintBars(root) {
   if (root.nodeType !== 1) return;
   const bars = root.matches?.(".pbar i[data-f]") ? [root] : root.querySelectorAll(".pbar i[data-f]");
@@ -339,10 +407,12 @@ export function syncInert() {
 
 let modalClick = null;
 let modalReturn = null;
-export function openModal(html, onClick, wide = false) {
+// kind "sheet": full screen on phones (quick add).
+export function openModal(html, onClick, wide = false, kind = "") {
   if ($("#modal").hidden) modalReturn = document.activeElement;
   $("#modal-body").innerHTML = html;
   $("#modal .modal-card").classList.toggle("wide", wide);
+  $("#modal").classList.toggle("sheet", kind === "sheet");
   modalClick = onClick || null;
   $("#modal").hidden = false;
   syncInert();

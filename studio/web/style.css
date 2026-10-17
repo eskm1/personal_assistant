@@ -31,6 +31,9 @@ button { cursor: pointer; }
   border-bottom: 1px solid var(--line);
 }
 .brand-mark { font-weight: 800; font-size: 18px; letter-spacing: .02em; }
+.places { display: flex; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; }
+.places a { padding: 6px 14px; border-radius: 999px; color: var(--muted); text-decoration: none; font-weight: 600; }
+.places a.on { background: var(--surface-2); color: var(--text); }
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
 .tabs button {
   background: none; border: 0; padding: 8px 12px; border-radius: 999px; color: var(--muted);

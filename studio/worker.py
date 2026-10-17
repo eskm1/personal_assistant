@@ -108,21 +108,29 @@ def is_ready(path: Path) -> bool:
 
 
 def inbox_files() -> list[Path]:
-    """Videos in the inbox and one level of subfolders (one per project), synced or not."""
-    if not INBOX.exists():
-        return []
-    found = []
-    for p in INBOX.iterdir():
-        if p.is_dir() and p.name.lower() == "references":
-            continue  # reference reels, not footage (cloud_sync registers them)
-        if p.is_dir() and not p.name.startswith((".", "~")):
-            try:
-                found += [q for q in p.iterdir() if q.is_file()]
-            except OSError:
+    """Videos in the inbox, its project folders and their post folders
+    (Inbox/<project>/<post>/), synced or not. Hidden folders and References are skipped."""
+    found: list[Path] = []
+
+    def scan(folder: Path, depth: int) -> None:
+        try:
+            entries = list(folder.iterdir())
+        except OSError:
+            return
+        for p in entries:
+            if p.name.startswith((".", "~")):
                 continue
-        elif p.is_file():
-            found.append(p)
-    return [p for p in found if p.suffix.lower() in VIDEO_EXTS and not p.name.startswith((".", "~"))]
+            if p.is_dir():
+                if depth == 0 and p.name.lower() == "references":
+                    continue  # reference reels, not footage (cloud_sync registers them)
+                if depth < 2:
+                    scan(p, depth + 1)
+            elif p.is_file() and p.suffix.lower() in VIDEO_EXTS:
+                found.append(p)
+
+    if INBOX.exists():
+        scan(INBOX, 0)
+    return found
 
 
 def inbox_videos() -> list[Path]:
@@ -201,11 +209,12 @@ def tag_clip(conn, clip_id: int, clip_dir: Path, video: Path, source_name: str,
         log.info("Transcribed %s on %s: %d words", source_name, transcript["device"],
                  len(transcript["words"]))
 
-    project_id = conn.execute("SELECT project_id FROM clips WHERE id = ?", (clip_id,)).fetchone()[0]
+    project_id, idea_id = conn.execute("SELECT project_id, idea_id FROM clips WHERE id = ?", (clip_id,)).fetchone()
     analysis = None
     if use_claude:
         import classify
-        shots_text, shot_ids = plan.open_shots_text(conn, project_id)
+        # A clip from a post folder is matched only against that post's shots.
+        shots_text, shot_ids = plan.open_shots_text(conn, project_id, idea_id)
         analysis = classify.classify(meta, frames, transcript, source_name, ref=f"clip:{clip_id}",
                                      shot_list=shots_text)
         (clip_dir / "analysis.json").write_text(json.dumps(analysis, indent=2, ensure_ascii=False),
@@ -230,13 +239,17 @@ def ingest(conn, path: Path, use_claude: bool) -> None:
     import catalog
     import extract
     import notify
+    import uploads
 
     source_name = path.name
+    pin = uploads.pin_for(conn, path)  # uploaded from the planner to one shot
     fp = fingerprint(path)
     existing = catalog.find(conn, fp)
     if existing is not None and existing["status"] in ("tagged", "transcribed"):
         _set_aside(path, "Duplicates", f"same clip as {existing['video_path']}")
         notify.digest.add("duplicate")
+        if pin:  # already in the library: that clip is the take
+            uploads.attach(conn, pin, existing["id"])
         return
 
     try:
@@ -244,6 +257,8 @@ def ingest(conn, path: Path, use_claude: bool) -> None:
     except RuntimeError as e:
         _set_aside(path, "Unreadable", str(e))
         notify.digest.add("unreadable")
+        if pin:
+            uploads.failed(conn, pin, "Studio couldn't read this video")
         return
 
     when = _recorded_local(meta, path)
@@ -252,12 +267,18 @@ def ingest(conn, path: Path, use_claude: bool) -> None:
     video = clip_dir / path.name
     shutil.move(str(path), str(video))  # copy + delete when the inbox is on another drive
     clip_id = catalog.start(conn, fp, source_name, clip_dir, video)
-    # Uploads in an inbox subfolder named after a project (Studio Inbox\Kensington\...) belong to it.
-    if path.parent != INBOX:
+    # Uploads in an inbox subfolder named after a project (Studio Inbox\Kensington\...) belong to
+    # it; in a post folder inside that (Studio Inbox\Kensington\Shower reveal\...), to that idea too.
+    try:
+        folders = path.parent.relative_to(INBOX).parts
+    except ValueError:  # --file from anywhere: its folder may still be named after a project
+        folders = (path.parent.name,)
+    if folders:
         import plan
-        project_id = plan.project_for_folder(conn, path.parent.name)
+        project_id = plan.project_for_folder(conn, folders[0])
+        idea_id = plan.idea_for_folder(conn, project_id, folders[1]) if project_id and len(folders) > 1 else None
         if project_id:
-            conn.execute("UPDATE clips SET project_id = ? WHERE id = ?", (project_id, clip_id))
+            conn.execute("UPDATE clips SET project_id = ?, idea_id = ? WHERE id = ?", (project_id, idea_id, clip_id))
             conn.commit()
     log.info("Ingesting %s -> %s", source_name, clip_dir)
 
@@ -267,6 +288,12 @@ def ingest(conn, path: Path, use_claude: bool) -> None:
         log.exception("Failed on %s", source_name)
         catalog.mark_failed(conn, clip_id, f"{type(e).__name__}: {e}")
         notify.digest.add("failed")
+        if pin:
+            uploads.failed(conn, pin, f"Studio couldn't process this video ({type(e).__name__}); it tries again later",
+                           clip_id)
+        return
+    if pin:
+        uploads.attach(conn, pin, clip_id)
 
 
 def retry_failed(conn, use_claude: bool) -> None:
@@ -283,6 +310,9 @@ def retry_failed(conn, use_claude: bool) -> None:
         except Exception as e:
             log.exception("Retry failed on %s", row["source_name"])
             catalog.mark_failed(conn, row["id"], f"{type(e).__name__}: {e}")
+            continue
+        import uploads
+        uploads.retried(conn, row["id"])  # an upload whose first try failed is a take after all
 
 
 def check_quality(conn, everything: bool = False) -> None:
@@ -663,7 +693,8 @@ def main() -> int:
         busy = _busy(conn, editor_on)
         notify.digest.flush(busy=busy)
         import updater
-        updater.tick(idle=not busy and not onedrive.busy()
+        import uploads
+        updater.tick(idle=not busy and not onedrive.busy() and not uploads.busy()
                      and not (dashboard_busy() if not args.no_dashboard else False))
         time.sleep(POLL_SECONDS)
 

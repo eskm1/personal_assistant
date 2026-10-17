@@ -287,8 +287,10 @@ async function openTeam(invite) {
 async function renderTeam(invite) {
   const t = await api("/api/team");
   const note = $("#invite-note")?.value || "";
+  const domains = (t.domains || []).map((d) => `@${d}`).join(" or ");
   $("#modal-body").innerHTML = `<h2 id="modal-title">Team</h2>
     <p class="muted small">Team members can plan, vote, comment, tick off shots, save captions and fix clip tags. Spending money and the final calls stay with you.</p>
+    ${domains ? `<p class="muted small">Only ${esc(domains)} email addresses can sign in as team (owners can use any address).</p>` : ""}
     <h3>People</h3>
     <ul class="people">${t.users.map((u) => `<li>
       <div><strong>${esc(u.name)}</strong>${u.id === state.me.id ? ` <span class="muted">(you)</span>` : ""}
@@ -307,7 +309,7 @@ async function renderTeam(invite) {
     ${invite ? `<div class="box invite-link">
       <div class="row"><input id="invite-link" class="grow" readonly value="${esc(invite.link)}" aria-label="Invite link">
         <button class="btn" id="invite-copy">Copy</button></div>
-      <p class="muted small">Valid for ${esc(invite.days)} days and works once. Send it to them directly; whoever opens it can make an account.</p>
+      <p class="muted small">Valid for ${esc(invite.days)} days and works once. Send it to them directly; whoever opens it can make an account${domains ? ` with their ${esc(domains)} email` : ""}.</p>
     </div>` : ""}`;
 }
 async function teamClick(e) {
@@ -431,8 +433,10 @@ function renderCloudPlan() {
   root.innerHTML = `<div class="plan-empty" id="cloud-plan">
     <h2>Planning has moved online</h2>
     <p class="muted">Projects, ideas and shot lists live on the online planner now, so the team can plan any time. Footage that lands here is still checked, matched to the planned shots and shown there.</p>
-    ${url ? `<a class="btn primary" href="${esc(url)}" target="_blank" rel="noopener">Open the planner</a>`
+    ${c.plan_here ? `<a class="btn primary" href="${esc(c.plan_here)}">Open the planner</a>`
+      : url ? `<a class="btn primary" href="${esc(url)}" target="_blank" rel="noopener">Open the planner</a>`
           : `<p class="muted small">Set STUDIO_PLANNER_URL in studio\\.env to link the planner here.</p>`}
+    ${!c.plan_here && c.plan_problem ? `<p class="muted small">${esc(c.plan_problem)}</p>` : ""}
     <p class="muted small">${c.last_ok ? `Last synced ${esc(ago(c.last_ok))}` : "Waiting for the first sync…"}${esc(online)}</p>
     ${c.note ? `<p class="small"><strong>${esc(c.note)}</strong></p>` : ""}
     ${c.last_error ? `<p class="small">Last sync failed ${esc(ago(c.last_error_at))}: ${esc(c.last_error)}. It tries again every 30 seconds.</p>` : ""}
@@ -462,6 +466,7 @@ async function sync() {
     state.ideasJob = data.ideas_job || {};
     const cloudBefore = JSON.stringify(state.cloud ?? null);
     state.cloud = data.cloud || null;
+    $("#places").hidden = !state.cloud?.plan_here;
     state.machine = data.machine || null;
     const cloudChanged = cloudBefore !== JSON.stringify(state.cloud);
     const costs = $("#costs");
@@ -531,6 +536,10 @@ $("#grid").addEventListener("click", (e) => {
 $("#tabs").addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-stage]");
   if (!btn) return;
+  if (btn.dataset.stage === "plan" && state.cloud?.plan_here) {  // the planner, at this same address
+    location.assign(state.cloud.plan_here);
+    return;
+  }
   state.stage = btn.dataset.stage;
   store("studio.stage", state.stage);
   if (state.stage === "plan") history.replaceState(null, "", plan.pid ? `#/plan/${plan.pid}` : "#/tab/plan");

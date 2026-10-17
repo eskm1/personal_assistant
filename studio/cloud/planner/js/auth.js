@@ -1,6 +1,6 @@
 // Sign in, forgotten password, and "Set your password" after an invite or reset link.
 // Sign-ups are off: people are invited by the owner from the Team page.
-import { $, esc, sb } from "./core.js";
+import { $, esc, sb, underPlan } from "./core.js";
 
 const card = () => $("#auth-card");
 let onSignedIn = null;
@@ -42,6 +42,8 @@ export function showAuth(view, opts = {}) {
       </form>
       <button class="auth-link" data-auth-go="signout">Sign out</button>`,
     gone: `<h1>No access</h1><p>${esc(opts.email || "This account")} isn't on the Studio team any more. Ask the owner if that's a mistake.</p>
+      <button class="auth-link" data-auth-go="signout">Sign in as someone else</button>`,
+    blocked: `<h1>No access to planning</h1>${error}<a class="auth-link" href="${underPlan ? "/" : "#/"}">Back to Studio</a>
       <button class="auth-link" data-auth-go="signout">Sign in as someone else</button>`,
     noconfig: `<h1>Not set up yet</h1><p>This site has no Supabase settings. Set SUPABASE_URL and SUPABASE_ANON_KEY and build again (node build-config.mjs).</p>`,
     loading: `<p class="muted"><span class="spin"></span> Loading…</p>`,
@@ -113,6 +115,12 @@ $("#auth").addEventListener("click", async (e) => {
   if (go === "signout") {
     try { sessionStorage.removeItem("studio.setPassword"); } catch { /* private mode */ }
     await sb.auth.signOut().catch(() => {});
+    // Under the dashboard (/plan/) the dashboard login is the planner's: sign out of both.
+    if (underPlan) {
+      await fetch("/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+      location.href = "/login?next=/plan/";
+      return;
+    }
     showAuth("signin", { email });
   } else showAuth(go, { email });
 });

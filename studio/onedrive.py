@@ -4,10 +4,10 @@ The server's link to OneDrive, through rclone (README: "Studio on a server").
 Footage still arrives the way it always has: the team uploads to the OneDrive inbox
 folder (STUDIO_ONEDRIVE_INBOX). The server has no OneDrive app, so this module:
 
-  1. pulls finished uploads into the studio's Inbox (same folders: project folders,
-     References\\Ours, References\\Inspiration), then MOVES each OneDrive original into
-     the archive folder (STUDIO_ONEDRIVE_ARCHIVE\\<YYYY-MM>\\...) so OneDrive keeps a
-     backup and the inbox only shows what's still waiting;
+  1. pulls finished uploads into the studio's Inbox (same folders: project folders and
+     their post folders, References\\Ours, References\\Inspiration), then MOVES each
+     OneDrive original into the archive folder (STUDIO_ONEDRIVE_ARCHIVE\\<YYYY-MM>\\...)
+     so OneDrive keeps a backup and the inbox only shows what's still waiting;
   2. copies every approved reel to the "ready to post" folder (STUDIO_ONEDRIVE_READY),
      so it can be posted straight from the phone's OneDrive app.
 
@@ -181,15 +181,16 @@ def _update_state(fn) -> None:
 
 def _local_rel(parts: list[str]) -> Path | None:
     """Where an upload goes in the studio's Inbox: the same place, except that the
-    worker only looks one folder deep (References: two), so deeper folders are folded
-    into the file name (Kensington/Day 1/a.mp4 -> Kensington/Day 1 - a.mp4). None for
-    files the worker would never use (loose files in References)."""
+    worker only looks two folders deep (a project, then a post: Kensington/Shower
+    reveal/a.mp4), so deeper folders are folded into the file name
+    (Kensington/Shower reveal/Day 1/a.mp4 -> Kensington/Shower reveal/Day 1 - a.mp4).
+    None for files the worker would never use (loose files in References)."""
     if parts[0].lower() == "references":
         side = REF_SIDES.get(parts[1].lower()) if len(parts) >= 3 else None
         return Path("References", side, " - ".join(parts[2:])) if side else None
-    if len(parts) <= 2:
+    if len(parts) <= 3:
         return Path(*parts)
-    return Path(parts[0], " - ".join(parts[1:]))
+    return Path(parts[0], parts[1], " - ".join(parts[2:]))
 
 
 def _waiting(entries: list[dict]) -> tuple[list[dict], list[dict], list[str]]:
@@ -293,6 +294,12 @@ def _make_ref_folders() -> None:
         _made_ref_folders = True
     except OneDriveError as e:
         log.debug("Couldn't make the References folders in OneDrive: %s", e)
+
+
+def make_folder(*parts: str) -> None:
+    """Make a folder in the OneDrive inbox (a post folder: project, post). Harmless
+    when it exists; OneDriveError when OneDrive can't be reached."""
+    _run(["mkdir", _remote(settings.ONEDRIVE_INBOX, *parts)], timeout=120)
 
 
 def pull(max_files: int = FILES_PER_PULL, budget: float = PULL_BUDGET) -> list[str]:

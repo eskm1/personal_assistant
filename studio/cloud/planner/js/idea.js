@@ -5,8 +5,10 @@ import {
   esc, sb, must, invoke, toast, options, ago, mmss, shortDate, plural, typingIn, keepDrafts, isOwner, ownerName,
   nameOf, state, pbarHTML, prepShots, progress, bestTake, takeVerdict, takeFlags, verdictChip, signPaths, stillUrl,
   takePaths, jobView, jobActive, kickDevelop, laptopWait, httpUrl, httpsUrl, openModal, closeModal, syncInert,
+  missingTable, dayLabel, folderLineHTML,
 } from "./core.js";
 import { plan } from "./board.js";
+import { uploadButtonsHTML, rememberShot } from "./upload.js";
 
 const IDEA_SEL = "*,shots(*,takes(*,clips(id,title,verdict,flags,thumb_path,duration,recorded_at))),"
   + "votes(user_id,vote),comments(id,author,author_name,body,created_at)";
@@ -83,7 +85,13 @@ export async function loadIdea(force = false) {
     panel().innerHTML = `<p class="muted">Someone deleted it, or it never existed.</p><p><a class="btn" href="#/">Back to the board</a></p>`;
     return;
   }
-  const arcs = must(await sb.from("arcs").select("id,title,position").eq("project_id", idea.project_id).order("position").order("id"));
+  // Phases and site days (for "Phase" / "Day" on each shot) come with a database update.
+  const optional = (q) => q.then(must).catch((err) => (missingTable(err) ? null : []));
+  const [arcs, phases, days] = await Promise.all([
+    sb.from("arcs").select("id,title,position").eq("project_id", idea.project_id).order("position").order("id").then(must),
+    optional(sb.from("phases").select("id,name,position").eq("project_id", idea.project_id).order("position").order("id")),
+    optional(sb.from("site_days").select("id,day,phase_id").eq("project_id", idea.project_id).order("day")),
+  ]);
   if (stale()) {
     if (force && view.id === id) view.forceNext = true;
     return;
@@ -92,6 +100,9 @@ export async function loadIdea(force = false) {
   d.shots = prepShots(d.shots);
   d.progress = progress(d.shots);
   d.arcs = arcs;
+  d.phases = phases;
+  d.days = days;
+  for (const s of d.shots) rememberShot(s.id, `${s.description} (for: ${d.title})`);
   const up = [], down = [];
   let mine = 0;
   for (const v of d.votes || []) {
@@ -206,13 +217,20 @@ function takeHTML(t) {
       <div class="small">${esc(c.title || `Clip ${t.clip_id}`)} · ${t.start != null ? mmss(t.start) : "0:00"}–${t.end != null ? mmss(t.end) : "end"}</div>
       ${flags.length ? `<ul class="take-flags">${flags.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
     </div>
+    <button class="btn small ghost" data-take="${esc(t.id)}" data-take-shot="${esc(t.shot_id)}" aria-label="Move take ${esc(c.title || "")} to another shot">Move</button>
     <button class="icon-btn danger" data-take-remove="${esc(t.id)}" title="Remove this take" aria-label="Remove take ${esc(c.title || "")}">×</button>
   </div>`;
 }
 
 function shotRowHTML(s, i, n) {
   const field = (key, label, ph, max) => `<label class="inline-field"><span>${label}</span><input data-shot-field="${key}" maxlength="${max}" value="${esc(s[key])}" data-orig="${esc(s[key])}" placeholder="${esc(ph)}"></label>`;
-  return `<li class="shot-row st-${esc(s.state)}" id="shot-${esc(s.id)}" data-shot="${esc(s.id)}" data-saved-scope>
+  const d = view.d;
+  const place = d.phases ? `<div class="shot-place">
+      <label class="inline-field"><span>Phase</span><select data-shot-field="phase_id" aria-label="Phase of shot ${i + 1}"><option value="">No phase</option>${d.phases.map((p) => `<option value="${esc(p.id)}" ${p.id === s.phase_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
+      <label class="inline-field"><span>Day</span><select data-shot-field="shoot_on" aria-label="Site day for shot ${i + 1}"><option value="">Any day in its phase</option>${(d.days || []).map((x) => `<option value="${esc(x.day)}" ${x.day === s.shoot_on ? "selected" : ""}>${esc(dayLabel(x.day))}</option>`).join("")}
+        ${s.shoot_on && !(d.days || []).some((x) => x.day === s.shoot_on) ? `<option value="${esc(s.shoot_on)}" selected>${esc(dayLabel(s.shoot_on))} (not a site day)</option>` : ""}</select></label>
+    </div>` : "";
+  return `<li class="shot-row st-${esc(s.state)}" id="shot-${esc(s.id)}" data-shot="${esc(s.id)}" data-drop-shot="${esc(s.id)}" data-saved-scope>
     <div class="shot-top">
       <span class="shot-num" aria-hidden="true">${i + 1}</span>
       <label class="filmed-toggle" title="Tick when it's been filmed on site"><input type="checkbox" data-shot-filmed ${s.filmed_at ? "checked" : ""} aria-label="Shot ${i + 1} filmed"><span>Filmed</span></label>
@@ -235,8 +253,10 @@ function shotRowHTML(s, i, n) {
     ${field("line", "Says", "Spoken line (optional)", 1000)}
     ${field("on_screen", "On screen", "Text on screen (optional)", 300)}
     ${field("why", "Why", "What this shot does for the story", 500)}
+    ${place}
     <div class="takes">${s.takes.map(takeHTML).join("")}
-      <button class="btn small" data-attach>${s.takes.length ? "Attach more footage" : "Attach footage"}</button></div>
+      <div class="row tight"><button class="btn small" data-attach>${s.takes.length ? "Attach more footage" : "Attach footage"}</button>
+        ${uploadButtonsHTML(s.id, `shot ${i + 1}`)}</div></div>
   </li>`;
 }
 
@@ -306,10 +326,11 @@ function makeHTML(d) {
   const owner = isOwner();
   const job = jobView(d.jobs.make);
   const prod = d.production && typeof d.production === "object" ? d.production : null;
-  const studio = httpUrl(cfg.studioUrl);
+  // "" = the planner is served by the dashboard itself (/plan/): same origin.
+  const studio = cfg.studioUrl === "" ? "" : httpUrl(cfg.studioUrl);
   if (d.status === "made" || prod) {
     const label = prod?.status ? PRODUCTION[prod.status] || prod.status : "The editor is on it";
-    const link = studio && prod?.id != null
+    const link = (studio || cfg.studioUrl === "") && prod?.id != null
       ? `<a class="btn" href="${esc(`${studio}/#/production/${encodeURIComponent(prod.id)}`)}" target="_blank" rel="noopener noreferrer" title="Opens the draft on the Studio dashboard">Open the draft ↗</a>` : "";
     return `<div class="decision row"><span><strong>In the edit.</strong> ${esc(label)}${prod?.version ? ` · v${esc(prod.version)}` : ""}${prod?.updated_at ? ` <span class="muted small">(${esc(ago(prod.updated_at))})</span>` : ""}</span>${link}</div>`;
   }
@@ -349,6 +370,7 @@ function renderPanel() {
         <h3><label for="f-title">Planned post</label> <span class="saved" aria-live="polite"></span></h3>
         <input class="title-input" id="f-title" data-idea-field="title" maxlength="300" value="${esc(d.title)}" data-orig="${esc(d.title)}">
         <p class="muted small mt6">${by ? `Added by ${esc(by)} · ` : ""}updated ${esc(ago(d.updated_at))} · Changes save when you click away.</p>
+        ${folderLineHTML(plan.projects.find((p) => p.id === d.project_id), d)}
       </div>
       <div class="meta-grid" data-saved-scope>
         <label>Arc<select data-idea-field="arc_id">${`<option value="">Unsorted</option>` + d.arcs.map((a) => `<option value="${esc(a.id)}" ${a.id === d.arc_id ? "selected" : ""}>${esc(a.title)}</option>`).join("")}</select></label>
@@ -416,7 +438,8 @@ async function saveShotField(el) {
   else {
     const key = el.dataset.shotField;
     let value = el.value;
-    if (["camera", "framing", "kind"].includes(key)) value = value || null;
+    if (["camera", "framing", "kind", "shoot_on"].includes(key)) value = value || null;
+    else if (key === "phase_id") value = value ? Number(value) : null;
     else if (key === "seconds") {
       value = value === "" ? null : Number(value);
       if (value != null && !(value > 0 && value <= 120)) { toast("Seconds must be between 0 and 120."); el.value = el.dataset.orig; return; }

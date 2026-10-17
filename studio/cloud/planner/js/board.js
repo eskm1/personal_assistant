@@ -3,13 +3,22 @@
 import {
   $, $$, BRAND, ACCOUNTS, oneBrand, esc, sb, must, invoke, toast, options, store, recall, plural, typingIn, keepDrafts,
   pbarHTML, prepShots, progress, signPaths, stillUrl, takePaths, jobView, jobActive, kickDevelop,
-  openModal, closeModal, formError, nameOf, PRODUCTION, state,
+  openModal, closeModal, formError, nameOf, PRODUCTION, state, fbarHTML, isFilmed, folderLineHTML, httpsUrl,
 } from "./core.js";
+import { shoot, loadShoot, renderShoot } from "./shoot.js";
 
 export const plan = {
   projects: [], pid: null, board: null, sig: "", topSig: "", shellFor: null, order: [],
   hideParked: recall("studio.hideParked") === "1", editingArc: null, addingArc: false, dragging: false,
+  // Shoot plan | Ideas, remembered on this device. Not chosen yet: the shoot plan once the
+  // project has phases or site days, else Ideas (a new project starts with ideas).
+  mode: ["shoot", "ideas"].includes(recall("studio.planMode")) ? recall("studio.planMode") : null,
 };
+export function planMode() {
+  if (plan.mode) return plan.mode;
+  const d = shoot.pid === plan.pid ? shoot.data : null;
+  return d && (d.phases.length || d.days.length) ? "shoot" : "ideas";
+}
 
 const IDEA_COLS = "id,project_id,arc_id,title,brand,format,decision,status,production,position,created_by,updated_at,"
   + "shots(id,position,filmed_at,takes(id,thumb_path,clip_id,clips(verdict,thumb_path))),votes(user_id,vote),comments(count)";
@@ -33,6 +42,7 @@ export function selectProject(pid) {
   plan.board = null;
   plan.editingArc = null;
   plan.addingArc = false;
+  plan.folders = new Map();
   if (pid) store("studio.project", String(pid));
 }
 
@@ -42,10 +52,14 @@ export async function loadBoard() {
   if (!pid) { plan.board = null; return; }
   const seq = (plan.seq = (plan.seq || 0) + 1);
   const stale = () => pid !== plan.pid || seq !== plan.seq;
-  const [arcs, ideas] = await Promise.all([
+  // The shoot plan's tables come with a database update: if they're missing, the board still works.
+  const shootLoad = loadShoot(pid).catch((err) => { shoot.error = err.message; return null; });
+  const [arcs, ideas, folders] = await Promise.all([
     sb.from("arcs").select("*").eq("project_id", pid).order("position").order("id").then(must),
     sb.from("ideas").select(IDEA_COLS).eq("project_id", pid).neq("status", "dismissed").order("position").order("id").then(must),
+    sb.from("ideas").select("id,folder").eq("project_id", pid).eq("decision", "go").neq("folder", "").then(must).catch(() => []),
   ]);
+  await shootLoad;
   const ids = ideas.map((i) => i.id);
   const jobs = must(await sb.from("jobs").select(JOB_COLS).in("kind", ["organise", "develop"])
     .or(ids.length ? `project_id.eq.${pid},idea_id.in.(${ids.join(",")})` : `project_id.eq.${pid}`)
@@ -67,7 +81,9 @@ export async function loadBoard() {
     }
     i.votes = { up, down, mine };
     i.comments = i.comments?.[0]?.count ?? 0;
+    i.filmedCount = i.shots.filter(isFilmed).length;
   }
+  plan.folders = new Map(folders.map((f) => [f.id, f.folder]));
   await signPaths(stills).catch(() => {});
   if (stale()) return;
   plan.board = {
@@ -96,12 +112,21 @@ export function renderPlanner(force = false) {
     plan.sig = "";
     plan.topSig = "";
   } else syncShell();
+  const mode = planMode();
+  for (const b of $$("[data-plan-mode]")) {
+    b.classList.toggle("on", b.dataset.planMode === mode);
+    b.setAttribute("aria-pressed", String(b.dataset.planMode === mode));
+  }
+  $("#shoot-view").hidden = mode !== "shoot";
+  $("#ideas-view").hidden = mode !== "ideas";
   if (!plan.board || plan.board.project?.id !== plan.pid) {
     $("#plan-board").innerHTML = `<p class="muted"><span class="spin"></span> Loading the board…</p>`;
+    if (mode === "shoot") $("#shoot-view").innerHTML = `<p class="muted"><span class="spin"></span> Loading the shoot plan…</p>`;
     return;
   }
   renderPlanTop();
-  renderPlanBoard(force || rebuilt, rebuilt);
+  if (mode === "shoot") renderShoot(force || rebuilt);
+  else renderPlanBoard(force || rebuilt, rebuilt);
 }
 
 function plannerShellHTML() {
@@ -115,8 +140,12 @@ function plannerShellHTML() {
       <span class="chip" id="plan-archived" ${p.status === "archived" ? "" : "hidden"}>Archived</span>
       <span class="plan-progress" id="plan-progress"></span>
       <div class="plan-bar-actions">
-        <button class="btn" id="plan-checklist" title="The shot list for filming on site, made for phones">On-site checklist</button>
+        <button class="btn" id="plan-checklist" title="What to film on today's (or the next) site visit, made for phones">Today on site</button>
         <button class="btn" id="plan-new">New project</button>
+      </div>
+      <div class="seg view-seg" role="group" aria-label="View" id="plan-modes">
+        <button data-plan-mode="shoot" aria-pressed="false">Shoot plan</button>
+        <button data-plan-mode="ideas" aria-pressed="false">Ideas</button>
       </div>
     </div>
     <details class="plan-details" id="plan-details">
@@ -135,7 +164,10 @@ function plannerShellHTML() {
         </div>
       </div>
     </details>
-    <div class="dump">
+    <section class="shoot" id="shoot-view" aria-label="Shoot plan" hidden></section>
+    <div id="ideas-view">
+    <div class="quick-add-row"><button class="btn primary" id="plan-add-one">+ Add an idea</button></div>
+    <div class="dump" id="plan-dump-box">
       <label class="sr-only" for="plan-dump">Ideas to add</label>
       <textarea id="plan-dump" data-draft rows="3" maxlength="20000" placeholder="Throw ideas in: one per line, or paste a messy brain-dump"></textarea>
       <div class="row">
@@ -149,7 +181,8 @@ function plannerShellHTML() {
       <label class="check"><input type="checkbox" id="plan-hide-parked" ${plan.hideParked ? "checked" : ""}> Hide parked</label>
       <span class="muted small hide-mobile">Drag a card to another column to move it, or open it to change its arc.</span>
     </div>
-    <div class="board" id="plan-board"></div>`;
+    <div class="board" id="plan-board"></div>
+    </div>`;
 }
 
 const folderHint = (folder) => `Inbox folder: footage dropped in OneDrive <code>Studio Inbox/${esc(folderName(folder) || "…")}</code> is filed to this project and matched to its shots.`;
@@ -198,7 +231,7 @@ export function renderPlanTop() {
   if (sig === plan.topSig) return;
   plan.topSig = sig;
   $("#plan-progress").innerHTML = total.total
-    ? `${pbarHTML(total)}<span><strong>${total.got}</strong>/${total.total} shots got</span>`
+    ? `${pbarHTML(total)}<span><strong>${total.got}</strong> of ${total.total} shots filmed</span>`
     : `<span class="muted">No shots planned yet</span>`;
   const running = jobActive(job);
   $("#plan-organise").disabled = running;
@@ -241,7 +274,7 @@ export function renderPlanBoard(force = false, mine = false) {
   const el = $("#plan-board");
   if (!b || !el) return;
   const drafting = b.ideas.map((i) => jobView(b.develop.get(i.id))?.state || "");
-  const sig = JSON.stringify([b.arcs, b.ideas, drafting, plan.hideParked, plan.editingArc, plan.addingArc]);
+  const sig = JSON.stringify([b.arcs, b.ideas, drafting, plan.hideParked, plan.editingArc, plan.addingArc, [...(plan.folders || [])], currentProject()?.folder]);
   if (!force && sig === plan.sig) return;
   if (!mine && boardBusy()) { plan.pendingBoard = true; return; }
   plan.pendingBoard = false;
@@ -290,28 +323,32 @@ function cardHTML(i) {
   const ups = i.votes.up.length, downs = i.votes.down.length;
   const dev = jobView(plan.board.develop.get(i.id));
   const prod = i.production?.status;
+  const filmed = i.filmedCount || 0;
   const meta = [
-    p.total ? `<span>${esc(p.got)}/${esc(p.total)} shots</span>` : `<span>No shots yet</span>`,
     ups ? `<span title="Keen: ${esc(i.votes.up.join(", "))}">👍 ${ups}</span>` : "",
     downs ? `<span title="Not keen: ${esc(i.votes.down.join(", "))}">👎 ${downs}</span>` : "",
     i.comments ? `<span title="${esc(plural(i.comments, "comment"))}">💬 ${esc(i.comments)}</span>` : "",
   ].filter(Boolean).join("");
-  const label = [i.title, i.decision === "go" ? "Go" : i.decision === "parked" ? "Parked" : "", p.total ? `${p.got} of ${p.total} shots got` : "No shots yet"].filter(Boolean).join(", ");
-  return `<button class="card ${esc(i.decision)}" data-plan-idea="${esc(i.id)}" draggable="true" aria-label="${esc(label)}">
+  const decision = { go: "Go", parked: "Parked", proposed: "Idea" }[i.decision] || "Idea";
+  const label = [i.title, decision, p.total ? `${filmed} of ${p.total} shots filmed` : "No shots yet", ups ? `${ups} keen` : ""].filter(Boolean).join(", ");
+  const folder = plan.folders?.get(i.id);
+  const card = `<button class="card ${esc(i.decision)}" data-plan-idea="${esc(i.id)}" draggable="true" aria-label="${esc(label)}">
     ${thumb ? `<img class="card-thumb" src="${esc(thumb)}" alt="" loading="lazy">` : ""}
     <span class="card-body">
       <span class="card-title">${esc(i.title)}</span>
       <span class="card-chips">
+        <span class="chip ${esc(i.decision)}">${decision}</span>
         ${oneBrand ? "" : `<span class="chip ${esc(i.brand)}">${esc(BRAND[i.brand] || i.brand)}</span>`}
-        ${i.decision === "go" ? `<span class="chip go">Go</span>` : i.decision === "parked" ? `<span class="chip parked">Parked</span>` : ""}
         ${i.status === "made" || prod ? `<span class="chip producing">${esc(prod ? PRODUCTION[prod] || prod : "In edit")}</span>` : ""}
         ${jobActive(dev) ? `<span class="chip drafting"><span class="spin"></span>Drafting storyboard…</span>` : ""}
         ${dev?.state === "failed" && !p.total ? `<span class="chip failed">Storyboard failed</span>` : ""}
       </span>
-      ${pbarHTML(p)}
-      <span class="card-meta">${meta}</span>
+      ${p.total ? `<span class="card-progress"><span>${esc(filmed)} of ${esc(p.total)} shots</span>${fbarHTML(filmed, p.total)}</span>` : `<span class="card-progress muted">No shots yet</span>`}
+      ${meta ? `<span class="card-meta">${meta}</span>` : ""}
     </span>
   </button>`;
+  const line = folder ? folderLineHTML(currentProject(), { ...i, folder }) : "";
+  return line ? `<div class="card-wrap">${card}${line}</div>` : card;
 }
 
 function newArcHTML() {
@@ -447,13 +484,50 @@ export function openNewProject() {
   $("#np-folder").addEventListener("input", hint);
 }
 
+// One idea, phone-friendly: a full-screen sheet on narrow screens. Text, an optional
+// link (kept as the idea's first comment), and the series it belongs to.
+export function openQuickAdd() {
+  const arcs = plan.board?.arcs || [];
+  openModal(`<h2 id="modal-title">Add an idea</h2>
+    <form class="form">
+      <label>Idea<textarea id="qa-text" rows="4" maxlength="300" placeholder="e.g. Why we flood-test every bathroom for 24 hours" required></textarea></label>
+      <label>Link <span class="muted">(optional, e.g. a reel that inspired it)</span><input id="qa-link" type="url" inputmode="url" maxlength="500" placeholder="https://"></label>
+      <label>Series<select id="qa-arc"><option value="">Unsorted</option>${arcs.map((a) => `<option value="${esc(a.id)}">${esc(a.title)}</option>`).join("")}</select></label>
+      <p class="error-text" id="modal-error" role="alert" hidden></p>
+      <div class="row end"><button type="button" class="btn" data-modal-close>Cancel</button><button type="submit" class="btn primary" id="qa-add">Add</button></div>
+    </form>`, async (e) => {
+    if (e.target.id !== "qa-add") return;
+    const title = $("#qa-text").value.replace(/\s+/g, " ").trim().slice(0, 300);
+    const raw = $("#qa-link").value.trim();
+    if (!title) return formError("Write the idea first.");
+    const link = raw ? httpsUrl(/^[a-z]+:/i.test(raw) ? raw : `https://${raw}`) : "";
+    if (raw && !link) return formError("The link should start with https://");
+    e.target.disabled = true;
+    const p = currentProject();
+    const pos = Math.max(0, ...(plan.board?.ideas || []).map((i) => i.position || 0)) + 1;
+    let row;
+    try {
+      row = must(await sb.from("ideas").insert({ project_id: plan.pid, title, brand: p?.brand || "urban_makers", arc_id: $("#qa-arc").value ? Number($("#qa-arc").value) : null, position: pos }).select("id").single());
+      if (link) must(await sb.from("comments").insert({ idea_id: row.id, body: `Link: ${link}` }));
+    } catch (err) { e.target.disabled = false; return formError(err.message); }
+    closeModal();
+    toast("Idea added.");
+    await refresh(true);
+  }, false, "sheet");
+}
+
 $("#planner").addEventListener("click", async (e) => {
   const t = e.target.closest("button, [data-plan-idea]");
   if (!t) return;
   const ds = t.dataset;
   try {
     if (t.id === "plan-new") openNewProject();
-    else if (t.id === "plan-checklist") location.hash = `#/checklist/${plan.pid}`;
+    else if (t.id === "plan-checklist") location.hash = `#/today/${plan.pid}`;
+    else if (ds.planMode) {
+      plan.mode = ds.planMode;
+      store("studio.planMode", plan.mode);
+      renderPlanner(true);
+    } else if (t.id === "plan-add-one") openQuickAdd();
     else if (t.id === "plan-quick") await addIdeas(false);
     else if (t.id === "plan-organise") await addIdeas(true);
     else if (t.id === "proj-save") {

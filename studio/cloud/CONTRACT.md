@@ -181,8 +181,12 @@ also in `laptop_status.info.dashboard_url`). Every request carries the planner s
 |---|---|---|
 | `POST /api/uploads` | JSON `{shot_id, name, size, type}` | `201 {id, offset, chunk}`; the same user + shot + name + size with an unfinished upload gets that one back (resume). 401 bad session, 403 not a member, 404 no such shot, 413 over 8 GB, 415 not a video, 507 disk full |
 | `PUT /api/uploads/<id>?offset=<n>` | raw bytes (`application/octet-stream`), at most 16 MB | `{offset}`; 409 `{offset}` when n isn't where the server is; at `offset = size` the server finishes: `{offset, state: "received"}` |
-| `GET /api/uploads/<id>` | | `{offset, size, state}` |
-| `DELETE /api/uploads/<id>` | | cancels an unfinished upload |
+| `GET /api/uploads/<id>` | | `{id, offset, size, state}`, plus `clip_id` / `error` once ingested or failed |
+| `DELETE /api/uploads/<id>` | | `{ok: true}`; cancels an unfinished upload (409 once finished) |
+
+Errors are `{error}`; besides those above: 429 rate limited, 502/503 Supabase unreachable or the
+migration missing, 409 `{offset, state}` for a PUT after the upload finished. Only the uploader or an
+owner can see or act on an upload (others get 404). Unfinished uploads fail after 3 days.
 
 `chunk` is the size the planner should send per PUT (8 MB). The Studio machine mirrors each upload in
 `shot_uploads` (it inserts the row at `POST`, state `uploading`; `received` when the file is complete and
@@ -199,7 +203,19 @@ post folder is matched only against that idea's shots, and `clips.idea_id` is se
 with no take are the planner's "Needs a home" tray; attaching one is a `manual` take (insert), moving one
 is delete + insert.
 
-### Signing in
+### Signing in, and the planner inside the dashboard
 
 The Studio dashboard also accepts the planner's email and password (checked with Supabase), so the team
 has one login. The planner role (`owner`/`team`) carries over.
+
+Only emails at `STUDIO_ALLOWED_EMAIL_DOMAINS` (default `theurbanmakers.com`; `*` = anyone) may sign in,
+accept an invite or upload; owner accounts always may. The `team` Edge Function invites only those
+domains (secret `ALLOWED_EMAIL_DOMAINS`, same default).
+
+The Studio machine also serves this planner at `<dashboard>/plan/` (behind the dashboard login), with a
+generated `/plan/config.js` (`studioUrl: ""` = same origin; `problem` set when it can't find the public
+key). `GET /api/planner-session` (dashboard cookie, same origin) returns
+`{access_token, refresh_token, expires_at, expires_in, token_type}` for the signed-in user, which the
+planner passes to `supabase.auth.setSession`; 401 signed out, 403 `{error}` when the user isn't a planner
+member or hasn't proven the planner email (a team account must have signed in once with the planner's
+password; owners always may).

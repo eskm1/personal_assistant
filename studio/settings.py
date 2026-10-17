@@ -117,6 +117,19 @@ SUPABASE_URL = _env("STUDIO_SUPABASE_URL").rstrip("/")
 SUPABASE_SERVICE_KEY = _env("STUDIO_SUPABASE_SERVICE_KEY")
 PLANNER_URL = _env("STUDIO_PLANNER_URL").rstrip("/")
 CLOUD_SYNC_SECONDS = int(_env("STUDIO_CLOUD_SYNC_SECONDS", "30"))
+# The planner's public (anon / publishable) key, for serving the planner at /plan/ on
+# this machine. Blank = read it once from the Netlify planner's public config.js.
+SUPABASE_ANON_KEY = _env("STUDIO_SUPABASE_ANON_KEY")
+# Other web addresses (besides STUDIO_PLANNER_URL) whose planner may upload footage
+# straight to a shot (uploads.py), comma-separated, e.g. a Netlify preview.
+UPLOAD_ORIGINS = {o.strip().rstrip("/") for o in _env("STUDIO_UPLOAD_ORIGINS").split(",") if o.strip()}
+# Footage uploaded from the planner waits here until it's complete.
+UPLOADS = ROOT / "Uploads"
+
+# Who may sign in to the dashboard: emails at these domains (comma-separated; "*" = anyone).
+# Owner accounts are always allowed, whatever their address.
+ALLOWED_EMAIL_DOMAINS = tuple(d.strip().lower().lstrip("@") for d in
+                              _env("STUDIO_ALLOWED_EMAIL_DOMAINS", "theurbanmakers.com").split(",") if d.strip())
 
 # Notes marked "remember for future edits" are appended here; the editor reads it.
 PLAYBOOK = ROOT / "playbook.md"

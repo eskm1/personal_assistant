@@ -35,7 +35,7 @@ import settings
 import playbook
 import usage
 from settings import DASHBOARD_HOST, DASHBOARD_PORT, INBOX, VIDEO_EXTS
-from webutil import LOOPBACK, body, client_ip, db, is_local, is_owner, owner_only, text
+from webutil import LOOPBACK, body, client_ip, db, is_local, is_owner, own_origin, owner_only, text
 
 log = logging.getLogger("studio.dashboard")
 
@@ -84,19 +84,24 @@ _PUBLIC = ("/login", "/setup", "/invite/", "/healthz", "/static/")
 @app.before_request
 def _auth():
     """Signed-in users only, everywhere except the sign-in pages themselves."""
+    if request.path.startswith("/api/uploads"):
+        # The planner's upload API: a planner session (Bearer token) instead of the
+        # dashboard cookie, from the planner's own address (CORS). uploads.guard()
+        # refuses anything without a valid token.
+        import uploads
+        return uploads.guard()
     if request.method == "POST":
         # Refuse cross-site form posts: a browser always sends Origin on POST.
         origin = request.headers.get("Origin")
-        # Tunnels may pass on the laptop's own host name, so also accept the public address.
-        hosts = {request.host, request.headers.get("X-Forwarded-Host"),
-                 settings.DASHBOARD_URL.split("://", 1)[-1].split("/", 1)[0] or None}
-        if origin and origin.split("://", 1)[-1] not in hosts:
+        if origin and not own_origin(origin):
             return jsonify({"error": "cross-site request refused"}), 403
     if request.path.startswith(_PUBLIC):
         return None
     g.user = auth.current(db(), session)
     if g.user:
         return None
+    if session.get("uid"):
+        session.clear()  # removed, password changed, or no longer allowed in: signed out
     if request.path.startswith(("/api/", "/media/")):
         return jsonify({"error": "signed out"}), 401
     if not auth.users_exist(db()):
@@ -106,6 +111,9 @@ def _auth():
 
 @app.after_request
 def _headers(response):
+    if request.path.startswith("/api/uploads"):
+        import uploads
+        uploads.cors(response)
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "same-origin")
@@ -118,7 +126,8 @@ _FORM = (WEB / "login.html")
 
 
 def _page(mode: str, error: str = "", **extra):
-    return render_template_string(_FORM.read_text(encoding="utf-8"), mode=mode, error=error, **extra)
+    return render_template_string(_FORM.read_text(encoding="utf-8"), mode=mode, error=error,
+                                  planner=cloud_sync.enabled(), domain_hint=auth.domain_hint(), **extra)
 
 
 def _start_session(user_row: dict):
@@ -144,12 +153,24 @@ def login_page():
     if request.method == "GET":
         return _page("login", next=_safe_next(request.args.get("next")))
     try:
-        user_row = auth.login(db(), request.form.get("email", ""), request.form.get("password", ""), client_ip())
+        user_row = auth.login(db(), request.form.get("email", ""), request.form.get("password", ""), client_ip(),
+                              planner=_planner_password if cloud_sync.enabled() else None)
     except ValueError as e:
         return _page("login", str(e), next=_safe_next(request.form.get("next"))), 401
     _start_session(user_row)
     log.info("%s signed in from %s", user_row["email"], client_ip())
     return redirect(_safe_next(request.form.get("next")))
+
+
+def _planner_password(email: str, password: str) -> dict | None:
+    """The planner's check of an email and password (one login for both)."""
+    import cloud_auth
+    try:
+        return cloud_auth.password_login(email, password)
+    except cloud_auth.AuthError as e:
+        log.warning("Planner sign-in check failed: %s", e)
+        raise ValueError("That email and password don't match here, and the planner can't be asked right now. "
+                         "Try again in a minute.")
 
 
 @app.route("/setup", methods=["GET", "POST"])
@@ -241,7 +262,9 @@ def team():
              for r in db().execute("SELECT * FROM users WHERE disabled = 0 ORDER BY id")]
     invites = [{"id": r["id"], "note": r["note"], "expires_at": r["expires_at"]} for r in db().execute(
         "SELECT * FROM invites WHERE used_at IS NULL AND expires_at > ? ORDER BY id DESC", (_now(),))]
-    return jsonify({"users": users, "invites": invites})
+    domains = [d for d in settings.ALLOWED_EMAIL_DOMAINS if d != "*"]
+    return jsonify({"users": users, "invites": invites,
+                    "domains": [] if "*" in settings.ALLOWED_EMAIL_DOMAINS else domains})
 
 
 @app.post("/api/team/invite")
@@ -316,7 +339,7 @@ def _inbox_items() -> list[dict]:
             continue
         items.append({
             "kind": "inbox", "id": p.name, "stage": "cloud",
-            "title": p.name if p.parent == INBOX else f"{p.parent.name} / {p.name}",
+            "title": " / ".join(p.relative_to(INBOX).parts),
             "status": "queued" if is_ready(p) else "uploading", "mtime": stat.st_mtime,
             "size_mb": round(stat.st_size / 1e6, 1), "thumb": None, "video": None,
         })
@@ -758,8 +781,12 @@ def production_media(production_id: int, what: str):
 # ── Planning board ────────────────────────────────────────────────────────────
 
 from plan_routes import bp as _plan_bp  # noqa: E402 - its own module; shares webutil, not this file
+from planner_site import bp as _planner_bp  # noqa: E402 - the online planner at /plan/
+from uploads import bp as _uploads_bp  # noqa: E402 - footage uploaded from the planner to a shot
 
 app.register_blueprint(_plan_bp)
+app.register_blueprint(_planner_bp)
+app.register_blueprint(_uploads_bp)
 
 
 # ── Serve ─────────────────────────────────────────────────────────────────────

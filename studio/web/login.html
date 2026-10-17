@@ -22,11 +22,11 @@
 <body>
 <main>
   {% if mode == "login" %}
-    <h1>Studio</h1><p>Sign in to plan, review and comment.</p>
+    <h1>Studio</h1><p>Sign in to plan, review and comment.{% if planner %} Use your planner email and password.{% endif %}</p>
   {% elif mode == "setup" %}
     <h1>Welcome to Studio</h1><p>Make the owner account. You'll use it to sign in here and from your phone, and to invite your team.</p>
   {% elif mode == "invite" %}
-    <h1>Join Studio</h1><p>You've been invited to plan content with the Urban Makers team. Make your account.</p>
+    <h1>Join Studio</h1><p>You've been invited to plan content with the Urban Makers team. Make your account{% if domain_hint %} ({{ domain_hint[:-1] }}){% endif %}.</p>
   {% elif mode == "expired" %}
     <h1>Invite link expired</h1><p>This link was already used or is more than a week old. Ask Bryan for a new one.</p>
   {% else %}

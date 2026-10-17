@@ -179,13 +179,13 @@ def _brands() -> str:
     return settings.brands_text()
 
 
-def _ask(system: str, user: str, schema: dict, ref: str, client=None) -> dict:
+def _ask(system: str, user: str, schema: dict, ref: str, client=None, effort: str = "high") -> dict:
     client = client or anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or None)
     import llm
     response = llm.final_message(
         client, model=CLAUDE_MODEL, max_tokens=64000,
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
-        output_config={"effort": "high", "format": {"type": "json_schema", "schema": schema}},
+        output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
         system=system.replace("{brands}", _brands()).replace("{playbook}", playbook.text())
                      .replace("{cameras}", "; ".join(f"{k} = {v}" for k, v in CAMERAS.items())),
         messages=[{"role": "user", "content": user}],
@@ -259,13 +259,23 @@ def project_for_folder(conn, folder: str) -> int | None:
     return row["id"] if row else None
 
 
-def open_shots_text(conn, project_id: int | None = None) -> tuple[str, set[int]]:
+def idea_for_folder(conn, project_id: int, folder: str) -> int | None:
+    """The planned idea whose post folder this is (Inbox/<project>/<folder>/)."""
+    row = conn.execute("""SELECT id FROM ideas WHERE project_id = ? AND origin = 'plan' AND folder <> ''
+                          AND LOWER(folder) = LOWER(?) ORDER BY id DESC LIMIT 1""", (project_id, folder)).fetchone()
+    return row["id"] if row else None
+
+
+def open_shots_text(conn, project_id: int | None = None, idea_id: int | None = None) -> tuple[str, set[int]]:
     """The shot list the tagger matches new clips against: shots without a usable
     take, in ideas still being planned, in active projects (just the clip's
-    project when its folder says which)."""
+    project when its folder says which, just one idea's for a post folder)."""
     params: list = []
     where = "p.status = 'active' AND i.status = 'new' AND COALESCE(i.decision, 'proposed') != 'parked'"
-    if project_id:
+    if idea_id:
+        where = "i.id = ?"
+        params.append(idea_id)
+    elif project_id:
         where += " AND p.id = ?"
         params.append(project_id)
     rows = conn.execute(
@@ -286,6 +296,52 @@ def open_shots_text(conn, project_id: int | None = None) -> tuple[str, set[int]]
                      + (f"({how}) " if how else "") + r["description"]
                      + (f" Says: \"{r['line']}\"" if r["line"] else ""))
     return "\n".join(lines), ids
+
+
+PLACE_SCHEMA = {
+    "type": "object",
+    "properties": {"placements": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"shot_id": {"type": "integer"}, "phase_id": {"type": "integer"}},
+        "required": ["shot_id", "phase_id"], "additionalProperties": False}}},
+    "required": ["placements"],
+    "additionalProperties": False,
+}
+
+_PLACE_SYSTEM = """You help a Singapore renovation company plan when to film the shots of its \
+social media posts. A renovation project goes through phases (hacking, electrical, waterproofing, \
+tiling, carpentry, painting, handover...), each with rough dates. The team is only on site now and \
+then, so each shot must be filmed during the phase whose work it shows.
+
+For each shot, give the id of the phase in which it can be filmed: the work it shows is happening \
+then, or the result it shows has just been made (a "before" shot belongs to the first phase that \
+changes the space; an "after" or reveal shot to the phase that finishes it; a client reaction or \
+walkthrough of the finished home to the last phase or handover). Use 0 when the shot could be \
+filmed in any phase (Bryan talking about a general topic, a drawing on a screen) or when no phase \
+fits. Judge by the shot's description and what the phase names mean; the dates only say the order. \
+Give every shot exactly once."""
+
+
+def place_shots(project: dict, phases: list[dict], ideas: list[dict], shots: list[dict], client=None,
+                ref: str = "") -> dict[int, int | None]:
+    """Claude picks each shot's phase. Returns {shot id: phase id, or None for none}."""
+    titles = {i["id"]: i["title"] for i in ideas}
+    phase_lines = [f"- phase {p['id']}: {p['name']}"
+                   + (f" ({p.get('starts_on') or '?'} to {p.get('ends_on') or '?'})"
+                      if p.get("starts_on") or p.get("ends_on") else "")
+                   + (f". {p['note']}" if p.get("note") else "") for p in phases]
+    shot_lines = [f"- shot {s['id']} [post: {titles.get(s['idea_id'], '-')}] "
+                  + (f"({', '.join(filter(None, (s.get('framing'), s.get('kind'))))}) " if s.get("kind") or s.get("framing") else "")
+                  + s["description"] + (f" Says: \"{s['line']}\"" if s.get("line") else "") for s in shots]
+    user = (f"Project: {project['name']}. {project.get('brief') or ''}\n\nPhases, in order:\n"
+            + "\n".join(phase_lines) + "\n\nShots to place:\n" + "\n".join(shot_lines))
+    result = _ask(_PLACE_SYSTEM, user, PLACE_SCHEMA, ref, client, effort="medium")
+    phase_ids, shot_ids = {p["id"] for p in phases}, {s["id"] for s in shots}
+    out: dict[int, int | None] = {s["id"]: None for s in shots}
+    for p in result["placements"]:
+        if p["shot_id"] in shot_ids:
+            out[p["shot_id"]] = p["phase_id"] if p["phase_id"] in phase_ids else None
+    return out
 
 
 def save_matches(conn, clip_id: int, matches: list[dict], allowed: set[int], duration: float) -> int:

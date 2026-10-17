@@ -24,12 +24,16 @@ over that server's processor for minutes at a time and slow the website down.
 ## What changes
 
 - **Footage**: you and your colleague drop videos in the OneDrive folder **Studio Inbox** (one
-  subfolder per project, as now), from the OneDrive app on your phones or from a computer. Within a
+  subfolder per project, as now; inside it, Studio makes a folder for each Go post, and clips
+  dropped there are matched to that post's shots), from the OneDrive app on your phones or from a computer. Within a
   couple of minutes of an upload finishing, the server collects it. The original then moves to
   **Studio Archive** in OneDrive, so OneDrive keeps a copy and the inbox shows only what's still waiting.
 - **Reference reels you saved as videos** go in **Studio Inbox > References > Ours** or **> Inspiration**.
 - **Dashboard**: **https://studio.theurbanmakers.com**, on any phone or computer, with the same
-  accounts as now. No Tailscale needed.
+  accounts as now (or your planner email and password). No Tailscale needed. The planner is there
+  too, at **/plan/**, already signed in. Team accounts need an @theurbanmakers.com email.
+- **Uploading from the planner**: on a shot, **Film**, **From library** or **Choose file** sends the
+  video straight to the server, which files it in the post's folder and attaches it to that shot.
 - **Approved reels** are copied to **Studio Ready to post** in OneDrive, so you can post them from
   your phone. Every draft also has a **Download video** button.
 - **DaVinci Resolve**: "Make Resolve project" now gives you a **Download (.zip)** with the project
@@ -126,7 +130,8 @@ If anything stops it (a typo, the Wi-Fi), run the same command again. Finished s
 - **Is it safe?** Only SSH (key only, no passwords) and the website ports are open. The dashboard
   needs a login, the same as now, and the connection is HTTPS. Keys and passwords are in one file on
   the server that only Studio can read. Ubuntu installs security updates by itself.
-- **Disk**: 320 GB holds about 2,000 clips. OneDrive's Studio Archive keeps every original as well,
+- **Disk**: uploads from the planner are refused while they would leave less than 5 GB free.
+  320 GB holds about 2,000 clips. OneDrive's Studio Archive keeps every original as well,
   so the server's copy isn't the only one. The dashboard shows the free space. When it gets tight,
   add a Hetzner Volume (about €0.05 per GB a month) or ask Claude to have Studio remove old originals
   that are already archived.

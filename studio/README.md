@@ -294,6 +294,9 @@ Studio account, and it works only while the laptop is on and awake (section 1).
 - **Cloudflare Tunnel at studio.theurbanmakers.com** (further down): free, nothing to install for
   the team, but it moves the domain's DNS to Cloudflare first. Worth it when the team grows.
 
+Team accounts must use an **@theurbanmakers.com** email (invites, `--add-user` and sign-in refuse
+others; set `STUDIO_ALLOWED_EMAIL_DOMAINS` to change it). Owner accounts may use any address.
+
 **Who can do what**
 
 | | Bryan (owner) | Team |
@@ -426,7 +429,29 @@ While the worker runs, it syncs about every 30 seconds:
 - it analyses the reference reels on the planner's **References** tab and drafts the style guide
   (section 14).
 
-The dashboard's Plan tab then links to the planner and shows when the laptop last synced.
+- it gives each **Go** idea its own **post folder** inside the project's inbox folder
+  (`Studio Inbox\Kensington\Why we tank the shower`, named once from the title and never renamed;
+  on a server it's made in the OneDrive inbox too). Clips dropped there are matched only against
+  that post's shots. Folders deeper than project > post are folded into the file name;
+- it runs **Place by phase** (the planner's shoot plan): Claude puts each unplaced shot of the
+  project's Go and proposed ideas into the renovation phase whose work it shows.
+
+**One address, one login.** The dashboard also serves the planner at **/plan/** (the header's
+**Review** and **Plan**), behind the dashboard's sign-in, and opens it signed in. The sign-in page
+takes the planner's email and password too, and the planner role (owner or team) carries over.
+Only **@theurbanmakers.com** addresses can sign in as team (`STUDIO_ALLOWED_EMAIL_DOMAINS`; `*` =
+anyone); owner accounts can use any address. /plan/ needs the planner's public key: Studio reads it
+once from the Netlify planner (`STUDIO_PLANNER_URL/config.js`), or set `STUDIO_SUPABASE_ANON_KEY`.
+The Netlify planner keeps working as before.
+
+**Uploading to a shot.** In the planner, a shot's **Film** / **From library** / **Choose file**
+sends the video straight to the Studio machine in 8 MB pieces (a dropped connection carries on
+where it stopped; up to 8 GB). It lands in the idea's post folder, is processed like any other
+clip, and becomes a take of that shot; the shot is marked filmed. Uploads need 5 GB of free disk
+afterwards, and unfinished ones are removed after 3 days. A planner on another address (say a
+Netlify preview) may upload once it's listed in `STUDIO_UPLOAD_ORIGINS`.
+
+The dashboard's Plan tab then opens the planner and shows when the laptop last synced.
 **After an update that adds online features** (such as References), bring the online database
 and functions up to date once: `.\venv\Scripts\python cloud_setup.py --update`. Until then the
 sync keeps working and the Plan tab says "Online database needs an update".
@@ -523,8 +548,10 @@ there and retires the laptop's copy. After that:
 
 - footage still goes in the OneDrive **Studio Inbox**; the server collects it (`onedrive.py`) and
   moves the originals to **Studio Archive**; approved reels land in **Studio Ready to post**;
-- the dashboard is https://studio.theurbanmakers.com (log in as before), with **Download video**
-  and, for Resolve, **Download (.zip)**;
+- the dashboard is https://studio.theurbanmakers.com (log in as before, or with your planner
+  email and password), with **Download video** and, for Resolve, **Download (.zip)**; the planner
+  is at https://studio.theurbanmakers.com/plan/, and footage uploaded to a shot from the planner
+  goes straight to the server;
 - updates and **Restart Studio** work as before (systemd restarts the worker);
 - checking on it: `ssh root@<server address> bash /root/studio-server/setup.sh status`.
 

@@ -2,7 +2,7 @@
 // live updates. Views live in board.js, idea.js, checklist.js and team.js.
 import {
   $, $$, esc, sb, must, landing, state, isOwner, toast, openModal, closeModal, modalOpen, formError,
-  isTyping, laptopOn, laptopSince,
+  isTyping, laptopOn, laptopSince, underPlan,
 } from "./core.js";
 import { showAuth, hideAuth } from "./auth.js";
 import { plan, loadProjects, loadBoard, renderPlanner, selectProject, onBoardRefresh } from "./board.js";
@@ -10,6 +10,8 @@ import { view, openIdea, hideViewer, closeIdea, loadIdea, viewerOpen, step, upda
 import { check, openChecklist, hideChecklist, loadChecklist, checklistOpen } from "./checklist.js";
 import { showTeam, hideTeam } from "./team.js";
 import { refsRoute, showRefs, hideRefs, resetRefs, refsOpen, loadRefs } from "./refs.js";
+import { shoot, onShootRefresh } from "./shoot.js";
+import { onUploadRow, renderTray } from "./upload.js";
 
 const SET_PASSWORD = "studio.setPassword";
 const session = { started: false, channel: null };
@@ -22,13 +24,21 @@ async function boot() {
     try { sessionStorage.setItem(SET_PASSWORD, landing.type); } catch { /* private mode */ }
   }
   showAuth("loading");
-  const { data } = await sb.auth.getSession();
+  let { data } = await sb.auth.getSession();
+  // Served by the Studio dashboard at /plan/: the dashboard login is the planner's too.
+  if (!data.session && underPlan && !landing.hasToken) {
+    const got = await dashboardSession();
+    if (got === "redirected") return;
+    if (got?.blocked) { showAuth("blocked", { error: got.blocked }); return; }
+    if (got) ({ data } = await sb.auth.getSession());
+  }
   if (landing.hasToken || landing.error) history.replaceState(null, "", location.pathname);
   sb.auth.onAuthStateChange((event) => {
     if (event === "PASSWORD_RECOVERY") {
       try { sessionStorage.setItem(SET_PASSWORD, "recovery"); } catch { /* private mode */ }
     } else if (event === "SIGNED_OUT" && session.started) {
       stop();
+      if (underPlan && !signingOut) { location.href = "/login?next=/plan/"; return; }
       showAuth("signin", { info: "You're signed out.", onSignedIn: enter });
     }
   });
@@ -42,6 +52,35 @@ async function boot() {
   }
   if (!data.session) { showAuth("signin", { onSignedIn: enter }); return; }
   await enter(data.session);
+}
+
+// GET /api/planner-session on the dashboard: the signed-in dashboard user's Supabase
+// session. 401: not signed in to the dashboard (go there); 403: not a planner member.
+async function dashboardSession() {
+  let res;
+  try {
+    res = await fetch("/api/planner-session", { credentials: "same-origin", headers: { Accept: "application/json" } });
+  } catch { return null; }
+  if (res.status === 401) { location.href = "/login?next=/plan/"; return "redirected"; }
+  const j = await res.json().catch(() => ({}));
+  if (res.status === 403) return { blocked: j.error || "Your Studio account isn't on the planning team. Ask the owner to add you." };
+  if (!res.ok || !j.access_token || !j.refresh_token) return null;
+  const { error } = await sb.auth.setSession({ access_token: j.access_token, refresh_token: j.refresh_token });
+  return error ? null : true;
+}
+let signingOut = false;
+// Under /plan/ signing out of the planner signs out of the dashboard too.
+async function signOutEverywhere() {
+  signingOut = true;
+  await sb.auth.signOut().catch(() => {});
+  stop();
+  if (underPlan) {
+    await fetch("/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+    location.href = "/login?next=/plan/";
+    return;
+  }
+  signingOut = false;
+  showAuth("signin", { info: "Signed out.", onSignedIn: enter });
 }
 
 async function enter(sess, opts = {}) {
@@ -64,6 +103,7 @@ async function enter(sess, opts = {}) {
   }
   hideAuth();
   $("#app").hidden = false;
+  $("#tab-review").hidden = !underPlan;
   if (opts.passwordSet) toast("Password set. Welcome in.");
   await start();
 }
@@ -87,7 +127,8 @@ async function start() {
 function stop() {
   if (session.channel) sb.removeChannel(session.channel);
   if (session.refChannel) sb.removeChannel(session.refChannel);
-  session.channel = session.refChannel = null;
+  if (session.shootChannel) sb.removeChannel(session.shootChannel);
+  session.channel = session.refChannel = session.shootChannel = null;
   session.started = false;
   hideViewer();
   hideChecklist();
@@ -99,6 +140,8 @@ function stop() {
   plan.board = null;
   plan.pid = null;
   plan.shellFor = null;
+  Object.assign(shoot, { pid: null, data: null, missing: false, sig: "" });
+  renderTray();
 }
 
 // ── Header: the laptop and your account ─────────────────────────────────────
@@ -151,11 +194,7 @@ $("#account-menu").addEventListener("click", async (e) => {
   const what = btn.dataset.account;
   if (what === "team") location.hash = "#/team";
   else if (what === "password") openPassword();
-  else if (what === "signout") {
-    await sb.auth.signOut().catch(() => {});
-    stop();
-    showAuth("signin", { info: "Signed out.", onSignedIn: enter });
-  }
+  else if (what === "signout") await signOutEverywhere();
 });
 
 function openPassword() {
@@ -193,6 +232,7 @@ async function refreshBoard(force = false) {
   if (!$("#planner").hidden && !viewerOpen() && !checklistOpen()) renderPlanner(force);
 }
 onBoardRefresh(async (force) => { await refreshBoard(force); });
+onShootRefresh(async () => { if (!$("#planner").hidden && !viewerOpen() && !checklistOpen()) await refreshBoard(true); });
 
 let routing = Promise.resolve();
 function route() {
@@ -238,7 +278,8 @@ async function doRoute() {
     }
     return;
   }
-  if ((m = h.match(/^#\/checklist\/(\d+)$/))) {
+  // Today on site; #/checklist/<id> is its old name.
+  if ((m = h.match(/^#\/(?:today|checklist)\/(\d+)$/))) {
     hideViewer();
     hideTeam();
     await openChecklist(Number(m[1]));
@@ -277,6 +318,7 @@ window.addEventListener("hashchange", () => route());
 const TABLES = ["projects", "arcs", "ideas", "shots", "clips", "takes", "votes", "comments", "jobs", "laptop_status",
   "reference_videos", "reference_analysis", "style_guides"];
 const REF_TABLES = new Set(["reference_videos", "reference_analysis", "style_guides"]);
+const SHOOT_TABLES = ["phases", "site_days", "shot_uploads"];
 let refreshTimer = null;
 let refreshing = false;
 let again = false;
@@ -299,6 +341,13 @@ function startRealtime() {
   }
   refChannel.subscribe();
   session.refChannel = refChannel;
+  // The shoot plan's tables, on their own channel for the same reason.
+  const shootChannel = sb.channel("studio-shoot");
+  for (const table of SHOOT_TABLES) {
+    shootChannel.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => onChange(table, payload));
+  }
+  shootChannel.subscribe();
+  session.shootChannel = shootChannel;
 }
 
 function onChange(table, payload) {
@@ -306,6 +355,7 @@ function onChange(table, payload) {
     if (payload.new) state.laptop = payload.new;
     renderLaptop();
   }
+  if (table === "shot_uploads" && payload.new) onUploadRow(payload.new);
   // References and style guides only matter while their pages are open.
   if (REF_TABLES.has(table) && !refsOpen()) return;
   // A clip the laptop pushed only matters to an open footage picker or board stills.

@@ -58,7 +58,7 @@ VERDICTS = ("good", "check", "retake")
 
 # What the dashboard shows (Plan tab) and --cloud-check prints.
 status: dict = {"last_ok": None, "last_error": None, "last_error_at": None, "last_attempt": None,
-                "counts": {}, "jobs": [], "note": None, "refs": None, "ref_problems": []}
+                "counts": {}, "jobs": [], "note": None, "refs": None, "ref_problems": [], "problems": []}
 _tick_lock = threading.Lock()
 _last_tick = 0.0
 _context_hashes: dict[str, str] = {}
@@ -238,7 +238,8 @@ def _heartbeat(api: Client) -> None:
     v = updater.version()
     api.insert("laptop_status", {
         "id": 1, "last_seen": _now(), "version": f"{v['commit']} {v['date'][:10]}".strip(),
-        "info": {"subject": v.get("subject", ""), "sync": status.get("counts", {}), "note": status.get("note")},
+        "info": {"subject": v.get("subject", ""), "sync": status.get("counts", {}), "note": status.get("note"),
+                 "dashboard_url": settings.DASHBOARD_URL},
     }, on_conflict="id", resolution="merge-duplicates", returning=False)
 
 
@@ -377,7 +378,7 @@ def pull(api: Client, conn) -> dict:
                     "purpose": r["purpose"], "cta": r["cta"], "caption": r["caption"],
                     "est_seconds": r["est_seconds"], "music_plan": json.dumps(r["music"] or {}),
                     "decision": r["decision"], "status": status_, "position": r["position"],
-                    "updated_at": r["updated_at"]}
+                    "updated_at": r["updated_at"], "folder": r.get("folder") or ""}
         ideas, *stats["ideas"] = _mirror_table(
             conn, "ideas", remote["ideas"], idea_values,
             extra={"batch": "plan", "origin": "plan", "angle": "", "beats": "[]", "segments": "[]",
@@ -439,15 +440,18 @@ def _project_remote_ids(conn) -> dict[int, int]:
     return {r[0]: r[1] for r in conn.execute("SELECT id, remote_id FROM projects WHERE remote_id IS NOT NULL")}
 
 
-def _clip_summary(r, project_remote: dict[int, int]) -> dict:
+def _clip_summary(r, project_remote: dict[int, int], idea_remote: dict[int, int] | None = None) -> dict:
     q = json.loads(r["quality"] or "{}")
-    return {
+    summary = {
         "id": r["id"], "title": (r["title"] or r["source_name"] or "")[:300], "recorded_at": _ts(r["recorded_at"]),
         "duration": r["duration"], "project_id": project_remote.get(r["project_id"]),
         "verdict": q.get("verdict") if q.get("verdict") in VERDICTS else None,
         "flags": [{"level": f.get("level", ""), "text": f.get("text", ""), "tip": f.get("tip", "")}
                   for f in q.get("flags", [])],
     }
+    if idea_remote and idea_remote.get(r["idea_id"]):  # from a post folder (only then, so older clips aren't re-sent)
+        summary["idea_id"] = idea_remote[r["idea_id"]]
+    return summary
 
 
 def _digest(summary: dict, still_key: str) -> str:
@@ -457,9 +461,11 @@ def _digest(summary: dict, still_key: str) -> str:
 def push_clips(api: Client, conn) -> int:
     """Summaries (and stills, when new or changed) of finished library clips."""
     project_remote = _project_remote_ids(conn)
+    idea_remote = ({r[0]: r[1] for r in conn.execute("SELECT id, remote_id FROM ideas WHERE remote_id IS NOT NULL")}
+                   if _shoot_plan_online else None)
     batch = []
     for r in conn.execute("SELECT * FROM clips WHERE status IN ('tagged', 'transcribed') ORDER BY id").fetchall():
-        summary = _clip_summary(r, project_remote)
+        summary = _clip_summary(r, project_remote, idea_remote)
         frame = _middle_frame(r["clip_dir"])
         frame_key = _frame_key(frame)
         uploaded = r["cloud_thumb"]
@@ -557,7 +563,7 @@ def run_jobs(api: Client, conn, idea_map: dict[int, int]) -> list[str]:
     done = []
     for job in api.select("jobs", {"runner": "eq.laptop", "state": "eq.queued", "kind": "neq.style"}):
         local_id = idea_map.get(job["idea_id"])
-        if local_id is None:
+        if local_id is None and job["kind"] != "place":
             created = _ts(job["created_at"])
             young = created and datetime.fromisoformat(created) > datetime.now(timezone.utc) - timedelta(minutes=2)
             if young:
@@ -567,8 +573,13 @@ def run_jobs(api: Client, conn, idea_map: dict[int, int]) -> list[str]:
                              {"state": "running", "started_at": _now()})
         if not claimed:
             continue
-        log.info("Cloud job %s: %s for idea %s", job["id"], job["kind"], job["idea_id"])
+        log.info("Cloud job %s: %s for %s", job["id"], job["kind"],
+                 f"project {job['project_id']}" if job["kind"] == "place" else f"idea {job['idea_id']}")
         try:
+            if job["kind"] == "place":
+                _finish(api, job, place_shots(api, job.get("project_id")))
+                done.append(f"place #{job['id']}: done")
+                continue
             if local_id is None:
                 raise RuntimeError("the laptop doesn't have this idea (was it deleted?)")
             if job["kind"] == "music":
@@ -616,6 +627,135 @@ def push_productions(api: Client, conn, remote_ideas: list[dict]) -> int:
             api.update("ideas", {"id": f"eq.{idea['remote_id']}"}, values)
             n += 1
     return n
+
+
+# ── Step 7: the shoot plan (CONTRACT.md, "Shoot plan, uploads to a shot, post folders") ──
+
+_shoot_plan_online = False     # the online database has phases, shot_uploads, ideas.folder...
+_shoot_plan_checked = 0.0
+POST_FOLDER_MAX = 60
+ONEDRIVE_FOLDERS_PER_TICK = 5  # rclone mkdirs per tick (a second or two each)
+PLACE_CHUNK = 100              # shot ids per update
+
+
+def check_shoot_plan(api: Client) -> bool:
+    """Is the shoot-plan migration online? Asked again every 10 minutes while it isn't."""
+    global _shoot_plan_online, _shoot_plan_checked
+    if _shoot_plan_online or time.time() - _shoot_plan_checked < SCHEMA_RECHECK_SECONDS:
+        return _shoot_plan_online
+    _shoot_plan_checked = time.time()
+    try:
+        api.request("GET", "/rest/v1/shot_uploads", params={"select": "id", "limit": 1})
+        _shoot_plan_online = True
+    except CloudError as e:
+        if not _missing_table(e):
+            raise
+        log.warning("%s (no shoot plan tables online yet: post folders and uploads wait)", NEEDS_UPDATE)
+        status["note"] = NEEDS_UPDATE
+    return _shoot_plan_online
+
+
+def _post_folder_name(title: str, taken: set[str]) -> str:
+    """A folder name for a post: its title, made safe, at most 60 characters, not
+    used by another post of the project ("(2)" when it is)."""
+    base = re.sub(r"\s+", " ", _safe_folder(title))[:POST_FOLDER_MAX].strip(" .") or "Post"
+    name, n = base, 2
+    while name.lower() in taken or name.lower() == "references":
+        suffix = f" ({n})"
+        name = base[:POST_FOLDER_MAX - len(suffix)].rstrip(" .") + suffix
+        n += 1
+    return name
+
+
+def post_folders(api: Client, conn, remote: dict) -> list[str]:
+    """An inbox folder for each Go idea of an active project (Inbox/<project>/<post>/),
+    named once from its title and written to ideas.folder; never renamed or removed.
+    On a server, also made in the OneDrive inbox (best effort, retried next tick).
+    Returns the folders made."""
+    import onedrive
+    projects = {p["id"]: p for p in remote["projects"]}
+    taken: dict[int, set[str]] = {}
+    for i in remote["ideas"]:
+        if i.get("folder"):
+            taken.setdefault(i["project_id"], set()).add(i["folder"].lower())
+    made, wanted = [], []
+    for i in remote["ideas"]:
+        p = projects.get(i["project_id"])
+        if not p or p["status"] != "active" or i["decision"] != "go" or i["status"] == "dismissed":
+            continue
+        project_folder = _safe_folder(p["folder"]) or _safe_folder(p["name"])
+        folder = _safe_folder(i.get("folder") or "")
+        if not project_folder:
+            continue
+        if not folder:
+            folder = _post_folder_name(i["title"], taken.setdefault(i["project_id"], set()))
+            if not api.update("ideas", {"id": f"eq.{i['id']}", "folder": "eq."}, {"folder": folder}):
+                continue  # named meanwhile (the next pull brings it)
+            i["folder"] = folder
+            taken[i["project_id"]].add(folder.lower())
+            conn.execute("UPDATE ideas SET folder = ? WHERE remote_id = ?", (folder, i["id"]))
+            conn.commit()
+            made.append(f"{project_folder}/{folder}")
+            log.info("Post folder for \"%s\": %s/%s", i["title"], project_folder, folder)
+        try:
+            if settings.INBOX.exists():
+                target = settings.INBOX / project_folder / folder
+                if target.resolve().parent.parent == settings.INBOX.resolve():
+                    target.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            log.warning("Couldn't make inbox folder %s/%s: %s", project_folder, folder, e)
+        wanted.append(f"{project_folder}/{folder}")
+    if onedrive.configured():
+        done = set(_state().get("onedrive_folders") or [])
+        todo = [w for w in wanted if w not in done][:ONEDRIVE_FOLDERS_PER_TICK]
+        for key in todo:
+            try:
+                onedrive.make_folder(*key.split("/"))
+                done.add(key)
+            except onedrive.OneDriveError as e:
+                log.debug("OneDrive folder %s not made yet: %s", key, e)
+                break  # OneDrive is unhappy: try again next tick
+        if todo:
+            _save_state({"onedrive_folders": sorted(done)})
+    return made
+
+
+def place_shots(api: Client, project_id: int | None, client=None) -> dict:
+    """The place job: Claude puts the project's shots that have no phase (of Go and
+    proposed ideas) into the phase whose work they show, or leaves them out.
+    Returns {placed, unplaced}."""
+    import plan
+    if not project_id:
+        raise RuntimeError("the job doesn't say which project")
+    project = api.select("projects", {"id": f"eq.{project_id}", "select": "id,name,brief"})
+    if not project:
+        raise RuntimeError("that project isn't in the planner any more")
+    phases = api.select("phases", {"project_id": f"eq.{project_id}", "order": "position,starts_on,id"})
+    if not phases:
+        raise RuntimeError("Add the renovation phases first")
+    ideas = api.select("ideas", {"project_id": f"eq.{project_id}", "decision": "in.(go,proposed)",
+                                 "status": "neq.dismissed", "select": "id,title,decision"})
+    shots = []
+    ids = [i["id"] for i in ideas]
+    for n in range(0, len(ids), PLACE_CHUNK):
+        part = ",".join(str(i) for i in ids[n:n + PLACE_CHUNK])
+        shots += api.select("shots", {"idea_id": f"in.({part})", "phase_id": "is.null",
+                                      "select": "id,idea_id,kind,framing,description,line"})
+    if not shots:
+        return {"placed": 0, "unplaced": 0}
+    picks = plan.place_shots(project[0], phases, ideas, shots, client=client, ref=f"project:{project_id}")
+    by_phase: dict[int, list[int]] = {}
+    for shot_id, phase_id in picks.items():
+        if phase_id:
+            by_phase.setdefault(phase_id, []).append(shot_id)
+    placed = 0
+    for phase_id, shot_ids in by_phase.items():
+        for n in range(0, len(shot_ids), PLACE_CHUNK):
+            part = ",".join(str(i) for i in shot_ids[n:n + PLACE_CHUNK])
+            # Only shots still without a phase: someone may have moved one meanwhile.
+            placed += len(api.update("shots", {"id": f"in.({part})", "phase_id": "is.null"}, {"phase_id": phase_id}))
+    log.info("Placed %d of %d shots of project %s into its phases", placed, len(shots), project_id)
+    return {"placed": placed, "unplaced": len(shots) - placed}
 
 
 # ── Step 6: reference reels and the style guide ──────────────────────────────
@@ -1005,11 +1145,27 @@ def sync_once(conn, api: Client | None = None) -> dict:
     counts["refiled"] = _file_online(api)
     pulled = pull(api, conn)
     remote, maps = pulled["remote"], pulled["remote"]["maps"]
+    shoot_plan = check_shoot_plan(api)
     counts["pulled"] = pulled["stats"]
     counts["clips_pushed"] = push_clips(api, conn)
     new_takes = push_takes(api, conn)
     counts["takes_pushed"] = len(new_takes)
     counts["stills"] = push_take_stills(api, conn, remote["takes"] + new_takes)
+    problems = []
+    if shoot_plan:  # post folders and uploads: never stop the rest of the sync
+        import uploads
+        for name, fn in (("post folders", lambda: len(post_folders(api, conn, remote))),
+                         ("uploads", lambda: uploads.sync(api, conn))):
+            try:
+                counts[name.replace(" ", "_")] = fn()
+            except Exception as e:
+                if isinstance(e, CloudError) and "can't reach" in str(e):
+                    raise
+                message = f"{name}: {e if isinstance(e, CloudError) else f'{type(e).__name__}: {e}'}"[:300]
+                if message not in status.get("problems", []):  # logged once, retried every tick
+                    log.warning("Cloud sync, %s", message)
+                problems.append(message)
+    status["problems"] = problems
     jobs = run_jobs(api, conn, maps["ideas"])
     counts["jobs"] = len(jobs)
     counts["productions"] = push_productions(api, conn, remote["ideas"])
@@ -1021,6 +1177,8 @@ def sync_once(conn, api: Client | None = None) -> dict:
             log.warning("Cloud sync, references failed (will retry): %s", message)
         status["ref_problems"] = [message]
         refs = {}
+    if not shoot_plan:
+        status["note"] = NEEDS_UPDATE
     jobs += refs.pop("lines", [])
     counts["refs"] = {k: v for k, v in refs.items() if k != "skipped"}
     counts["online"] = {"projects": len(remote["projects"]), "ideas": len(remote["ideas"]),
@@ -1069,8 +1227,13 @@ def dashboard_info() -> dict | None:
     """For the dashboard's Plan tab: where planning lives now, and how sync is going."""
     if not enabled():
         return None
+    import cloud_auth
+    import planner_site
     online = (status.get("counts") or {}).get("online", {})
+    here = planner_site.available() and bool(cloud_auth.anon_key())
     return {"planner_url": settings.PLANNER_URL if url_allowed(settings.PLANNER_URL or "") else "",
+            # The planner served by this dashboard (one address, one login), when it can be.
+            "plan_here": "/plan/" if here else "", "plan_problem": None if here else cloud_auth.anon_problem(),
             "last_ok": status["last_ok"], "last_error": status["last_error"],
             "last_error_at": status["last_error_at"], "online": online, "jobs": status.get("jobs", [])[:5],
             "note": status.get("note"), "references": status.get("refs")}

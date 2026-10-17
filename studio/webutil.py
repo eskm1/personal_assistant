@@ -31,6 +31,15 @@ def is_local() -> bool:
     return request.remote_addr in LOOPBACK and not any(h in request.headers for h in PROXY_HEADERS)
 
 
+def own_origin(origin: str) -> bool:
+    """An Origin header that is this dashboard itself. Tunnels may pass on the
+    machine's own host name, so the public address (STUDIO_DASHBOARD_URL) counts too."""
+    import settings
+    hosts = {request.host, request.headers.get("X-Forwarded-Host"),
+             settings.DASHBOARD_URL.split("://", 1)[-1].split("/", 1)[0] or None}
+    return origin.split("://", 1)[-1] in hosts
+
+
 def client_ip() -> str:
     """The visitor's address. Through a tunnel every request comes from 127.0.0.1; the
     tunnel appends the real address to X-Forwarded-For, so take the last entry (earlier

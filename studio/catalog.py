@@ -183,6 +183,19 @@ CREATE TABLE IF NOT EXISTS invites (
     used_at     TEXT
 );
 
+CREATE TABLE IF NOT EXISTS upload_pins (     -- footage uploaded from the planner to one shot (uploads.py)
+    upload_id   TEXT PRIMARY KEY,
+    path        TEXT NOT NULL,             -- where it waits, relative to the inbox (a/b/c.mp4)
+    shot_remote INTEGER NOT NULL,          -- the shot's id in the online planner
+    user_id     TEXT,                      -- the planner user who uploaded it
+    state       TEXT NOT NULL,             -- received | ingested | failed
+    clip_id     INTEGER,
+    error       TEXT,
+    reported    TEXT,                      -- the state last written to shot_uploads online
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS upload_pins_path ON upload_pins (path, state);
+
 CREATE TABLE IF NOT EXISTS votes (
     idea_id     INTEGER NOT NULL,
     user_id     INTEGER NOT NULL,
@@ -201,6 +214,7 @@ _ADDED_COLUMNS = {
         "cloud_hash": "TEXT",      # hash of the summary last pushed to the online planner
         "cloud_thumb": "TEXT",     # the frame last uploaded as its still
         "cloud_pushed_at": "TEXT",
+        "idea_id": "INTEGER",      # the post folder it came from (Inbox/<project>/<post>/), if any
     },
     "productions": {
         "plan": "TEXT",   # JSON: the approved idea the editor follows
@@ -222,6 +236,7 @@ _ADDED_COLUMNS = {
         "created_by": "INTEGER",
         "updated_at": "TEXT",
         "remote_id": "INTEGER",  # its row in the online planner (cloud_sync.py)
+        "folder": "TEXT",        # its post folder in the inbox (Inbox/<project>/<folder>/), if it has one
     },
     "feedback": {"author": "TEXT"},
     "shots": {"camera": "TEXT",  # iphone | zfc | gopro | any: which of the team's cameras films it
@@ -230,6 +245,9 @@ _ADDED_COLUMNS = {
     "projects": {"remote_id": "INTEGER"},
     "arcs": {"remote_id": "INTEGER"},
     "takes": {"remote_id": "INTEGER"},
+    # 1 = this email is proven to be theirs in the planner (they signed in with the planner's
+    # password), so the dashboard may open the planner for them (planner_site.py).
+    "users": {"planner_ok": "INTEGER"},
 }
 
 
