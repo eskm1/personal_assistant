@@ -132,7 +132,8 @@ function stop() {
   if (session.refChannel) sb.removeChannel(session.refChannel);
   if (session.shootChannel) sb.removeChannel(session.shootChannel);
   if (session.planChannel) sb.removeChannel(session.planChannel);
-  session.channel = session.refChannel = session.shootChannel = session.planChannel = null;
+  if (session.topicChannel) sb.removeChannel(session.topicChannel);
+  session.channel = session.refChannel = session.shootChannel = session.planChannel = session.topicChannel = null;
   session.started = false;
   hideViewer();
   hideChecklist();
@@ -312,7 +313,7 @@ async function doRoute() {
     hideTeam();
     hideRefs();
     $("#planner").hidden = true;
-    setSection(planRoute.page === "plan" ? "content" : "plan");
+    setSection({ plan: "content", questions: "questions" }[planRoute.page] || "plan");
     await showMonth(planRoute);
     return;
   }
@@ -398,6 +399,7 @@ const TABLES = ["projects", "arcs", "ideas", "shots", "clips", "takes", "votes",
 const REF_TABLES = new Set(["reference_videos", "reference_analysis", "style_guides"]);
 const SHOOT_TABLES = ["phases", "site_days", "shot_uploads"];
 const PLAN_TABLES = ["content_plan"];
+const TOPIC_TABLES = ["client_questions"];
 let refreshTimer = null;
 let refreshing = false;
 let again = false;
@@ -434,6 +436,13 @@ function startRealtime() {
   }
   planChannel.subscribe();
   session.planChannel = planChannel;
+  // Client questions (suggested topics), on their own channel for the same reason.
+  const topicChannel = sb.channel("studio-topics");
+  for (const table of TOPIC_TABLES) {
+    topicChannel.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => onChange(table, payload));
+  }
+  topicChannel.subscribe();
+  session.topicChannel = topicChannel;
 }
 
 function onChange(table, payload) {

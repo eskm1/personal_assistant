@@ -1176,3 +1176,60 @@ body.has-tray .toast { bottom: auto; top: 76px; }
   .slide-pic-btns .btn { min-height: 40px; }
   .qa-format .radio { min-height: 40px; }
 }
+
+/* ── Suggested topics: "Studio suggests" under the meters, and the Client questions page ── */
+.sugg { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
+.sugg-head { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; }
+.sugg-head h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.sugg-head .count, .sugg-q .count, .qs h2 .count { padding: 1px 7px; border-radius: 999px; background: var(--line); font-size: 12px; letter-spacing: 0; color: var(--text); }
+.sugg-q { margin-left: auto; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+.sugg-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.sugg-card {
+  position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; min-width: 0;
+  background: var(--surface-2); border: 1px solid var(--line);
+}
+.sugg-card:hover { border-color: #3c3c46; }
+.sugg-meta { display: flex; gap: 6px; flex-wrap: wrap; }
+.sugg-meta .chip { font-size: 11px; padding: 2px 8px; }
+.sugg-title { color: var(--text); font-weight: 700; line-height: 1.3; text-decoration: none; overflow-wrap: anywhere; }
+/* The whole card opens the idea; the buttons sit above that. */
+.sugg-title::after { content: ""; position: absolute; inset: 0; border-radius: 10px; }
+.sugg-title:focus-visible { outline: none; }
+.sugg-title:focus-visible::after { outline: 2px solid var(--um); outline-offset: 2px; }
+.sugg-why { line-height: 1.4; }
+.sugg-btns { position: relative; z-index: 1; display: flex; gap: 6px; margin-top: auto; padding-top: 2px; }
+.sugg-btns .btn { min-width: 64px; }
+.sugg-wait { margin-top: auto; }
+.sugg-empty, .sugg-foot { margin: 0; }
+.sugg-box { border-left: 3px solid var(--k-ideas); }
+.sugg-box p + p { margin-top: 4px; }
+@media (max-width: 720px) {
+  /* Phones: the cards scroll sideways inside the strip (the page itself never does). */
+  .sugg-list { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 8px; margin: 0 -12px; padding: 0 12px 4px; scrollbar-width: none; }
+  .sugg-list::-webkit-scrollbar { display: none; }
+  .sugg-card { flex: 0 0 84%; scroll-snap-align: start; }
+  .sugg-list .sugg-card:only-child { flex-basis: 100%; }
+  .sugg-btns .btn { flex: 1; min-height: 40px; }
+  /* Phones: the title and Suggest topics on one line, Client questions under them. */
+  .sugg-head .btn { min-height: 40px; margin-left: auto; }
+  .sugg-q { order: 3; flex-basis: 100%; min-height: 32px; margin: -4px 0 0; }
+}
+
+.qs .q-add { display: flex; flex-direction: column; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.qs .q-add textarea, .q-form textarea, .q-form input, .q-more input { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; color: var(--text); }
+.qs .q-add textarea#q-new { font-size: 16px; min-height: 64px; }
+.q-more summary { cursor: pointer; font-size: 13px; font-weight: 600; min-height: 32px; display: flex; align-items: center; gap: 6px; }
+.q-more[open] summary { margin-bottom: 6px; }
+.q-more label, .q-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.q-sec { display: flex; flex-direction: column; gap: 8px; }
+.q-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.q-item { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+.q-text { font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.q-note { white-space: pre-wrap; }
+.q-idea { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; font-weight: 600; text-decoration: none; color: var(--filmed); }
+.q-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.q-form { display: flex; flex-direction: column; gap: 4px; }
+@media (max-width: 720px) {
+  .q-actions .btn, .qs .q-add .btn { min-height: 40px; }
+  .qs .q-add .btn { flex: 1; }
+}

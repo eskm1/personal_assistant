@@ -52,6 +52,9 @@ OPEN_IDEAS_MAX = 40
 TRANSCRIPT_CHARS = 2500
 MIN_SPAN = 0.3
 
+# idea_runs also records the suggested topics' runs (topics.py, trigger "topics:..."): not these.
+_MINE = "trigger NOT LIKE 'topics:%'"
+
 _last_library_failure: dict[int, float] = {}   # library idea id -> when migrating it failed
 LIBRARY_RETRY_SECONDS = 3600
 
@@ -284,6 +287,8 @@ class _Cloud:
             "est_seconds": f["est_seconds"], "decision": "proposed", "status": "new",
             **({"post_type": f["post_type"]} if f.get("post_type") and _plan_online() else {}),
             **({"slides": f["slides"]} if f.get("slides") else {}),
+            # Why Studio suggested it (topics.py; migration 20261022000000), for the planner's card.
+            **({"suggestion": f["suggestion"]} if f.get("suggestion") else {}),
             "position": max((i["position"] for i in taken), default=0) + 1})[0]["id"]
 
     def write_slides(self, ref, idea_id) -> None:
@@ -750,7 +755,7 @@ def _parse(stamp) -> datetime | None:
 def _baseline(conn) -> None:
     """The first time, clips from before this feature count as read (except the last
     day's), so turning it on doesn't bill a run over the whole library."""
-    if conn.execute("SELECT 1 FROM idea_runs LIMIT 1").fetchone():
+    if conn.execute(f"SELECT 1 FROM idea_runs WHERE {_MINE} LIMIT 1").fetchone():
         return
     stamp = catalog.now()
     run_id = conn.execute("""INSERT INTO idea_runs (trigger, state, result, started_at, finished_at)
@@ -800,7 +805,7 @@ def quiet(conn, now: datetime | None = None) -> bool:
     newest = next((t for t in stamps if t), None)
     if stamps and newest is None:
         return False  # can't tell when the last clip came: wait
-    failed = _parse(conn.execute("SELECT MAX(finished_at) FROM idea_runs WHERE state = 'failed'").fetchone()[0])
+    failed = _parse(conn.execute(f"SELECT MAX(finished_at) FROM idea_runs WHERE state = 'failed' AND {_MINE}").fetchone()[0])
     if any(t and now - t < wait for t in (newest, failed)):
         return False
     recent = (now - timedelta(hours=6)).isoformat(timespec="seconds")
@@ -823,7 +828,7 @@ def run_due(conn, api=None, client=None) -> dict | None:
 
 def status(conn) -> dict:
     """For the planner (laptop_status.info.footage_ideas) and the dashboard."""
-    last = conn.execute("""SELECT * FROM idea_runs WHERE trigger != 'baseline' ORDER BY id DESC LIMIT 1""").fetchone()
+    last = conn.execute(f"""SELECT * FROM idea_runs WHERE trigger != 'baseline' AND {_MINE} ORDER BY id DESC LIMIT 1""").fetchone()
     waiting = conn.execute("SELECT COUNT(*) FROM clips WHERE status = 'tagged' AND ideas_run IS NULL "
                            "AND COALESCE(ideas_tries, 0) < ?", (MAX_TRIES,)).fetchone()[0]
     out = {"after_minutes": settings.IDEAS_AFTER_MINUTES, "waiting_clips": waiting, "last_run": None}

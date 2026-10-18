@@ -72,7 +72,7 @@ class Digest:
 
     def add(self, kind: str, n: int = 1) -> None:
         """kind: processed | retake | matched | duplicate | unreadable | failed | draft | edit_failed
-        | ideas_new | ideas_attached (ideas from new footage)"""
+        | ideas_new | ideas_attached (ideas from new footage) | topics_new (suggested topics)"""
         if n <= 0:
             return
         with self._lock:
@@ -117,6 +117,9 @@ class Digest:
                                                "clips added to existing ideas")) if x]
             lines.append(" and ".join(parts).capitalize() + f" from {(notes or {}).get('ideas_when') or 'the new footage'}"
                          f": {planner_link()}")
+        if counts["topics_new"]:
+            lines.append(f"Studio suggests {n('topics_new', 'topic', 'topics')} for this month's gaps "
+                         f"(Go, Park or Dismiss them under This month): {planner_link()}")
         if counts["draft"] or counts["edit_failed"]:
             drafts = [x for x in (counts["draft"] and n("draft", "draft ready to review", "drafts ready to review"),
                                   counts["edit_failed"] and n("edit_failed", "edit failed", "edits failed")) if x]

@@ -287,7 +287,8 @@ The list lives in three places, kept in step: `studio/content_plan.py`, `functio
 **Schema.**
 - `ideas.post_type` text null, one of the five. Not an owner-only field: anyone who can edit ideas sets it.
 - `ideas.format` also allows `carousel` (carousels are built in a later step).
-- `jobs.kind` also allows `carousel` and `topics` (later steps); there are no insert policies for them yet.
+- `jobs.kind` also allows `carousel` and `topics` (their insert policies come with their own migrations:
+  "Carousels", "Suggested topics").
 - `projects.standing` text null unique: `everyday` (the Everyday posts project, footage_ideas.py) or `topics`
   (the standing **Topics** project for posts not tied to a client's renovation; the migration makes it, and
   marks an existing Everyday posts project).
@@ -441,3 +442,71 @@ chosen, note, why, redraw}`; `GET /media/production/<id>/concept/<n>/<a|b>` = an
 (with a change, Claude rewrites the brief from the old one; without, the same brief, `round + 1`). A note on
 Send back like "redraw slide 3, warmer" does the same through the revision (`redraw` in REVISE_SCHEMA's
 slides). Both are owner-only and only for a draft waiting for review.
+
+## Suggested topics (migration 20261022000000_topics.sql)
+
+Studio suggests a few posts for the month's gaps by itself (`topics.py`, on the Studio machine, inside the sync,
+after ideas from footage): one Claude call per run (effort medium, `usage` kind `topics`, ref `topics:<run id>`).
+
+**When.** Weekly at `STUDIO_TOPICS_DAY` / `STUDIO_TOPICS_HOUR`, Singapore time (default Monday 8; `off` = no
+weekly run), when no run has finished since 12 hours before that slot (so a run right after an update counts as that week's); or "the month falls behind" (`STUDIO_TOPICS_BEHIND`, on):
+past the 14th (Singapore), a kind topics can fill (`knowhow`, `ideas`, `offer`) is short in `content_month()` and
+no open suggestion has that kind (checked every 10 minutes at most). At most one automatic run per Singapore day
+(a failed one counts; Supabase unreachable doesn't); none while open suggestions >= `STUDIO_TOPICS_COUNT`
+(default 4, the most per run); none while Studio is busy (footage in the inbox or arriving from OneDrive, a clip
+being tagged, an edit planned / revising / producing, new clips not yet read for ideas from footage). Runs are
+recorded in the catalog's `idea_runs` (`trigger` `topics:weekly` | `topics:behind` | `topics:job`, `result` =
+`{new_ideas, suggestions: [{id, title, hook, ...}], skipped: [{title, why}], gaps, notes}`); footage ideas ignore
+them. `laptop_status.info.topics` = `{day, hour, count, behind, last_run: {at, state, trigger, new_ideas, error},
+last_suggested}`.
+
+**What Claude reads.** The content plan and this month's gaps (per fillable kind: short, open suggestions aiming
+at it, what's left), the open suggestions; Bryan's site talk: tagged, usable, pushed clips of the last 120 days
+with at least 160 characters of speech, most explanatory first (timestamped transcript, moments, project name
+marked internal, where the clip is already used), about 60k characters; open `client_questions` (who added it,
+who asked, the note); active references' titles and why-notes; the shoot calendar (site days and phases starting
+in the next 28 days, active projects); posts already planned or made, and dismissed ones (status `dismissed`,
+plus every earlier suggestion from `idea_runs` whose idea is dismissed or gone). The system prompt has brands,
+the playbook (with the style guide), the sources best first, and the rules: offers only from `content_plan`; no
+price, fee, duration or other figure unless Bryan said it or the team wrote it (`[check]` instead); no place
+names in public text; nothing about quotes; never `finished`.
+
+**What it writes.** Per suggestion (at most the count): repeats are dropped (title or hook shares at least three
+content words and most of the shorter one's with a planned, made, open, dismissed or remembered post, or one
+earlier in the same answer; or the cited moment overlaps a take of a live post by more than half); an On site
+suggestion needs footage; a Reel without usable footage becomes a carousel (when it has an outline). Public text
+(hook, caption, cta, slides, shot lines) loses project names/folders (`this home`) and money figures not in the
+transcripts, question notes or offers (`[check]`).
+
+| Kind of suggestion | Where | Rows |
+|---|---|---|
+| carousel (most Know-how, Ideas, Work with us) | the standing Topics project (`standing = 'topics'`, made if missing), arc **Studio suggests** (made once, first) | `ideas` (`decision 'proposed'`, `status 'new'`, `created_by` null, `post_type`, `format 'carousel'`, `slides` = the outline: cover first, ask last, text slides with `image.note`; the cover shows the cited clip's still when there is one) |
+| Reel where Bryan explains it on camera | the clip's project if active, else Everyday posts; arc **From your footage** | `ideas` + `shots` (the clip's moment first) + `takes` (`source 'auto'`, note `Bryan explains it here`) |
+
+Every suggestion has `ideas.suggestion` = `{why, source: transcript|question|calendar|reference|basics|plan,
+clip_id, at, question_id, run, suggested_at}` (checked by `valid_suggestion()`: an object, `why` <= 300). A cited
+question is set `status 'suggested'`, `idea_id` = the suggestion (only while it's `open`).
+
+**client_questions** (`id, question (3..500), note (<= 2000), asked_by (<= 120, free text), status open |
+suggested | used | passed, idea_id -> ideas on delete set null, created_by (stamped: the signed-in member),
+created_at, updated_at`). RLS: members read, add and edit; the owner or the author deletes. Realtime on. Trigger
+on ideas (`decision`, `status`, `production`): a linked question becomes `used` (Go, made, produced), `passed`
+(dismissed) or `suggested` (otherwise); a linked idea deleted while `suggested` = `open` again. The planner's
+**Suggest again** sets `open` and `idea_id` null.
+
+### Jobs
+
+| kind | runner | queued by | payload | result |
+|---|---|---|---|---|
+| topics | laptop | any member (insert; refused while another `topics` job is queued or running) | `{}` | `{new_ideas, idea_ids, skipped, notes}` |
+
+**Planner.** Under the This month meters, **Studio suggests**: the open suggestions (`suggestion` not null,
+`status 'new'`, `decision 'proposed'`, newest 12) as cards (kind chip, Carousel / Reel from footage / Reel, title,
+`suggestion.why`), Go / Park / Dismiss inline for the owner (plain updates; the team sees "Bryan decides"), tapping
+a card opens `#/idea/<id>` (which shows "Studio suggested this" with the why and the source); **Suggest topics**
+(queues the job; the line under the cards follows it), **Client questions** with the open count, and "Last
+suggested <date>" from `laptop_status.info.topics`. `#/questions` (the strip, More on phones, the Content plan
+page): a fast add box (question; optional who asked and a note), the questions by status with the post each
+became, Edit, Delete (owner or author), Suggest again. Until the update the row and the page say nothing / ask for
+`cloud_setup.py --update`.
+

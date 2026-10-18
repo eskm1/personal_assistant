@@ -19,7 +19,8 @@ The studio catalogue (SQLite), shared by the worker, the dashboard and the edito
 - users / invites / votes: team logins, invite links, and the team's vote on
   planned ideas. Bryan (owner) has the final say; the team plans and comments.
 - idea_runs: what each "ideas from new footage" run did (footage_ideas.py);
-  clips.ideas_run points at the run that read a clip, so it's read once.
+  clips.ideas_run points at the run that read a clip, so it's read once. The
+  suggested topics' runs are recorded here too (topics.py, trigger "topics:...").
 
 The review contract between the dashboard and the editor:
   ready --(request changes)--> revising --(editor re-renders, version + 1,
@@ -201,6 +202,7 @@ CREATE INDEX IF NOT EXISTS upload_pins_path ON upload_pins (path, state);
 CREATE TABLE IF NOT EXISTS idea_runs (       -- "ideas from new footage" (footage_ideas.py), one row per project per run
     id          INTEGER PRIMARY KEY,
     trigger     TEXT NOT NULL,             -- auto (quiet after uploads) | job (asked in the planner) | baseline
+                                           -- | topics:weekly | topics:behind | topics:job (topics.py)
     place       TEXT,                      -- cloud (the online planner) | local (this dashboard's plan)
     project_ref INTEGER,                   -- the project's id there
     project     TEXT,                      -- its name

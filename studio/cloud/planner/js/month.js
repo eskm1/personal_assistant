@@ -2,11 +2,16 @@
 // against the mix Bryan set), a page per kind of post (#/month/<kind>: the posts that count
 // this month and the ones waiting for a decision), and the Content plan page
 // (#/content-plan: the monthly targets per kind and the offers; the owner edits, the team
-// reads). The counting is the database's content_month() (CONTRACT "Content plan").
+// reads). The counting is the database's content_month() (CONTRACT "Content plan"). Under the
+// meters, "Studio suggests" (suggested topics for the gaps) and #/questions, the Client questions
+// page, live in topics.js.
 import {
   $, esc, sb, must, toast, recall, store, plural, isOwner, ownerName, missingTable, shortDate, PRODUCTION,
-  POST_TYPES, POST_TYPE, KIND_INFO, kindDot, DECISION, typingIn, sentence,
+  POST_TYPES, POST_TYPE, KIND_INFO, kindDot, DECISION, typingIn, sentence, keepDrafts,
 } from "./core.js";
+import {
+  topics, loadSuggestions, suggestRowHTML, suggestSig, suggestClick, loadQuestions, questionsPageHTML, questionsEvent,
+} from "./topics.js";
 
 const root = () => $("#month");
 const MAX_OFFERS = 10;
@@ -18,10 +23,11 @@ export const month = {
 };
 export const monthOpen = () => !root().hidden;
 
-// #/month/<kind>, #/content-plan, or null.
+// #/month/<kind>, #/content-plan, #/questions, or null.
 export function monthRoute(hash) {
   let m;
   if (hash === "#/content-plan") return { page: "plan" };
+  if (hash === "#/questions") return { page: "questions" };
   if ((m = hash.match(/^#\/month\/(knowhow|ideas|onsite|finished|offer)$/))) return { page: "kind", kind: m[1] };
   return null;
 }
@@ -34,6 +40,7 @@ export async function loadMonth() {
       sb.from("content_plan").select("*").eq("id", 1).maybeSingle().then(must),
     ]);
     Object.assign(month, { data, plan, missing: false, loaded: true });
+    await loadSuggestions().catch(() => {});
   } catch (err) {
     if (!missingTable(err)) throw err;
     Object.assign(month, { data: null, plan: null, missing: true, loaded: true });
@@ -67,7 +74,7 @@ export function renderStrip(force = false) {
   if (!box) return;
   const d = month.data;
   if (!d || month.missing) { box.innerHTML = ""; month.stripSig = ""; return; }
-  const sig = JSON.stringify([d, month.closed]);
+  const sig = JSON.stringify([d, month.closed, suggestSig()]);
   if (!force && sig === month.stripSig && box.firstChild) return;
   month.stripSig = sig;
   const kinds = kindsOf(d);
@@ -91,8 +98,22 @@ export function renderStrip(force = false) {
     </div>
     <div class="meters" id="month-meters" ${month.closed ? "hidden" : ""}>${meters}</div>
     ${untyped && !month.closed ? `<p class="month-note muted small">${esc(plural(untyped, "planned post"))} ${untyped === 1 ? "has" : "have"} no kind yet: Studio sorts ${untyped === 1 ? "it" : "them"} soon, or pick one on the post.</p>` : ""}
+    ${month.closed ? "" : suggestRowHTML()}
   </section>`;
 }
+
+// Go / Park / Dismiss on a suggestion, and "Suggest topics".
+document.addEventListener("click", async (e) => {
+  const t = e.target.closest?.("#month-strip [data-sugg-act], #month-strip [data-suggest-topics]");
+  if (!t) return;
+  try {
+    await suggestClick(t, () => renderStrip(true));
+    if (t.dataset.suggAct === "go") { await loadMonth(); renderStrip(true); }
+  } catch (err) {
+    toast(`Couldn't do that: ${err.message}`);
+    renderStrip(true);
+  }
+});
 
 document.addEventListener("click", (e) => {
   const t = e.target.closest?.("[data-month-toggle]");
@@ -138,6 +159,9 @@ export async function loadMonthPage() {
   const route = month.route;
   if (!route) return;
   await loadMonth();
+  if (route.page === "questions" && !month.missing) {
+    try { await loadQuestions(); } catch (err) { if (!missingTable(err)) throw err; topics.questions = null; }
+  }
   if (route.page === "kind" && !month.missing) {
     const [ideas, projects] = await Promise.all([
       sb.from("ideas").select("id,title,project_id,decision,status,production,post_type,updated_at")
@@ -161,11 +185,17 @@ function renderPage() {
   if (!month.route) return;
   // Someone typing, or the owner's unsaved targets and offers: don't redraw under them.
   if (month.dirty || typingIn(el)) { month.pending = true; return; }
-  const sig = JSON.stringify([month.route, month.data, month.plan, month.ideas]);
+  const sig = JSON.stringify([month.route, month.data, month.plan, month.ideas,
+    month.route.page === "questions" ? [topics.questions, [...topics.ideas.values()], topics.editing] : 0]);
   if (sig === month.pageSig) return;
   month.pageSig = sig;
   month.pending = false;
-  if (month.missing) { el.innerHTML = `<div class="month-wrap">${backHTML()}<h1 tabindex="-1">Content plan</h1>${updateNote()}</div>`; return; }
+  const title = month.route.page === "questions" ? "Client questions" : "Content plan";
+  if (month.missing || (month.route.page === "questions" && !topics.questions)) {
+    el.innerHTML = `<div class="month-wrap">${backHTML()}<h1 tabindex="-1">${title}</h1>${updateNote()}</div>`;
+    return;
+  }
+  if (month.route.page === "questions") { keepDrafts(el, () => { el.innerHTML = questionsPageHTML(backHTML()); }); return; }
   el.innerHTML = month.route.page === "kind" ? kindPageHTML(month.route.kind) : planPageHTML();
   const tab = el.querySelector(".kind-tab.on");
   if (tab) tab.parentElement.scrollLeft = tab.offsetLeft - 16;
@@ -271,6 +301,10 @@ function planPageHTML() {
       <button type="button" class="btn" data-cp-cancel ${month.dirty ? "" : "disabled"}>Undo changes</button>
       <button type="button" class="btn primary" data-cp-save ${month.dirty ? "" : "disabled"}>Save</button>
     </div>` : ""}
+    <section class="cp-sec" aria-labelledby="cp-topics"><h2 id="cp-topics">Suggested topics</h2>
+      <p class="muted small">Once a week, and when a kind falls behind, Studio suggests posts for the gaps: from what you said on site, the questions clients ask, and what's coming up in the shoot calendar. They wait under This month for ${owner ? "your" : `${esc(ownerName())}'s`} Go, Park or Dismiss.</p>
+      <div class="row"><a class="btn" href="#/questions">Client questions</a></div>
+    </section>
     <section class="cp-sec" aria-labelledby="cp-kinds"><h2 id="cp-kinds">The five kinds</h2>
       <ul class="kinds-ref">${kindsRef}</ul>
       <p class="muted small">Get found reaches people who don't know you yet, Build trust shows you do it properly, Get enquiries makes the next step easy.</p>
@@ -337,7 +371,26 @@ root().addEventListener("input", (e) => {
     markDirty();
   } else if (e.target.matches("[data-offer-field]")) markDirty();
 });
+// The Client questions page: add, edit, delete, suggest again.
+async function reloadQuestions() {
+  await loadQuestions();
+  if (month.route?.page !== "questions") return;
+  const el = root();
+  keepDrafts(el, () => { el.innerHTML = questionsPageHTML(backHTML()); });
+  month.pageSig = "";
+}
+for (const type of ["click", "submit"]) {
+  root().addEventListener(type, async (e) => {
+    if (month.route?.page !== "questions") return;
+    try {
+      if (await questionsEvent(e, root(), reloadQuestions)) e.stopImmediatePropagation();
+    } catch (err) {
+      toast(`Couldn't save: ${err.message}`);
+    }
+  });
+}
 root().addEventListener("click", async (e) => {
+  if (month.route?.page === "questions") return;
   const t = e.target.closest("button");
   if (!t) return;
   try {

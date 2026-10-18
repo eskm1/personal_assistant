@@ -432,6 +432,22 @@ function makeCarouselHTML(d, owner) {
   return `<div class="decision row"><span class="muted small">${esc(ownerName())} sends it to Studio once the slides are ready.</span>${failed}</div>`;
 }
 
+// Studio suggested this post (topics.py): why now, and where it came from.
+const SUGGEST_FROM = {
+  transcript: "From what you said on site: the clip is in the storyboard.",
+  question: "Answers a question a client asked.",
+  calendar: "Timed for what's coming up in the shoot calendar.",
+  reference: "Shaped by your saved references.",
+  basics: "Singapore renovation basics: check the facts before it goes out.",
+};
+function suggestedHTML(d) {
+  const s = d.suggestion && typeof d.suggestion === "object" ? d.suggestion : null;
+  if (!s?.why) return "";
+  const from = s.source === "transcript" && isCarousel(d) ? "From what you said on site." : SUGGEST_FROM[s.source] || "";
+  return `<div class="box sugg-box"><p><strong>Studio suggested this.</strong> ${esc(s.why)}</p>
+    ${from ? `<p class="muted small">${esc(from)}${s.source === "question" ? ` <a href="#/questions">Client questions</a>` : ""}</p>` : ""}</div>`;
+}
+
 function renderPanel() {
   const d = view.d;
   const owner = isOwner();
@@ -458,6 +474,7 @@ function renderPanel() {
   keepDrafts(panel(), () => {
     panel().innerHTML = `
       ${dismissed ? `<div class="box bad-box"><p><strong>Dismissed.</strong> It's off the board${owner ? "" : `; ${esc(ownerName())} can put it back`}.</p></div>` : ""}
+      ${suggestedHTML(d)}
       <div class="field" data-saved-scope>
         <h3><label for="f-title">Planned post</label> <span class="saved" aria-live="polite"></span></h3>
         <input class="title-input" id="f-title" data-idea-field="title" maxlength="300" value="${esc(d.title)}" data-orig="${esc(d.title)}">

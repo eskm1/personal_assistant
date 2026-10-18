@@ -159,6 +159,14 @@ UPLOADS = ROOT / "Uploads"
 # minutes (a shoot day's uploads are done), Claude suggests posts from them and adds them
 # to the posts already planned. 0 turns it off (the planner's button still works).
 IDEAS_AFTER_MINUTES = int(_env("STUDIO_IDEAS_AFTER_MINUTES", "20"))
+# Suggested topics (topics.py): once a week, on this day at this hour Singapore time, Claude
+# suggests a few posts for the month's gaps (TOPICS_COUNT, default 4). "off" = no weekly run
+# (the planner's "Suggest topics" button still works). TOPICS_BEHIND: also when a kind is
+# short past mid-month and no suggestion covers it (at most once a day).
+TOPICS_DAY = _env("STUDIO_TOPICS_DAY", "monday").lower()
+TOPICS_HOUR = min(max(int(_env("STUDIO_TOPICS_HOUR", "8")), 0), 23)
+TOPICS_COUNT = min(max(int(_env("STUDIO_TOPICS_COUNT", "4")), 0), 8)
+TOPICS_BEHIND = _flag("STUDIO_TOPICS_BEHIND", True)
 
 # Who may sign in to the dashboard: emails at these domains (comma-separated; "*" = anyone).
 # Owner accounts are always allowed, whatever their address.

@@ -43,28 +43,31 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
 
 ## Open items (as of 2026-10-18)
 
-- Bryan to run once on the laptop: `git pull` then `.\venv\Scripts\python cloud_setup.py --update`
-  (shoot-plan tables, the team function's domain rule, migration 20261019000000_footage_ideas: the `ideas`
-  job kind, `clips.usable`/`clips.flagged`; and migration 20261020000000_content_plan with the updated
-  plan-organise / plan-develop functions; and migration 20261021000000_carousels with plan-develop's slide
-  writing). Re-run after any new migration. Until then the planner hides the "This month" strip and carousels,
-  and the server sends no `post_type`.
+- Bryan to run once on the laptop: `git pull` then `.\venv\Scripts\python cloud_setup.py --update`. It applies every
+  migration not yet online: 20261018000000_shoot_plan, 20261019000000_footage_ideas (the `ideas` job,
+  `clips.usable`/`flagged`), 20261020000000_content_plan (+ the updated plan-organise / plan-develop functions),
+  20261021000000_carousels (+ plan-develop's slide writing) and 20261022000000_topics (`client_questions`,
+  `ideas.suggestion`, the `topics` job). Re-run after any new migration. Until then the planner hides the "This
+  month" strip, carousels, suggested topics and Client questions, and the server sends no `post_type`.
 - Content plan (Bryan approved the proposal 2026-10-18: https://claude.ai/artifact/UyGPCh6YJv3y334g6531Ke), built in
-  four steps. Step 1 done: kinds of post (`ideas.post_type`, `content_plan.py`), the month's mix
-  (`content_plan` table, `content_month()`), the "This month" strip and Content plan page, the standing
-  Topics project. Step 2 built (not yet proven on the server): carousels (`ideas.slides`, Write slides in
-  `plan-develop`, pictures from footage stills / uploaded photos incl. HEIC (`slide_images.py`, `uploads.py`),
+  four steps, all four now built; none yet proven on the server or with real Claude/Gemini. Step 1: kinds of post
+  (`ideas.post_type`, `content_plan.py`), the month's mix (`content_plan` table, `content_month()`), the "This
+  month" strip and Content plan page, the standing Topics project. Step 2: carousels (`ideas.slides`, Write slides
+  in `plan-develop`, pictures from footage stills / uploaded photos incl. HEIC (`slide_images.py`, `uploads.py`),
   layout to PNG with puppeteer-core + HyperFrames' Chrome (`carousel.py`, `render/carousel/`), Review with a
-  carousel read, send back = Claude revises the slides, OneDrive folder + zip). Needs on the server: the
-  updater's pip install (pillow, pillow-heif) and npm ci (puppeteer-core) on the next update, then
-  `cloud_setup.py --update` from the laptop. Step 3 built (not yet proven with a real key): AI concept
-  pictures (`concepts.py`: Gemini `gemini-nano-banana-2.1` over REST with Studio's own `GEMINI_API_KEY`, Claude
-  briefs and vision checks, two options, cache in `Studio/Concepts`, Review's Concept pictures picker and Redraw,
-  `usage` kind `image`; always marked "Concept", never in Finished homes; no migration). Bryan's step: get a
-  Google AI Studio key (billing on) and run `ssh -t root@46.62.223.220 bash
-  /home/studio/personal_assistant/studio/server/setup.sh key gemini` (the `/root/studio-server/` copy is the
-  move-day copy and has no `key`). Next: 4 weekly suggested topics (job kind `topics`). Offers: only the ones in
-  the planner; never invent prices or promotions.
+  carousel read, send back = Claude revises the slides, OneDrive folder + zip); needs the updater's pip install
+  (pillow, pillow-heif) and npm ci (puppeteer-core) on the server's next update. Step 3: AI concept pictures
+  (`concepts.py`: Gemini `gemini-nano-banana-2.1` over REST with Studio's own `GEMINI_API_KEY`, Claude briefs and
+  vision checks, two options, cache in `Studio/Concepts`, Review's Concept pictures picker and Redraw, `usage` kind
+  `image`; always marked "Concept", never in Finished homes). Step 4: suggested topics (`topics.py`: weekly
+  Monday 8am SGT, when the month falls behind (at most daily), or the planner's "Suggest topics" (job `topics`);
+  one Claude call, `usage` kind `topics`; sources: transcripts, `client_questions`, references/style guide, shoot
+  calendar, SG basics; carousels in Topics arc "Studio suggests", Reels from footage in the clip's project; runs in
+  catalog `idea_runs` as `topics:*`; "Studio suggests" cards on the strip, `#/questions` page). What Bryan must do:
+  (1) `cloud_setup.py --update` on the laptop (above); (2) for concept pictures, a Google AI Studio key (billing
+  on), then `ssh -t root@46.62.223.220 bash /home/studio/personal_assistant/studio/server/setup.sh key gemini` (the
+  `/root/studio-server/` copy is the move-day copy and has no `key`); (3) start the Client questions list (he and
+  Michelle). Offers: only the ones in the planner; never invent prices or promotions; nothing about quotes (UMC Lead).
 - Ideas live only in the planner (footage_ideas.py proposes ideas from new footage into each project's
   "From your footage" arc after uploads go quiet; "Everyday posts" project for loose clips).
   Usable clips are never flagged on cards; only retakes.

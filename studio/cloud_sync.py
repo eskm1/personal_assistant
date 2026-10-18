@@ -17,8 +17,9 @@ STUDIO_CLOUD_SYNC_SECONDS (30 s) it:
      key, "Make this" for Reels and carousels, "Ideas from footage"), and keeps each made idea's
      production status current; moves Review's library ideas to the planner
      once, suggests ideas from new footage once uploads go quiet
-     (footage_ideas.py), and gives older ideas their kind of post, a batch at
-     a time (content_plan.py);
+     (footage_ideas.py), gives older ideas their kind of post, a batch at
+     a time (content_plan.py), and suggests topics for the month's gaps once
+     a week, when the month falls behind, or on a "topics" job (topics.py);
   6. reference reels (CONTRACT.md, "Reference guides"): registers videos dropped
      in Studio Inbox\\References\\Ours / \\Inspiration, analyses new references
      (two per tick at most), drafts a new style guide when a brand's set of
@@ -245,6 +246,7 @@ def _heartbeat(api: Client) -> None:
         "id": 1, "last_seen": _now(), "version": f"{v['commit']} {v['date'][:10]}".strip(),
         "info": {"subject": v.get("subject", ""), "sync": status.get("counts", {}), "note": status.get("note"),
                  "dashboard_url": settings.DASHBOARD_URL, "footage_ideas": status.get("footage_ideas"),
+                 "topics": status.get("topics"),
                  # Can Studio draw AI concept pictures (the image key is set)? Never the key itself.
                  "concepts": concepts.info()},
     }, on_conflict="id", resolution="merge-duplicates", returning=False)
@@ -576,7 +578,7 @@ def run_jobs(api: Client, conn, idea_map: dict[int, int]) -> list[str]:
     done = []
     for job in api.select("jobs", {"runner": "eq.laptop", "state": "eq.queued", "kind": "neq.style"}):
         local_id = idea_map.get(job["idea_id"])
-        if local_id is None and job["kind"] not in ("place", "ideas"):
+        if local_id is None and job["kind"] not in ("place", "ideas", "topics"):
             created = _ts(job["created_at"])
             young = created and datetime.fromisoformat(created) > datetime.now(timezone.utc) - timedelta(minutes=2)
             if young:
@@ -587,7 +589,7 @@ def run_jobs(api: Client, conn, idea_map: dict[int, int]) -> list[str]:
         if not claimed:
             continue
         log.info("Cloud job %s: %s for %s", job["id"], job["kind"],
-                 f"project {job['project_id']}" if job["kind"] in ("place", "ideas") else f"idea {job['idea_id']}")
+                 f"project {job['project_id']}" if job["kind"] in ("place", "ideas", "topics") else f"idea {job['idea_id']}")
         try:
             if job["kind"] == "place":
                 _finish(api, job, place_shots(api, job.get("project_id")))
@@ -598,6 +600,14 @@ def run_jobs(api: Client, conn, idea_map: dict[int, int]) -> list[str]:
                 result = footage_ideas.run_job(api, conn, job.get("project_id"))
                 _finish(api, job, result)
                 done.append(f"ideas #{job['id']}: {result['new_ideas']} new, {result['attached']} clips added")
+                continue
+            if job["kind"] == "topics":  # "Suggest topics" in the planner (topics.py)
+                import topics
+                if not _topics_online or not _content_plan_online:
+                    raise RuntimeError("Studio needs the database update first (cloud_setup.py --update)")
+                result = topics.run_job(api, conn)
+                _finish(api, job, result)
+                done.append(f"topics #{job['id']}: {result['new_ideas']} suggested")
                 continue
             if local_id is None:
                 raise RuntimeError("the laptop doesn't have this idea (was it deleted?)")
@@ -754,6 +764,26 @@ def check_carousels(api: Client) -> bool:
             raise
         log.warning("%s (carousels wait for it)", NEEDS_UPDATE)
     return _carousels_online
+
+
+_topics_online = False        # migration 20261022000000 (client_questions, ideas.suggestion, the topics job) is online
+_topics_checked = 0.0
+
+
+def check_topics(api: Client) -> bool:
+    """Is the suggested-topics migration online? Asked again every 10 minutes while it isn't."""
+    global _topics_online, _topics_checked
+    if _topics_online or time.time() - _topics_checked < SCHEMA_RECHECK_SECONDS:
+        return _topics_online
+    _topics_checked = time.time()
+    try:
+        api.request("GET", "/rest/v1/client_questions", params={"select": "id", "limit": 1})
+        _topics_online = True
+    except CloudError as e:
+        if not _missing_table(e):
+            raise
+        log.warning("%s (suggested topics and client questions wait for it)", NEEDS_UPDATE)
+    return _topics_online
 
 
 def _post_folder_name(title: str, taken: set[str]) -> str:
@@ -1252,6 +1282,7 @@ def sync_once(conn, api: Client | None = None) -> dict:
     footage = check_footage_ideas(api)
     content = check_content_plan(api)
     carousels = check_carousels(api)
+    topics_on = check_topics(api)
     counts["pulled"] = pulled["stats"]
     counts["clips_pushed"] = push_clips(api, conn)
     new_takes = push_takes(api, conn)
@@ -1278,11 +1309,14 @@ def sync_once(conn, api: Client | None = None) -> dict:
     # footage, after the clips are pushed (takes point at them). Never stops the sync.
     import content_plan
     import footage_ideas
+    import topics
     steps = [("library ideas", lambda: footage_ideas.migrate_library(api, conn)),
              ("ideas from footage", lambda: footage_ideas.run_due(conn, api))]
     if content:  # older ideas get their kind of post, a batch at a time (content_plan.py)
         steps.append(("kinds of post", lambda: content_plan.backfill(api, remote["ideas"], remote["projects"],
                                                                      remote["arcs"])))
+    if content and topics_on:  # suggested topics for the month's gaps (weekly / behind; topics.py)
+        steps.append(("suggested topics", lambda: topics.run_due(api, conn, remote["ideas"])))
     for name, fn in steps:
         try:
             value = fn()
@@ -1291,6 +1325,8 @@ def sync_once(conn, api: Client | None = None) -> dict:
                 if isinstance(value, dict):
                     jobs.append(f"ideas from footage: {value['new_ideas']} new, {value['attached']} clips added"
                                 + (f" ({len(value['failed'])} failed)" if value["failed"] else ""))
+                elif name == "suggested topics":
+                    jobs.append(f"suggested topics: {value} new")
         except Exception as e:
             if isinstance(e, CloudError) and "can't reach" in str(e):
                 raise
@@ -1300,6 +1336,7 @@ def sync_once(conn, api: Client | None = None) -> dict:
             problems.append(message)
     try:
         status["footage_ideas"] = footage_ideas.status(conn)
+        status["topics"] = topics.status(conn) if topics_on else None
     except Exception:
         pass
     counts["productions"] = push_productions(api, conn, remote["ideas"])
@@ -1311,7 +1348,7 @@ def sync_once(conn, api: Client | None = None) -> dict:
             log.warning("Cloud sync, references failed (will retry): %s", message)
         status["ref_problems"] = [message]
         refs = {}
-    if not shoot_plan or not footage or not content or not carousels:
+    if not shoot_plan or not footage or not content or not carousels or not topics_on:
         status["note"] = NEEDS_UPDATE
     jobs += refs.pop("lines", [])
     counts["refs"] = {k: v for k, v in refs.items() if k != "skipped"}

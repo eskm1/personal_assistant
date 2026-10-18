@@ -525,6 +525,36 @@ the pictures' cost next to Claude's, per draft and for the month.
    change the key. (On the laptop instead of the server: put `GEMINI_API_KEY=<key>` in `studio\.env` and
    restart Studio.)
 
+**Suggested topics (automatic).** Once a week, on Monday morning (Singapore time), Studio suggests a few posts
+(4) for the month's gaps, the way it suggests ideas from new footage. It also does it when the month falls behind:
+past the middle of the month, when a kind is still short and nothing waiting for you covers it (at most once a
+day). It waits while Studio is busy with footage or edits, and it doesn't pile up: if 4 suggestions are already
+waiting for your call, it suggests nothing new. Anyone can ask for some now with **Suggest topics** under **This
+month**. Where the topics come from, best first:
+
+- **Things you said on site.** Studio has the transcripts of your clips. When you explain why or how something is
+  done, that's a ready Know-how post in your own words; the suggestion says which clip and when.
+- **Questions clients ask.** **Client questions** (on the strip, or More on a phone) is a list you and Michelle
+  add to whenever someone asks something: type the question, optionally who asked and a note, **Add question**.
+  Studio answers open ones first; the list shows which ones became posts, and **Suggest again** puts back one
+  whose post you dismissed. Questions only: no clients' names or addresses.
+- **Your saved references and the style guide**, for format and tone.
+- **The shoot calendar**: a Know-how post timed for the week you film that work.
+- **Singapore renovation basics** (HDB rules, permits, the order of works), stated carefully. Studio never puts a
+  price or figure in a post unless you said it on camera or wrote it in a question's note (anything else becomes
+  **[check]**), only uses your offers, never names a place, and says nothing about quotes.
+
+Each suggestion is a card under the meters: its kind, Carousel or Reel, the title and a short "why now" ("Fills
+October's Ideas gap", "You explained this on site last Tuesday", "Michelle logged this client question"). Tap it
+to open the idea, or press **Go**, **Park** or **Dismiss** right there (you only; Michelle sees "Bryan decides").
+Most are carousels with the slide outline written, in the **Topics** project (arc **Studio suggests**): Go, then
+**Write slides** when you want them finished. Where you already explained it on camera it's a Reel in that job's
+project (arc **From your footage**) with your clip already in the storyboard. Studio never suggests something
+already planned, made or dismissed, even reworded, so Dismiss is how you say "not this one". Each run is one Claude
+call, a few cents (shown with the rest of the month's cost); Telegram says when there are new ones. Settings:
+`STUDIO_TOPICS_DAY` (`off` = only the button), `STUDIO_TOPICS_HOUR`, `STUDIO_TOPICS_COUNT`, `STUDIO_TOPICS_BEHIND`.
+After this update, run `cloud_setup.py --update` once; until then the planner doesn't show the row.
+
 ### Planning online
 
 Planning can live on the online planner instead (a website on Netlify with its data in Supabase),
@@ -707,6 +737,7 @@ Files the worker can't use are moved out of the inbox, not deleted. They go to
 
 Whisper runs locally for free. Each clip is one Claude call with up to 20 small frames
 plus the transcript. AI concept pictures for carousels are Google Gemini's, about US$0.03 each
-(`STUDIO_IMAGE_COST_USD`); the dashboard shows them next to the Claude cost. Check the first week's usage in the Anthropic console before you
+(`STUDIO_IMAGE_COST_USD`); the dashboard shows them next to the Claude cost. Suggested topics are one Claude
+call a week (plus any when the month falls behind or someone presses Suggest topics), a few cents each. Check the first week's usage in the Anthropic console before you
 send it a backlog of hundreds of clips. To spend less, set `STUDIO_CLAUDE_EFFORT=low` or
 lower `STUDIO_MAX_FRAMES`.
