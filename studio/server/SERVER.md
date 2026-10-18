@@ -149,6 +149,20 @@ If anything stops it (a typo, the Wi-Fi), run the same command again. Finished s
 - **Checking on it** (rarely needed): in PowerShell on the laptop, run
   `ssh root@<server address> bash /root/studio-server/setup.sh status`. It shows whether Studio is
   running, its latest log lines and the disk use.
+- **The AI image key** (for concept pictures on carousels; README, section 12, "AI concept pictures"): get a
+  key in Google AI Studio (aistudio.google.com > **Get API key**, with billing on), then in PowerShell on the
+  laptop run:
+
+  ```powershell
+  ssh -t root@46.62.223.220 bash /home/studio/personal_assistant/studio/server/setup.sh key gemini
+  ```
+
+  Paste the key when it asks (nothing shows while you paste) and press Enter. It writes `GEMINI_API_KEY` into
+  `/home/studio/personal_assistant/studio/.env` (replacing an older one, keeping the file's owner and
+  permissions) and restarts Studio. Pressing Enter without pasting changes nothing. Use this path, not
+  `/root/studio-server/setup.sh`: that copy was made on moving day and doesn't update itself, while the one in
+  Studio's code folder does (the `status` command works from either). Keep the `-t`: it's what keeps the key
+  hidden as you paste.
 - **Going back to the laptop**: delete `Studio\MOVED_TO_SERVER.txt` on the laptop and re-enable the
   Studio Worker task in Task Scheduler. The laptop's copy of the library is as it was on the day of
   the move.

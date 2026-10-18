@@ -363,8 +363,9 @@ export const SLIDE_SCHEMA: Schema = {
     clip_id: { type: "integer" },
     at: { type: "number" },
     image_idea: { type: "string" },
+    concept: { type: "boolean" },
   },
-  required: ["role", "heading", "body", "keep_image", "clip_id", "at", "image_idea"],
+  required: ["role", "heading", "body", "keep_image", "clip_id", "at", "image_idea", "concept"],
   additionalProperties: false,
 };
 
@@ -396,12 +397,20 @@ an offer listed in the content plan, worded as listed; otherwise ask people to s
 or comment. Never invent a price, discount, promotion, deadline, freebie or offer.
 - Never name a place (estate, street, condo, block, town) or a client: where clients live stays \
 private. Never invent facts about a project; write [placeholder] where the team must fill something in.
-- Pictures come only from Urban Makers' own footage and photos, never anyone else's images. For \
-each slide: keep_image is the number of a current slide whose picture this slide keeps (someone \
-picked it; keep it with the point it illustrates when you rewrite), else 0. clip_id and at: a still \
-from one of the clips listed (at = the moment in seconds) that shows exactly what the slide says, \
-else 0 and 0. Never use a clip just to fill a slide: text-only slides read well. image_idea: one \
-short line on what picture would suit, for the team ("close-up of the window seat's drawer"), or "".
+- Pictures come only from Urban Makers' own footage and photos, or an AI concept picture drawn for \
+the slide; never anyone else's images. For each slide: keep_image is the number of a current slide \
+whose picture this slide keeps (someone picked it; keep it with the point it illustrates when you \
+rewrite), else 0. clip_id and at: a still from one of the clips listed (at = the moment in seconds) \
+that shows exactly what the slide says, else 0 and 0. Never use a clip just to fill a slide: \
+text-only slides read well. image_idea: one short line on what picture would suit, for the team \
+("close-up of the window seat's drawer"), or "".
+- concept: true to illustrate a slide with a new AI concept picture instead, only when the prompt \
+says concept pictures are available (otherwise always false). Studio draws it when Bryan presses \
+Make this and marks it "Concept"; image_idea then says what it shows (the room, the idea, the \
+materials), and keep_image, clip_id and at are 0. Use concepts mainly in Ideas and Know-how posts, \
+for a design idea no clip shows. A real still or photo always beats a concept: where the footage has \
+a real example, use it (a concept can sit beside it). Never in a Finished homes post, which shows \
+only real work. A concept slide's words never say it's a home Urban Makers built or a client's home.
 - caption: a ready-to-edit Instagram caption in Bryan's voice that adds to the slides rather than \
 repeating them, ending with the same ask, with 3 to 6 hashtags.`;
 

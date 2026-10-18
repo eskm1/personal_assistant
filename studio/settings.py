@@ -84,6 +84,18 @@ CLAUDE_MODEL = _env("STUDIO_CLAUDE_MODEL", "claude-opus-5-5")
 CLAUDE_EFFORT = _env("STUDIO_CLAUDE_EFFORT", "medium")
 BRANDS_FILE = _path("STUDIO_BRANDS_FILE", HERE / "brands.md")
 
+# ── AI concept images (carousels; concepts.py) ────────────────────────────────
+# Google Gemini's image model draws concept pictures for carousel slides. The key is
+# Studio's own (Google AI Studio, billing on), not the quote tool's; it only ever goes
+# to GEMINI_URL, in a header, and is never logged. Blank = no concept pictures.
+GEMINI_API_KEY = _env("GEMINI_API_KEY")
+# Nano Banana 2.1 (Google's recommended image model since 2026-10-06; the older
+# gemini-3.1-flash-image is deprecated and its -preview was shut down in June 2026).
+IMAGE_MODEL = _env("STUDIO_IMAGE_MODEL", "gemini-nano-banana-2.1")
+# What one picture costs (US$, Google's list price for a 1K image), for the cost lines.
+IMAGE_COST_USD = float(_env("STUDIO_IMAGE_COST_USD", "0.034"))
+GEMINI_URL = _env("STUDIO_GEMINI_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+
 # ── The editor's cutting and framing ──────────────────────────────────────────
 # Jump cuts: inside every stretch the editor keeps, silences, breaths and lone "um"s
 # longer than EDIT_MAX_PAUSE seconds are cut down to a short breath.

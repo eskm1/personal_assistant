@@ -4,17 +4,21 @@ slides people swipe through, made without a shoot.
 
   1. The slides are written in the planner (Claude's "Write slides", then edited line by
      line): a cover (the hook), the points, and the ask, each with a picture: a still from
-     Urban Makers' own footage, a photo uploaded from the phone, or text only
+     Urban Makers' own footage, a photo uploaded from the phone, an AI concept picture
+     (concepts.py; marked "Concept", never in a Finished homes post) or text only
      (slide_images.py).
   2. "Make this" (the owner) queues a `carousel` job; cloud_sync runs make(), which files a
      'planned' production (format 'carousel') for the editing queue, like a Reel.
-  3. render() lays it out: each slide becomes a page in the Urban Makers look (the bundled
+  3. run() has the concept pictures drawn and checked (concepts.prepare: two options each,
+     cached, so nothing is drawn twice), then lays it out: each slide becomes a page in the Urban Makers look (the bundled
      fonts in render/carousel/fonts, the brand green and amber), and the headless Chrome the
      editor already uses saves each one as a PNG (render/carousel/shoot.mjs). The cover's
      words stay inside the middle of the slide, so the profile grid's 3:4 crop keeps them.
   4. Studio's read (draft_review.py) looks at the slides; Bryan approves, rejects or sends
      it back with notes (a note can name a slide). A send-back has Claude revise the slides
-     from the notes (revise()) and lays them out again as the next version.
+     from the notes (revise()) and lays them out again as the next version. Picking the
+     other concept option (choose()) lays the same version out again without drawing;
+     Redraw in Review (redraw()) draws one slide's pictures again as the next version.
   5. Approved carousels are copied to OneDrive "Studio Ready to post/<title>/" as 01.png,
      02.png ... and caption.txt (onedrive.py), and Review offers them as a .zip.
 
@@ -32,6 +36,7 @@ import uuid
 from pathlib import Path
 
 import catalog
+import concepts
 import render
 import settings
 import slide_images
@@ -106,6 +111,8 @@ def clean_image(v) -> dict:
         out["photo_id"] = i["photo_id"]
     elif source in ("clip", "photo"):
         out = {"source": "text"}
+    elif source == "concept":
+        out.update(clean_concept(i))
     if isinstance(i.get("thumb_path"), str) and len(i["thumb_path"]) <= 200 and \
             i["thumb_path"].split("/")[0] in ("clips", "takes", "stills", "photos") and ".." not in i["thumb_path"]:
         out["thumb_path"] = i["thumb_path"]
@@ -113,6 +120,31 @@ def clean_image(v) -> dict:
     if note:
         out["note"] = note
     return out
+
+
+def clean_concept(i: dict) -> dict:
+    """A concept picture's own fields (like _shared/slides.ts cleanImage): its brief, the
+    cache key of its pictures, the options that passed, the one picked, a redraw's change."""
+    out = {}
+    for k, limit in (("brief", 2000), ("previous", 2000), ("change", 300), ("why", 300)):
+        v = _text(i.get(k), limit)
+        if v:
+            out[k] = v
+    if isinstance(i.get("concept"), str) and concepts._HASH.match(i["concept"]):
+        out["concept"] = i["concept"]
+        options = [o for o in concepts.OPTIONS if o in (i.get("options") or [])]
+        if options:
+            out["options"] = options
+            if i.get("chosen") in options:
+                out["chosen"] = i["chosen"]
+    if isinstance(i.get("round"), int) and not isinstance(i.get("round"), bool) and 0 <= i["round"] <= 50:
+        out["round"] = i["round"]
+    return out
+
+
+def text_only(image: dict) -> dict:
+    """A slide's picture taken away (its note on what would suit stays)."""
+    return {"source": "text", **({"note": image["note"]} if image.get("note") else {})}
 
 
 def clean_slides(raw) -> list[dict]:
@@ -129,10 +161,12 @@ def clean_slides(raw) -> list[dict]:
     return out
 
 
-def plan_slides(raw_slides, current: list[dict], clips: dict[int, dict]) -> list[dict]:
+def plan_slides(raw_slides, current: list[dict], clips: dict[int, dict], new_concepts: bool = False,
+                finished: bool = False) -> list[dict]:
     """Claude's slides as stored slides (like _shared/slides.ts planSlides): one cover first,
-    the ask last, a picture only when it's one the team picked (keep_image) or a still from a
-    listed clip, at most MAX_SLIDES."""
+    the ask last, a picture only when it's one the team picked (keep_image), a still from a
+    listed clip, or a concept picture (new ones only when Studio can draw them; never in a
+    Finished homes post), at most MAX_SLIDES. A kept concept with a redraw is drawn again."""
     slides = []
     for s in (raw_slides if isinstance(raw_slides, list) else [])[:MAX_SLIDES * 2]:
         if not isinstance(s, dict):
@@ -143,10 +177,18 @@ def plan_slides(raw_slides, current: list[dict], clips: dict[int, dict]) -> list
         note = _text(s.get("image_idea"), 300)
         keep = round(s["keep_image"]) if isinstance(s.get("keep_image"), (int, float)) else 0
         clip = clips.get(s.get("clip_id")) if isinstance(s.get("clip_id"), int) else None
-        if 1 <= keep <= len(current) and current[keep - 1]["image"].get("source") != "text":
-            image = dict(current[keep - 1]["image"])
+        kept = current[keep - 1]["image"] if 1 <= keep <= len(current) else None
+        if kept and kept.get("source") == "concept" and finished:
+            image = text_only(kept)
+        elif kept and kept.get("source") != "text":
+            image = dict(kept)
+            redraw = _text(s.get("redraw"), 300)
+            if kept.get("source") == "concept" and redraw:
+                image = concepts.redraw_image(kept, redraw)
             if note and not image.get("note"):
                 image["note"] = note
+        elif s.get("concept") is True and new_concepts and not finished:
+            image = {"source": "concept", **({"note": note} if note else {})}
         elif clip:
             at = float(s["at"]) if isinstance(s.get("at"), (int, float)) else 0.0
             image = {"source": "clip", "clip_id": clip["id"],
@@ -178,7 +220,7 @@ def picture_text(image: dict, clips: dict[int, dict] | None = None) -> str:
     if source == "photo":
         return "a photo the team uploaded"
     if source == "concept":
-        return "an AI concept image"
+        return "an AI concept picture (marked \"Concept\")" + (f", of: {image['note']}" if image.get("note") else "")
     return "text only"
 
 
@@ -410,14 +452,17 @@ def _thumb(png: Path, out: Path) -> None:
         img.save(out, "JPEG", quality=85)
 
 
-def _summary(slides: list[dict], pictures: list[dict], revision: dict | None) -> str:
-    counts = {"clip": 0, "photo": 0, "text": 0}
+def _summary(slides: list[dict], pictures: list[dict], revision: dict | None, drew: dict | None = None) -> str:
+    counts = {"clip": 0, "photo": 0, "concept": 0, "text": 0}
     for p in pictures:
         counts[p["source"] if p["source"] in counts else "text"] += 1
     parts = [f"{counts['clip']} with stills from your footage" if counts["clip"] else "",
              f"{counts['photo']} with your photos" if counts["photo"] else "",
+             f"{counts['concept']} with AI concept pictures (marked Concept)" if counts["concept"] else "",
              f"{counts['text']} text only" if counts["text"] else ""]
     line = f"Laid out {len(slides)} slides: " + ", ".join(p for p in parts if p) + "."
+    if drew and drew.get("drawn"):
+        line += f" Drew {drew['drawn']} concept picture{'s' if drew['drawn'] != 1 else ''} (US${drew['usd']:.2f})."
     missing = [p for p in pictures if p.get("missing")]
     if missing:
         line += " " + " ".join(f"Slide {p['n']} is text only for now ({p['missing']})." for p in missing)
@@ -428,9 +473,17 @@ def _summary(slides: list[dict], pictures: list[dict], revision: dict | None) ->
 
 # ── Rendering a version (the editing queue, worker.run_editor) ────────────────
 
+def post_type(conn, production) -> str | None:
+    """The post's kind now (it can change in the planner after it's made)."""
+    plan = json.loads(production["plan"] or "{}")
+    row = conn.execute("SELECT post_type FROM ideas WHERE id = ?", (plan.get("idea_id"),)).fetchone()
+    return (row["post_type"] if row and row["post_type"] else None) or plan.get("post_type")
+
+
 def run(conn, production_id: int, client=None) -> Path:
     """Make the next draft of a carousel: revise the slides from Bryan's open notes when it
-    was sent back, then lay them out. Returns the folder of PNGs."""
+    was sent back (or draw one slide's concept pictures again, Redraw), have the concept
+    pictures drawn and checked, then lay them out. Returns the folder of PNGs."""
     row = conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
     if row is None:
         raise KeyError(production_id)
@@ -444,10 +497,20 @@ def run(conn, production_id: int, client=None) -> Path:
         "SELECT * FROM feedback WHERE target = 'production' AND target_id = ? AND status = 'open' ORDER BY id",
         (production_id,))]
     revision = None
-    # Sent back (or interrupted while revising): Bryan's open notes on the last version.
-    if notes and (was == "revising" or row["version"] >= 1):
+    redraws = data.get("redraw") if isinstance(data.get("redraw"), dict) else {}
+    # Sent back (or interrupted while revising): Bryan's open notes on the last version. A Redraw
+    # from Review only draws pictures again: the notes wait for Send back.
+    if notes and (was == "revising" or (row["version"] >= 1 and not redraws)):
         revision = revise(conn, dict(row), slides, notes, client)
         slides = revision["slides"]
+    for n, change in redraws.items():
+        k = int(n)
+        if 1 <= k <= len(slides) and slides[k - 1]["image"].get("source") == "concept":
+            slides[k - 1] = {**slides[k - 1], "image": concepts.redraw_image(slides[k - 1]["image"], change)}
+    # A Finished homes post: its concept slides are laid out as text (prepare says why) and
+    # Studio's read flags them.
+    kind = post_type(conn, row)
+    drew = concepts.prepare(conn, production_id, row["title"], kind, slides, client)
     version = row["version"] + 1
     out_dir = RENDERS / f"carousel_{production_id}_v{version}"
     if out_dir.exists():
@@ -455,8 +518,10 @@ def run(conn, production_id: int, client=None) -> Path:
     made = lay_out(conn, slides, out_dir)
     thumb = out_dir / "thumb.jpg"
     _thumb(Path(made["files"][0]), thumb)
-    stored = {"version": version, "slides": slides, **made, "summary": _summary(slides, made["pictures"], revision),
-              "notes_addressed": (revision or {}).get("notes_addressed", [])}
+    stored = {"version": version, "slides": slides, **made,
+              "summary": _summary(slides, made["pictures"], revision, drew),
+              "notes_addressed": (revision or {}).get("notes_addressed", []),
+              "concepts": {"drawn": drew["drawn"], "usd": drew["usd"]}}
     caption = row["caption"]
     if revision and revision.get("caption"):
         caption = revision["caption"]
@@ -466,13 +531,66 @@ def run(conn, production_id: int, client=None) -> Path:
                source_clips = ?, duration = NULL, error = NULL, updated_at = ? WHERE id = ?""",
         (version, str(thumb), json.dumps(stored, ensure_ascii=False), caption, json.dumps(clip_ids), catalog.now(),
          production_id))
-    conn.execute("""UPDATE feedback SET status = 'addressed'
-                    WHERE target = 'production' AND target_id = ? AND status = 'open'""", (production_id,))
+    if revision is not None or not redraws:
+        conn.execute("""UPDATE feedback SET status = 'addressed'
+                        WHERE target = 'production' AND target_id = ? AND status = 'open'""", (production_id,))
     conn.commit()
     log.info("Carousel %s v%d laid out: %d slides", production_id, version, len(slides))
     import draft_review
     draft_review.safe_run(conn, production_id)  # Studio's read; a failure leaves the draft as it is
     return out_dir
+
+
+def _concept_slide(conn, production_id: int, n: int):
+    row = conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    if row is None or row["format"] != "carousel":
+        raise KeyError(production_id)
+    if row["status"] != "ready":
+        raise ValueError("only a draft waiting for review can change its pictures")
+    data = current(row)
+    if not 1 <= n <= len(data["slides"]) or data["slides"][n - 1]["image"].get("source") != "concept":
+        raise ValueError("that slide has no concept picture")
+    return row, data
+
+
+def choose(conn, production_id: int, n: int, option: str) -> dict:
+    """Bryan picks the other concept option for slide n: the same version is laid out again
+    with it (nothing is drawn, nothing is paid). Returns the stored slides."""
+    row, data = _concept_slide(conn, production_id, n)
+    image = data["slides"][n - 1]["image"]
+    if option not in (image.get("options") or []):
+        raise ValueError("that option isn't there")
+    if image.get("chosen") == option:
+        return data
+    image["chosen"] = option
+    shared = ((concepts.meta(image.get("concept")) or {}).get("shared") or {}).get(option)
+    if shared:
+        image["thumb_path"] = shared
+    out_dir = RENDERS / f"carousel_{production_id}_v{row['version']}"
+    made = lay_out(conn, data["slides"], out_dir)
+    _thumb(Path(made["files"][0]), out_dir / "thumb.jpg")
+    data.update(made)
+    data["layouts"] = int(data.get("layouts") or 1) + 1
+    conn.execute("UPDATE productions SET slides = ?, thumb_path = ?, updated_at = ? WHERE id = ?",
+                 (json.dumps(data, ensure_ascii=False), str(out_dir / "thumb.jpg"), catalog.now(), production_id))
+    conn.commit()
+    log.info("Carousel %s v%s: slide %d uses concept option %s", production_id, row["version"], n, option)
+    return data
+
+
+def redraw(conn, production_id: int, n: int, change: str = "") -> None:
+    """Redraw in Review (Bryan): slide n's concept pictures are drawn again (with the change,
+    if he wrote one) as the next version. That spends, like Make this."""
+    row, data = _concept_slide(conn, production_id, n)
+    why = concepts.available()
+    if why:
+        raise ValueError(f"Studio can't draw pictures: it {why}")
+    if post_type(conn, row) == concepts.FINISHED:
+        raise ValueError(concepts.NOT_IN_FINISHED)
+    data["redraw"] = {**(data.get("redraw") or {}), str(n): (change or "").strip()[:300]}
+    conn.execute("UPDATE productions SET slides = ? WHERE id = ?", (json.dumps(data, ensure_ascii=False), production_id))
+    catalog.set_production_status(conn, production_id, "planned")
+    log.info("Carousel %s: redraw slide %d's concept pictures", production_id, n)
 
 
 # ── Revising from Bryan's notes ───────────────────────────────────────────────
@@ -484,15 +602,18 @@ _SLIDE = {
         "role": {"type": "string", "enum": list(ROLES)},
         "heading": {"type": "string"}, "body": {"type": "string"},
         "keep_image": {"type": "integer"}, "clip_id": {"type": "integer"}, "at": {"type": "number"},
-        "image_idea": {"type": "string"},
+        "image_idea": {"type": "string"}, "concept": {"type": "boolean"},
     },
-    "required": ["role", "heading", "body", "keep_image", "clip_id", "at", "image_idea"],
+    "required": ["role", "heading", "body", "keep_image", "clip_id", "at", "image_idea", "concept"],
     "additionalProperties": False,
 }
+# Revising can also ask for one slide's concept picture to be drawn again.
+_REVISE_SLIDE = {**_SLIDE, "properties": {**_SLIDE["properties"], "redraw": {"type": "string"}},
+                 "required": [*_SLIDE["required"], "redraw"]}
 REVISE_SCHEMA = {
     "type": "object",
     "properties": {
-        "slides": {"type": "array", "items": _SLIDE},
+        "slides": {"type": "array", "items": _REVISE_SLIDE},
         "caption_changed": {"type": "boolean"},
         "caption": {"type": "string"},
         "summary": {"type": "string"},
@@ -518,12 +639,20 @@ an offer listed in the content plan, worded as listed; otherwise ask people to s
 or comment. Never invent a price, discount, promotion, deadline, freebie or offer.
 - Never name a place (estate, street, condo, block, town) or a client: where clients live stays \
 private. Never invent facts about a project; write [placeholder] where the team must fill something in.
-- Pictures come only from Urban Makers' own footage and photos, never anyone else's images. For \
-each slide: keep_image is the number of a current slide whose picture this slide keeps (someone \
-picked it; keep it with the point it illustrates when you rewrite), else 0. clip_id and at: a still \
-from one of the clips listed (at = the moment in seconds) that shows exactly what the slide says, \
-else 0 and 0. Never use a clip just to fill a slide: text-only slides read well. image_idea: one \
-short line on what picture would suit, for the team ("close-up of the window seat's drawer"), or "".
+- Pictures come only from Urban Makers' own footage and photos, or an AI concept picture drawn for \
+the slide; never anyone else's images. For each slide: keep_image is the number of a current slide \
+whose picture this slide keeps (someone picked it; keep it with the point it illustrates when you \
+rewrite), else 0. clip_id and at: a still from one of the clips listed (at = the moment in seconds) \
+that shows exactly what the slide says, else 0 and 0. Never use a clip just to fill a slide: \
+text-only slides read well. image_idea: one short line on what picture would suit, for the team \
+("close-up of the window seat's drawer"), or "".
+- concept: true to illustrate a slide with a new AI concept picture instead, only when the prompt \
+says concept pictures are available (otherwise always false). Studio draws it when Bryan presses \
+Make this and marks it "Concept"; image_idea then says what it shows (the room, the idea, the \
+materials), and keep_image, clip_id and at are 0. Use concepts mainly in Ideas and Know-how posts, \
+for a design idea no clip shows. A real still or photo always beats a concept: where the footage has \
+a real example, use it (a concept can sit beside it). Never in a Finished homes post, which shows \
+only real work. A concept slide's words never say it's a home Urban Makers built or a client's home.
 - caption: a ready-to-edit Instagram caption in Bryan's voice that adds to the slides rather than \
 repeating them, ending with the same ask, with 3 to 6 hashtags."""
 
@@ -550,6 +679,9 @@ Revising:
 - Apply every note. A note marked with a slide number is about that slide; one without is about \
 the whole post. Keep everything the notes don't ask to change, word for word, with keep_image set \
 to its own slide number so its picture stays.
+- A note about a concept picture ("redraw slide 3, warmer"): keep_image = that slide and redraw = \
+what to change in the picture ("warmer light, oak instead of white"); Studio draws only that slide \
+again. Otherwise redraw is "" and a kept concept picture stays exactly as it is.
 - caption_changed: true only when a note asks for a different caption; then caption is the new \
 caption, otherwise caption is "".
 - summary: one or two sentences for Bryan on what you changed.
@@ -586,9 +718,20 @@ def _mmss(s) -> str:
     return f"{s // 60}:{s % 60:02d}"
 
 
-def revise_prompt(production: dict, slides: list[dict], notes: list[dict], clips: dict[int, dict]) -> str:
+def concepts_line(kind: str | None, on: bool) -> str:
+    """What Claude is told about concept pictures (like _shared/slides.ts conceptsLine)."""
+    if kind == concepts.FINISHED:
+        return "AI concept pictures: never in this post (Finished homes shows only real work): concept is always false."
+    if on:
+        return "AI concept pictures: available (concept may be true where a design idea needs showing)."
+    return "AI concept pictures: not available on Studio yet (no image key): concept is always false."
+
+
+def revise_prompt(production: dict, slides: list[dict], notes: list[dict], clips: dict[int, dict],
+                  kind: str | None = None) -> str:
     plan = json.loads(production.get("plan") or "{}")
-    lines = [f"The carousel: {production['title']} (kind: {plan.get('post_type') or 'not set'}), draft "
+    kind = kind or plan.get("post_type")
+    lines = [f"The carousel: {production['title']} (kind: {kind or 'not set'}), draft "
              f"v{production['version']}.", f"Purpose: {plan.get('purpose') or '-'}", "Slides now:"]
     for n, s in enumerate(slides, 1):
         lines.append(f"  {n}. [{s['role']}] {s['heading'] or '(no heading)'}" + (f" | {s['body']}" if s["body"] else "")
@@ -601,6 +744,7 @@ def revise_prompt(production: dict, slides: list[dict], notes: list[dict], clips
     lines.append("Clips from Urban Makers' own footage you may take stills from (id, title, length):")
     lines += [f"  clip {c['id']}: \"{c['title'] or 'untitled'}\", {_mmss(c['duration'])}" for c in clips.values()] \
         or ["  (none: keep text-only slides)"]
+    lines.append(concepts_line(kind, concepts.available() is None))
     return "\n".join(lines)
 
 
@@ -623,6 +767,7 @@ def revise(conn, production: dict, slides: list[dict], notes: list[dict], client
     import playbook
     import usage
     clips = _clips(conn, production, slides)
+    kind = post_type(conn, production)
     system = (_REVISE_SYSTEM.replace("{brands}", settings.brands_text()).replace("{playbook}", playbook.text())
               .replace("{content_plan}", _context_text()))
     client = client or anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY or None)
@@ -630,12 +775,13 @@ def revise(conn, production: dict, slides: list[dict], notes: list[dict], client
         client, model=settings.CLAUDE_MODEL, max_tokens=24000,
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
         output_config={"effort": "high", "format": {"type": "json_schema", "schema": REVISE_SCHEMA}},
-        system=system, messages=[{"role": "user", "content": revise_prompt(production, slides, notes, clips)}])
+        system=system, messages=[{"role": "user", "content": revise_prompt(production, slides, notes, clips, kind)}])
     usage.record("carousel", f"production:{production['id']}", response)
     if response.stop_reason in ("refusal", "max_tokens"):
         raise RuntimeError(f"Claude couldn't revise the slides ({response.stop_reason})")
     answer = json.loads(next(b.text for b in response.content if b.type == "text"))
-    new = plan_slides(answer.get("slides"), slides, clips)
+    new = plan_slides(answer.get("slides"), slides, clips, new_concepts=concepts.available() is None,
+                      finished=kind == concepts.FINISHED)
     if len(new) < 2:
         raise RuntimeError("Claude's revision had no slides; send it back again")
     ids = {n["id"] for n in notes}

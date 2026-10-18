@@ -501,6 +501,8 @@ def check() -> int:
     print(f"Claude      : {settings.CLAUDE_MODEL}, effort {settings.CLAUDE_EFFORT}, API key "
           f"{'set' if settings.ANTHROPIC_API_KEY else 'MISSING'}")
     ok = ok and bool(settings.ANTHROPIC_API_KEY)
+    print("Concepts    : " + (f"on ({settings.IMAGE_MODEL}, about US${settings.IMAGE_COST_USD:.3f} a picture)"
+                                if settings.GEMINI_API_KEY else "off (no GEMINI_API_KEY: carousels use photos and text)"))
     print(f"Brands file : {settings.BRANDS_FILE} ({'found' if settings.BRANDS_FILE.exists() else 'MISSING'})")
     ok = check_editor() and ok
     if notify.configured():

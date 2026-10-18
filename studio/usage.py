@@ -1,9 +1,12 @@
 """
-What the Claude API actually costs: every call records its token usage and price,
-so the dashboard can show the cost per clip, idea run and draft, and a monthly total.
+What the APIs actually cost: every Claude call records its token usage and price, and
+every AI concept picture Gemini draws (concepts.py, kind 'image') its price, so the
+dashboard can show the cost per clip, idea run and draft, and a monthly total, with the
+pictures next to Claude.
 
 Prices are US$ per million tokens (Anthropic's list prices). Thinking tokens are
-billed as output and are already included in output_tokens.
+billed as output and are already included in output_tokens. A picture costs
+settings.IMAGE_COST_USD (Google's list price per image).
 """
 import logging
 import sqlite3
@@ -23,7 +26,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage (
     id            INTEGER PRIMARY KEY,
     at            TEXT NOT NULL,
-    kind          TEXT NOT NULL,     -- tag | ideas | edit | music | review | ...
+    kind          TEXT NOT NULL,     -- tag | ideas | edit | music | review | ... | image (a concept picture)
     ref           TEXT,              -- clip:12, production:3, ideas:<batch>
     model         TEXT,
     input_tokens  INTEGER,
@@ -70,6 +73,37 @@ def record(kind: str, ref: str, response) -> float:
         return 0.0
 
 
+def record_image(ref: str, model: str, meta: dict | None, usd: float) -> float:
+    """Log one picture Gemini drew (usageMetadata from its answer). Never raises."""
+    try:
+        import catalog
+        meta = meta if isinstance(meta, dict) else {}
+        conn = catalog.connect()
+        try:
+            conn.executescript(_SCHEMA)
+            conn.execute("""INSERT INTO usage (at, kind, ref, model, input_tokens, output_tokens, cache_read,
+                                cache_write, cost_usd) VALUES (?, 'image', ?, ?, ?, ?, 0, 0, ?)""",
+                         (catalog.now(), ref, model, int(meta.get("promptTokenCount") or 0),
+                          int(meta.get("candidatesTokenCount") or 0), usd))
+            conn.commit()
+        finally:
+            conn.close()
+        return usd
+    except Exception as e:
+        log.warning("Couldn't record a picture's cost for %s: %s", ref, e)
+        return 0.0
+
+
+def parts_for(conn: sqlite3.Connection, ref_prefix: str) -> dict:
+    """What a clip or draft has cost so far, Claude and concept pictures apart."""
+    conn.executescript(_SCHEMA)
+    row = conn.execute("""SELECT COALESCE(SUM(CASE WHEN kind = 'image' THEN 0 ELSE cost_usd END), 0),
+                                 COALESCE(SUM(CASE WHEN kind = 'image' THEN cost_usd ELSE 0 END), 0),
+                                 COALESCE(SUM(CASE WHEN kind = 'image' THEN 1 ELSE 0 END), 0)
+                          FROM usage WHERE ref = ? OR ref LIKE ?""", (ref_prefix, ref_prefix + ":%")).fetchone()
+    return {"claude": round(row[0], 4), "images": round(row[1], 4), "image_count": row[2]}
+
+
 def total_for(conn: sqlite3.Connection, ref_prefix: str) -> float:
     conn.executescript(_SCHEMA)
     row = conn.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM usage WHERE ref = ? OR ref LIKE ?",
@@ -78,11 +112,15 @@ def total_for(conn: sqlite3.Connection, ref_prefix: str) -> float:
 
 
 def month_summary(conn: sqlite3.Connection) -> dict:
-    """This calendar month: total and per kind (tagging, ideas, editing, music)."""
+    """This calendar month: total and per kind (tagging, ideas, editing, music, pictures),
+    with Claude and the concept pictures apart."""
     conn.executescript(_SCHEMA)
     import catalog
     month = catalog.now()[:7]
     rows = conn.execute("""SELECT kind, COUNT(*) AS calls, SUM(cost_usd) AS usd FROM usage
                            WHERE substr(at, 1, 7) = ? GROUP BY kind""", (month,)).fetchall()
     by_kind = {r["kind"]: {"calls": r["calls"], "usd": round(r["usd"] or 0, 4)} for r in rows}
-    return {"month": month, "usd": round(sum(k["usd"] for k in by_kind.values()), 4), "by_kind": by_kind}
+    images = by_kind.get("image", {"calls": 0, "usd": 0.0})
+    total = round(sum(k["usd"] for k in by_kind.values()), 4)
+    return {"month": month, "usd": total, "by_kind": by_kind, "claude_usd": round(total - images["usd"], 4),
+            "images_usd": images["usd"], "images": images["calls"]}

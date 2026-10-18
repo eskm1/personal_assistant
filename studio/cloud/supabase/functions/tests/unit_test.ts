@@ -24,7 +24,7 @@ import {
   SLIDES_SCHEMA,
   SLIDES_SYSTEM,
 } from "../_shared/prompts.ts";
-import { cleanImage, planSlides, slidesPrompt, storedSlides } from "../_shared/slides.ts";
+import { cleanImage, conceptsLine, planSlides, slidesPrompt, storedSlides } from "../_shared/slides.ts";
 
 Deno.test("CORS preflight and errors carry CORS headers", async () => {
   const h = wrap(["POST"], () => {
@@ -349,4 +349,43 @@ Deno.test("carousel: the prompt lists slides, pictures, clips and the request", 
       "(none yet: use text-only slides)",
     ),
   );
+});
+
+Deno.test("concept pictures: only when Studio can draw them, never in a Finished homes post", () => {
+  const brief = { source: "concept", note: "a lamp", brief: "Photo of a lamp", concept: "0123456789abcdef01234567", options: ["a", "b"], chosen: "b" };
+  const current = storedSlides([{ key: "a", role: "cover", heading: "Hook", image: brief }]);
+  assertEquals(current[0].image, { ...brief, source: "concept" }); // the Studio machine's fields survive
+  const raw = {
+    post_type: "ideas",
+    slides: [
+      { role: "cover", heading: "Hook", body: "", keep_image: 1, clip_id: 0, at: 0, image_idea: "", concept: false },
+      { role: "point", heading: "Rug", body: "", keep_image: 0, clip_id: 0, at: 0, image_idea: "a rug zoning a room", concept: true },
+    ],
+  };
+  const on = planSlides(raw, current, [], "F", undefined, { concepts: true, postType: "ideas" });
+  assertEquals(on.slides[0].image.chosen, "b"); // a kept concept keeps its pictures and the pick
+  assertEquals(on.slides[1].image, { source: "concept", note: "a rug zoning a room" });
+  const off = planSlides(raw, current, [], "F", undefined, { concepts: false, postType: "ideas" });
+  assertEquals(off.slides[0].image.source, "concept"); // already drawn: kept
+  assertEquals(off.slides[1].image, { source: "text", note: "a rug zoning a room" }); // no key: no new one
+  const fin = planSlides(raw, current, [], "F", undefined, { concepts: true, postType: "finished" });
+  assertEquals(fin.slides.map((s) => s.image.source), ["text", "text"]);
+  assertEquals(fin.slides[0].image, { source: "text", note: "a lamp" });
+  // Claude picking Finished homes for an idea with no kind yet counts too.
+  const fin2 = planSlides({ ...raw, post_type: "finished" }, current, [], "F", undefined, { concepts: true, postType: null });
+  assertEquals(fin2.slides.map((s) => s.image.source), ["text", "text"]);
+  assertEquals(cleanImage({ source: "concept", concept: "../x", options: ["a", "z"], chosen: "z", round: -1 }), { source: "concept" });
+  assertEquals(cleanImage({ source: "concept", thumb_path: "stills/concept_0123456789abcdef01234567_a.jpg" }).thumb_path,
+    "stills/concept_0123456789abcdef01234567_a.jpg");
+});
+
+Deno.test("concept pictures: the prompt says whether they're available, the rules say how", () => {
+  const p = (kind: string, on: boolean) =>
+    slidesPrompt(null, { title: "T", post_type: kind, purpose: "", caption: "" }, [], [], [], "", undefined, on);
+  assert(p("ideas", true).endsWith(conceptsLine("ideas", true)) && p("ideas", true).includes("available (concept may be true"));
+  assert(p("ideas", false).includes("not available on Studio yet") && p("finished", true).includes("never in this post"));
+  const slide = (SLIDES_SCHEMA as any).properties.slides.items;
+  assert(slide.required.includes("concept") && slide.properties.concept.type === "boolean");
+  assert(SLIDES_SYSTEM.includes("Never in a Finished homes post") && SLIDES_SYSTEM.includes("mainly in Ideas and Know-how"));
+  assert(SLIDES_SYSTEM.includes("A real still or photo always beats a concept") && SLIDES_SYSTEM.includes('marks it "Concept"'));
 });

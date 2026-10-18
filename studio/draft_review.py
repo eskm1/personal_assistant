@@ -17,6 +17,7 @@ Stored as productions.review (JSON) with review_version, the version it describe
 import base64
 import json
 import logging
+import re
 import tempfile
 import threading
 from pathlib import Path
@@ -162,6 +163,9 @@ caption. area is what it's about.
 - An offer, price, discount, promotion or deadline that isn't in the listed offers is always a \
 fix (area ask). A place name (estate, condo, street, block, town), an address or a client's name \
 on a slide or in the caption is always a fix to remove it.
+- A slide marked "Concept" shows an AI concept picture, not real work. Its words must never say \
+it's a home Urban Makers built or a client's home (a fix, area picture), and a concept picture in \
+a Finished homes post is always a fix (area picture: use a real photo).
 - works: 2 to 4 short points on what already works, so it's kept in the next version.
 - Only say what the slides show. Never invent problems; if you're unsure something is wrong, \
 leave it out. Plain words, no jargon. Short sentences."""
@@ -214,6 +218,29 @@ def _clean_carousel(result: dict, slides: int) -> dict:
             "fixes": fixes, "works": works}
 
 
+def concept_fixes(production: dict, data: dict, kind: str | None) -> list[dict]:
+    """Studio's own fixes about concept pictures, whatever Claude says: a concept in a Finished
+    homes post, and slides left as text because their concept pictures didn't work out."""
+    import concepts
+    out = []
+
+    def fix(what, why, n):
+        return {"what": what, "why": why, "slide": n, "area": "picture", "when": "this_draft",
+                "start": None, "end": None, "kind": None}
+    shown = {p["n"]: p for p in data.get("pictures", [])}
+    for n, s in enumerate(data["slides"], 1):
+        if s["image"].get("source") != "concept":
+            continue
+        p = shown.get(n, {})
+        if kind == concepts.FINISHED:
+            out.append(fix(f"Use a real photo on slide {n}, not a concept",
+                           "Finished homes posts show only real work, never AI concept pictures.", n))
+        elif p.get("missing"):
+            out.append(fix(f"Redraw slide {n}'s concept, or give it a photo",
+                           f"It's text only for now: {p['missing']}."[:160], n))
+    return out
+
+
 def run_carousel(conn, production: dict, client=None) -> dict:
     """Studio's read of a carousel's current slides (vision). Raises on failure."""
     import anthropic
@@ -243,7 +270,14 @@ def run_carousel(conn, production: dict, client=None) -> dict:
     usage.record("review", f"production:{production['id']}", response)
     if response.stop_reason in ("refusal", "max_tokens"):
         raise RuntimeError(f"Claude couldn't review these slides ({response.stop_reason})")
-    return _clean_carousel(json.loads(next(b.text for b in response.content if b.type == "text")), len(pngs))
+    review = _clean_carousel(json.loads(next(b.text for b in response.content if b.type == "text")), len(pngs))
+    own = concept_fixes(production, data, carousel.post_type(conn, production))
+    if own:
+        review["fixes"] = (own + review["fixes"])[:MAX_FIXES]
+        if not re.match(r"(?i)needs work", review["verdict"]):
+            k = len(review["fixes"])
+            review["verdict"] = f"Nearly ready: {k} thing{'s' if k != 1 else ''} to fix"
+    return review
 
 
 # ── What the draft contains ───────────────────────────────────────────────────

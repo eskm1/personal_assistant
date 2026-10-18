@@ -238,12 +238,15 @@ def _frame_key(frame: Path | None) -> str:
 # ── Step 1-2: heartbeat and context ──────────────────────────────────────────
 
 def _heartbeat(api: Client) -> None:
+    import concepts
     import updater
     v = updater.version()
     api.insert("laptop_status", {
         "id": 1, "last_seen": _now(), "version": f"{v['commit']} {v['date'][:10]}".strip(),
         "info": {"subject": v.get("subject", ""), "sync": status.get("counts", {}), "note": status.get("note"),
-                 "dashboard_url": settings.DASHBOARD_URL, "footage_ideas": status.get("footage_ideas")},
+                 "dashboard_url": settings.DASHBOARD_URL, "footage_ideas": status.get("footage_ideas"),
+                 # Can Studio draw AI concept pictures (the image key is set)? Never the key itself.
+                 "concepts": concepts.info()},
     }, on_conflict="id", resolution="merge-duplicates", returning=False)
 
 

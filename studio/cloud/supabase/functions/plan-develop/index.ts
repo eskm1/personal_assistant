@@ -205,14 +205,18 @@ async function writeSlides(
   request: string,
   deadline: number,
 ) {
-  const [projectRes, commentsRes, slidesRes, clips, context] = await Promise.all([
+  const [projectRes, commentsRes, slidesRes, clips, context, studioRes] = await Promise.all([
     db().from("projects").select("name, brief, standing").eq("id", idea.project_id).maybeSingle(),
     db().from("comments").select("author_name, body").eq("idea_id", idea.id).order("id", { ascending: false })
       .limit(20),
     db().from("ideas").select("slides, status, production").eq("id", idea.id).maybeSingle(),
     carouselClips(idea.project_id),
     loadContext(),
+    db().from("laptop_status").select("info").eq("id", 1).maybeSingle(),
   ]);
+  // Concept pictures: only when the Studio machine has the image key (laptop_status.info.concepts).
+  const studio = (studioRes.data ?? null) as { info?: { concepts?: { on?: boolean } } } | null;
+  const concepts = studio?.info?.concepts?.on === true;
   const project = check(projectRes, "read project") as { name: string; brief: string; standing: string | null } | null;
   const comments = check(commentsRes, "read comments") as { author_name: string; body: string }[];
   const row = check(slidesRes, "read slides") as
@@ -226,14 +230,14 @@ async function writeSlides(
 
   const { result, usage } = await ask({
     system: renderSystem(SLIDES_SYSTEM, context.brands, context.playbook, context.contentPlan),
-    user: slidesPrompt(project, idea, current, clips, comments, request, idea.project_id),
+    user: slidesPrompt(project, idea, current, clips, comments, request, idea.project_id, concepts),
     schema: SLIDES_SCHEMA,
     effort: "high",
     maxTokens: 24000,
     cutOffMessage: "Claude's answer was cut off; try a shorter request",
     deadline,
   });
-  const plan = planSlides(result, current, clips, idea.title);
+  const plan = planSlides(result, current, clips, idea.title, undefined, { concepts, postType: idea.post_type });
   if (plan.slides.length < 2) throw new JobError("Claude didn't write any slides; try again");
   const { post_type: newType, ...fields } = plan.idea;
   // The kind is filled in when it's empty; one already set stays (it may be someone's choice).

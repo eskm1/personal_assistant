@@ -57,9 +57,14 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   layout to PNG with puppeteer-core + HyperFrames' Chrome (`carousel.py`, `render/carousel/`), Review with a
   carousel read, send back = Claude revises the slides, OneDrive folder + zip). Needs on the server: the
   updater's pip install (pillow, pillow-heif) and npm ci (puppeteer-core) on the next update, then
-  `cloud_setup.py --update` from the laptop. Next: 3 Gemini concept images (`GEMINI_API_KEY`; a `concept`
-  provider in `slide_images.SOURCES`, always marked "Concept", never in Finished homes), 4 weekly suggested
-  topics (job kind `topics`). Offers: only the ones in the planner; never invent prices or promotions.
+  `cloud_setup.py --update` from the laptop. Step 3 built (not yet proven with a real key): AI concept
+  pictures (`concepts.py`: Gemini `gemini-nano-banana-2.1` over REST with Studio's own `GEMINI_API_KEY`, Claude
+  briefs and vision checks, two options, cache in `Studio/Concepts`, Review's Concept pictures picker and Redraw,
+  `usage` kind `image`; always marked "Concept", never in Finished homes; no migration). Bryan's step: get a
+  Google AI Studio key (billing on) and run `ssh -t root@46.62.223.220 bash
+  /home/studio/personal_assistant/studio/server/setup.sh key gemini` (the `/root/studio-server/` copy is the
+  move-day copy and has no `key`). Next: 4 weekly suggested topics (job kind `topics`). Offers: only the ones in
+  the planner; never invent prices or promotions.
 - Ideas live only in the planner (footage_ideas.py proposes ideas from new footage into each project's
   "From your footage" arc after uploads go quiet; "Everyday posts" project for loose clips).
   Usable clips are never flagged on cards; only retakes.

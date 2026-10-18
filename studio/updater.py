@@ -30,7 +30,7 @@ _NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 # Never let git stop to ask for a password in the background.
 _GIT_ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
 # Everything the worker loads; if any fails to import, the update is undone.
-_MODULES = "worker, dashboard, plan_routes, plan, editor, framing, draft_review, quality, resolve_export, ideas, classify, music, auth, cloud_sync, style_study, onedrive, subtitles, uploads, cloud_auth, planner_site, footage_ideas, content_plan, carousel, slide_images"
+_MODULES = "worker, dashboard, plan_routes, plan, editor, framing, draft_review, quality, resolve_export, ideas, classify, music, auth, cloud_sync, style_study, onedrive, subtitles, uploads, cloud_auth, planner_site, footage_ideas, content_plan, carousel, slide_images, concepts"
 
 requested = False  # set by the dashboard's "Update now"
 restart_requested = False  # set by "Restart Studio" (say, after editing .env)

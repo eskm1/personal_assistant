@@ -336,15 +336,16 @@ load without `post_type`.
 
 An idea is a Reel or a **carousel** (`ideas.format = 'carousel'`): 6 to 10 slides of 1080x1350 people swipe
 through, with no shoot. English only; offers only from `content_plan`; never a place name; pictures only from
-Urban Makers' own footage and photos.
+Urban Makers' own footage and photos, or AI concept pictures drawn for the slide (below).
 
 **Schema.**
 - `ideas.slides` jsonb null (null for a Reel), checked by `valid_slides()`: at most 12 of
   `{key, role: cover|point|ask, heading (<= 200), body (<= 800), image}`, with
   `image = {source: text|clip|photo|concept, clip_id, at, photo_id, thumb_path, note}`. `clip` = a still from a
   library clip at `at` seconds; `photo` = a photo uploaded to the Studio machine (`photo_id`, 32 hex); `concept` =
-  an AI concept image (the next update; not offered yet); `thumb_path` = a preview in the `thumbs` bucket
-  (`clips/`, `takes/`, `stills/<clip>_<ms>.jpg`, `photos/<photo_id>.jpg`); `note` = what picture would suit.
+  an AI concept picture (see "Concept pictures"); `thumb_path` = a preview in the `thumbs` bucket
+  (`clips/`, `takes/`, `stills/<clip>_<ms>.jpg`, `stills/concept_<key>_<a|b>.jpg`, `photos/<photo_id>.jpg`);
+  `note` = what picture would suit (for a concept: what it should show).
   Anyone who can edit ideas edits slides (the planner writes the whole array).
 - Policy "owner queues carousels": jobs insert, owner only, `kind = 'carousel'`, `runner = 'laptop'`,
   `state = 'queued'`, and `idea_id` must be a carousel.
@@ -396,7 +397,47 @@ planner shows the draft's. `GET /api/production/<id>/download` = the zip (01.png
 with 01.png ... and caption.txt (copied again when the slides or caption change). The month counts it like a
 Reel (`ideas.production`).
 
-**Concept images plug in at `slide_images.SOURCES`**: a provider class with `key = "concept"`, `mark =
-"Concept"`, `available()` (GEMINI_API_KEY set) and `picture(image, conn)` (draw, check, cache, return a JPEG);
-the layout already shows its mark on the slide. The planner's disabled "AI concept · soon" button and the
-prompts' picture rules are the other two places to change.
+## Concept pictures (no migration: `valid_slides()` already accepts `source 'concept'` and extra image keys)
+
+A carousel slide can show an **AI concept picture** of a design idea, drawn by Google's Gemini image model
+(`STUDIO_IMAGE_MODEL`, default `gemini-nano-banana-2.1`) over its REST API (`POST {STUDIO_GEMINI_URL}/models/
+<model>:generateContent`, header `x-goog-api-key`, `generationConfig {responseModalities: ["IMAGE"], imageConfig
+{aspectRatio: "4:5"}}`, the picture in `candidates[].content.parts[].inlineData`) with Studio's own key
+`GEMINI_API_KEY` (Studio machine `.env` only; never logged, never online). Rules, in code and in the prompts:
+every concept slide carries the **Concept** mark; a concept is never shown as Urban Makers' built work; never
+in a **Finished homes** post (`post_type 'finished'`); a real still or photo is preferred where one exists;
+Claude proposes concepts mainly for Ideas and Know-how; no words, logos, faces, real places or other brands in
+a picture.
+
+**A concept slide's image:** `{source: 'concept', note, brief, concept, options, chosen, round, thumb_path}` plus,
+while waiting, `previous`/`change` (a redraw with a change) and `why` (why it's text for now). `brief` = the
+picture's prompt (Claude); `concept` = its cache key (24 hex: sha256 of model, aspect, round, brief); `options` =
+the options that passed Studio's check (`["a","b"]`, or one); `chosen` = the one on the slide. The planner and
+the cloud only ever write `{source: 'concept', note}`; the rest is the Studio machine's (it writes the draft's
+slides back to the idea, as for every carousel).
+
+**Who can draw:** `laptop_status.info.concepts = {on, model, per_image_usd, options}` (the heartbeat; `on` =
+the key is set). The planner offers "AI concept" (with "What should the concept show?") only when `on`, and
+never on a Finished homes idea; otherwise "AI concept · needs the image key". `plan-develop` tells Claude whether
+concepts are available (`conceptsLine`) and `planSlides(..., {concepts, postType})` accepts a new concept
+(`concept: true` in SLIDE_SCHEMA) only then and never for Finished homes (a kept one becomes text there).
+
+**Drawing (Studio machine, `concepts.prepare`, inside `carousel.run`: so only after Make this, Send back or
+Redraw, all Bryan's):** one Claude call writes the briefs (slide words, note, kind, Singapore flat proportions,
+the house style from the playbook), Gemini draws two options per concept slide (at most 6 slides), one Claude
+vision call checks them all (warped or impossible furniture and rooms, lettering, faces or limbs, the wrong
+room); a rejected one is drawn once more with the problem named and checked again; still wrong, that option
+goes. No option left = the slide is laid out as text, the summary and Studio's read say why (a fix on that
+slide). Gemini busy/down (429, 5xx, no picture, unreadable): one retry after a pause (Retry-After / RetryInfo,
+else 5 s), then text for now and the next version tries again; a safety block isn't retried or redrawn. Files:
+`Studio/Concepts/<key>_<a|b>.jpg` (passed) and `<key>.json` (brief, states, problems, previews); a layout or a
+new version with the same brief never draws again. Every picture is logged in `usage` (`kind 'image'`,
+`STUDIO_IMAGE_COST_USD`, default 0.034), shown next to Claude per draft and per month.
+
+**Review (dashboard, owner):** `GET /api/production/<id>` slides carry `concept: {options: [{option, image}],
+chosen, note, why, redraw}`; `GET /media/production/<id>/concept/<n>/<a|b>` = an option's JPEG;
+`POST /api/production/<id>/slide/<n>/choose {option}` = lay the same version out again with that option (free);
+`POST /api/production/<id>/slide/<n>/redraw {change?}` = two new pictures for that slide as the next version
+(with a change, Claude rewrites the brief from the old one; without, the same brief, `round + 1`). A note on
+Send back like "redraw slide 3, warmer" does the same through the revision (`redraw` in REVISE_SCHEMA's
+slides). Both are owner-only and only for a draft waiting for review.

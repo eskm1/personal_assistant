@@ -12,6 +12,7 @@ import { plan } from "./board.js";
 import { uploadButtonsHTML, rememberShot } from "./upload.js";
 import {
   prepSlides, slidePaths, slidesStoryHTML, slidesFieldHTML, writeSlidesHTML, saveSlideField, slidesClick, slidesLocked,
+  conceptsMakeLine,
 } from "./slides.js";
 
 // clips(*): its "flagged" column (needs a retake) comes with a database update.
@@ -203,7 +204,8 @@ function render(force = false) {
     } else renderStoryboard();
     view.storySig = shotsSig;
   }
-  const sig = JSON.stringify([d, jobs, state.laptop?.last_seen ? Math.floor(Date.parse(state.laptop.last_seen) / 60e3) : 0]);
+  const sig = JSON.stringify([d, jobs, state.laptop?.last_seen ? Math.floor(Date.parse(state.laptop.last_seen) / 60e3) : 0,
+    state.laptop?.info?.concepts?.on === true]);
   if (!force && sig === view.panelSig) return;
   if (!force && typingIn(panel())) { view.pending = true; return; }
   renderPanel();
@@ -423,8 +425,9 @@ function makeCarouselHTML(d, owner) {
   }
   const failed = job?.state === "failed" ? `<span class="error-text small">Last try failed: ${esc(job.error || "unknown error")}</span>` : "";
   if (owner) {
+    const concepts = d.canMake ? conceptsMakeLine(d) : "";
     return `<div class="decision row"><button class="btn primary" id="plan-make" ${d.canMake ? "" : "disabled"}>Make this</button>
-      <span class="muted small">${d.canMake ? "Studio lays out the slides in the Urban Makers look; the draft arrives in Review." : "Needs slides first (a cover and at least one more)."}</span>${failed}</div>`;
+      <span class="muted small">${d.canMake ? "Studio lays out the slides in the Urban Makers look; the draft arrives in Review." : "Needs slides first (a cover and at least one more)."}${concepts ? ` ${esc(concepts)}` : ""}</span>${failed}</div>`;
   }
   return `<div class="decision row"><span class="muted small">${esc(ownerName())} sends it to Studio once the slides are ready.</span>${failed}</div>`;
 }

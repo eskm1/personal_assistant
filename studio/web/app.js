@@ -539,7 +539,7 @@ async function sync() {
     costs.hidden = !data.costs;
     if (data.costs) {
       const c = data.costs;
-      costs.textContent = `API this month: ${money(c.usd)}`;
+      costs.textContent = `API this month: ${money(c.usd)}` + (c.images ? ` (Claude ${money(c.claude_usd)} · ${c.images} concept picture${c.images === 1 ? "" : "s"} ${money(c.images_usd)})` : "");
       costs.title = Object.entries(c.by_kind).map(([k, v]) => `${k}: ${money(v.usd)} (${v.calls} calls)`).join("\n");
     }
     if (cloudChanged) shellLinks();
@@ -1658,6 +1658,41 @@ function carouselFixesHTML(d) {
   </section>`;
 }
 
+// Concept slides: the two options Studio drew (pick one: the slide is laid out again, free) and
+// Redraw (two new pictures, with an optional change; it costs, so Bryan only).
+function conceptsHTML(d) {
+  const cs = (d.slides || []).filter((x) => x.concept);
+  if (!cs.length) return "";
+  const owner = isOwner();
+  const ready = d.status === "ready";
+  const info = d.concepts || {};
+  const cost = info.per_image_usd ? money(info.per_image_usd * (info.options || 2)) : "";
+  const slide = (x) => {
+    const c = x.concept;
+    const opts = c.options.length ? `<div class="concept-opts" role="group" aria-label="Pictures for slide ${esc(x.n)}">${c.options.map((o) => {
+      const on = o.option === c.chosen;
+      const label = o.option.toUpperCase();
+      return owner && ready && !on
+        ? `<button class="concept-opt" data-concept-pick="${esc(x.n)}" data-option="${esc(o.option)}" aria-label="Use option ${esc(label)} on slide ${esc(x.n)}"><img src="${esc(safeSrc(o.image))}" alt="" loading="lazy"><span class="concept-tag">${esc(label)} · Use this</span></button>`
+        : `<figure class="concept-opt${on ? " on" : ""}"><img src="${esc(safeSrc(o.image))}" alt="Option ${esc(label)}${on ? ", on the slide" : ""}" loading="lazy"><figcaption class="concept-tag">${esc(label)}${on ? " · ✓ On the slide" : ""}</figcaption></figure>`;
+    }).join("")}</div>` : "";
+    const why = c.why ? `<p class="muted small">Text only for now: ${esc(c.why)}.</p>` : "";
+    const one = c.options.length === 1 ? `<p class="muted small">Only one picture passed Studio's check.</p>` : "";
+    const redraw = !owner || !ready ? "" : info.finished
+      ? `<p class="muted small">Finished homes posts show only real work, so this slide stays text. Send the draft back with a note to give it a photo.</p>`
+      : c.redraw ? `<p class="muted small">Redraw ${esc(c.redraw)}.</p>`
+        : `<div class="row concept-redraw"><label class="grow"><span class="sr-only">What to change in slide ${esc(x.n)}'s picture (optional)</span>
+            <input id="concept-change-${esc(x.n)}" maxlength="300" autocomplete="off" placeholder="What to change (optional), e.g. warmer light"></label>
+            <button class="btn" data-concept-redraw="${esc(x.n)}" title="Two new pictures${cost ? `, about ${esc(cost)}` : ""}">Redraw${cost ? ` · ${esc(cost)}` : ""}</button></div>`;
+    return `<article class="concept-slide" id="concept-${esc(x.n)}">
+      <div class="row tight">${slideChip(x.n)}<strong class="grow">${esc(x.heading)}</strong></div>
+      ${c.note ? `<p class="muted small">Asked for: ${esc(c.note)}</p>` : ""}${opts}${why}${one}${redraw}</article>`;
+  };
+  return `<section class="d-sec" id="concepts-sec"><h2>Concept pictures</h2>
+    <p class="muted small">AI pictures of the idea, marked “Concept” on the slide; never shown as a home you built.${owner && ready && cs.some((x) => x.concept.options.length > 1) ? " Pick the one you prefer: the slide is laid out again (free)." : ""}</p>
+    ${cs.map(slide).join("")}</section>`;
+}
+
 function carouselComposerHTML(d) {
   const n = (d.slides || []).length;
   const at = Math.min(Math.max(state.slideInView || 1, 1), Math.max(n, 1));
@@ -1696,7 +1731,7 @@ function carouselPageHTML(d) {
     n ? foldHTML("production", "words", "The words on each slide", `${n} slides`, `<ol class="slide-words">${words}</ol>`) : "",
     d.sources?.length ? foldHTML("production", "brief", "Stills taken from", plural(d.sources.length, "clip"),
       `<ul class="link-list">${d.sources.map((x) => `<li><button class="link" data-open-clip="${esc(x.id)}">${esc(x.title)}</button></li>`).join("")}</ul>`) : "",
-    d.cost && owner ? foldHTML("production", "cost", "Cost", money(d.cost), `<p class="muted small">Claude so far for this carousel: ${esc(money(d.cost))}.</p>`) : "",
+    d.cost && owner ? foldHTML("production", "cost", "Cost", money(d.cost), `<p class="muted small">So far for this carousel: Claude ${esc(money(d.cost_parts?.claude ?? d.cost))}${d.cost_parts?.image_count ? `, concept pictures ${esc(money(d.cost_parts.images))} (${esc(d.cost_parts.image_count)} drawn)` : ""}.</p>`) : "",
     phone() && canDecide && owner ? foldHTML("production", "more", "More", "", `<div class="more-part"><button class="btn ghost danger" id="decide-reject">Reject this draft</button></div>`) : "",
   ].join("");
   return `${titleHTML(d, sub)}
@@ -1705,6 +1740,7 @@ function carouselPageHTML(d) {
     ${carouselFixesHTML(d)}
     ${phone() && n ? `<section class="d-sec" id="slides-sec"><h2>Slides</h2>${swiperHTML(d, "page")}
       ${download ? `<div class="row">${download}</div>` : ""}</section>` : ""}
+    ${conceptsHTML(d)}
     ${worksHTML(d)}
     <section class="d-sec"><h2>Your notes${notesNow ? ` <span class="count-pill">${notesNow}</span>` : ""}</h2>
       ${noteListHTML(d.notes, d.version, true)}
@@ -2078,8 +2114,26 @@ async function detailClick(e) {
   const id = e.target.closest("button")?.id || e.target.id;
   const d = state.detail;
   const fixNote = e.target.closest("[data-fix-note]"), fixShot = e.target.closest("[data-fix-shot]");
+  const pick = e.target.closest("[data-concept-pick]"), redraw = e.target.closest("[data-concept-redraw]");
   try {
-    if (fixNote) {
+    if (pick) {
+      const n = Number(pick.dataset.conceptPick);
+      for (const b of document.querySelectorAll("[data-concept-pick]")) b.disabled = true;
+      toast(`Laying out slide ${n} again…`);
+      await api(`/api/production/${d.id}/slide/${n}/choose`, { option: pick.dataset.option });
+      await loadDetail();
+      toast(`Slide ${n} uses option ${pick.dataset.option.toUpperCase()} now.`);
+    } else if (redraw) {
+      const n = Number(redraw.dataset.conceptRedraw);
+      const change = $(`#concept-change-${n}`)?.value.trim() || "";
+      const cost = d.concepts?.per_image_usd ? `, about ${money(d.concepts.per_image_usd * (d.concepts.options || 2))}` : "";
+      if (!confirm(`Draw two new pictures for slide ${n}${change ? ` (${change})` : ""}${cost}? They come back as the next version.`)) return;
+      redraw.disabled = true;
+      await api(`/api/production/${d.id}/slide/${n}/redraw`, { change });
+      toast(`Studio is drawing slide ${n} again. The new version comes back to To review.`);
+      await loadDetail();
+      sync();
+    } else if (fixNote) {
       // One of Studio's fixes becomes a note for the editor, pinned to its moment.
       const f = d.review.fixes[Number(fixNote.dataset.fixNote)];
       fixNote.disabled = true;

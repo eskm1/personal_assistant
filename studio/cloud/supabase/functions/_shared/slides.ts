@@ -1,7 +1,8 @@
 // Carousels (CONTRACT "Carousels"): the slides of one post, as pure functions over rows so
 // they're testable without a database. Claude's answer is never trusted: roles, lengths and
-// pictures are checked here (a picture is only ever one the team picked, or a still from a
-// clip Studio has).
+// pictures are checked here (a picture is only ever one the team picked, a still from a
+// clip Studio has, or an AI concept picture when Studio can draw them; never a concept in a
+// Finished homes post).
 import { KINDS, MAX_SLIDES, POST_TYPES, SLIDE_ROLES } from "./prompts.ts";
 import { text } from "./plan.ts";
 
@@ -10,7 +11,9 @@ export const IMAGE_SOURCES = ["text", "clip", "photo", "concept"] as const;
 export type ImageSource = typeof IMAGE_SOURCES[number];
 
 /** A slide's picture: text only, a still from a library clip, a photo uploaded to the Studio
- * machine, or (a later update) an AI concept image. thumb_path: a preview in "thumbs". */
+ * machine, or an AI concept picture (drawn by the Studio machine when the carousel is made;
+ * studio/concepts.py). thumb_path: a preview in "thumbs". A concept also carries its brief,
+ * the cache key of its pictures, the options that passed and the one picked. */
 export interface SlideImage {
   source: ImageSource;
   clip_id?: number;
@@ -18,7 +21,18 @@ export interface SlideImage {
   photo_id?: string;
   thumb_path?: string | null;
   note?: string;
+  brief?: string;
+  concept?: string;
+  options?: string[];
+  chosen?: string;
+  round?: number;
+  previous?: string;
+  change?: string;
+  why?: string;
 }
+
+export const FINISHED = "finished";
+const CONCEPT_OPTIONS = ["a", "b"];
 
 export interface Slide {
   key: string;
@@ -57,6 +71,20 @@ export function cleanImage(v: unknown): SlideImage {
     out.photo_id = i.photo_id;
   } else if (source === "clip" || source === "photo") {
     return { source: "text", ...(text(i.note, 300) ? { note: text(i.note, 300) } : {}) };
+  } else if (source === "concept") {
+    for (const [k, limit] of [["brief", 2000], ["previous", 2000], ["change", 300], ["why", 300]] as const) {
+      const v = text(i[k], limit);
+      if (v) out[k] = v;
+    }
+    if (typeof i.concept === "string" && /^[0-9a-f]{24}$/.test(i.concept)) {
+      out.concept = i.concept;
+      const options = CONCEPT_OPTIONS.filter((o) => Array.isArray(i.options) && i.options.includes(o));
+      if (options.length) {
+        out.options = options;
+        if (typeof i.chosen === "string" && options.includes(i.chosen)) out.chosen = i.chosen;
+      }
+    }
+    if (Number.isInteger(i.round) && (i.round as number) >= 0 && (i.round as number) <= 50) out.round = i.round as number;
   }
   if (typeof i.thumb_path === "string" && THUMB.test(i.thumb_path) && i.thumb_path.length <= 200) {
     out.thumb_path = i.thumb_path;
@@ -90,8 +118,17 @@ export function imageText(img: SlideImage, clips: Map<number, ClipRow>): string 
     return `a still from clip ${img.clip_id}${c?.title ? ` ("${c.title}")` : ""} at ${img.at ?? 0}s`;
   }
   if (img.source === "photo") return "a photo the team uploaded";
-  if (img.source === "concept") return "an AI concept image";
+  if (img.source === "concept") return 'an AI concept picture (marked "Concept")';
   return "text only";
+}
+
+/** What Claude is told about concept pictures (like studio/carousel.py concepts_line). */
+export function conceptsLine(kind: string | null | undefined, on: boolean): string {
+  if (kind === FINISHED) {
+    return "AI concept pictures: never in this post (Finished homes shows only real work): concept is always false.";
+  }
+  if (on) return "AI concept pictures: available (concept may be true where a design idea needs showing).";
+  return "AI concept pictures: not available on Studio yet (no image key): concept is always false.";
 }
 
 export interface CarouselIdea {
@@ -111,6 +148,7 @@ export function slidesPrompt(
   comments: { author_name: string; body: string }[],
   request: string,
   projectId?: number,
+  concepts = false,
 ): string {
   const byId = new Map(clips.map((c) => [c.id, c]));
   const slideLines = slides.map((s, i) =>
@@ -133,7 +171,8 @@ export function slidesPrompt(
       ? "Team comments (newest first):\n" +
         comments.map((c) => `  ${c.author_name || "someone"}: ${c.body}`).join("\n") + "\n\n"
       : "") +
-    `The team's request: ${request.trim() || "(none: write the whole carousel)"}`;
+    `The team's request: ${request.trim() || "(none: write the whole carousel)"}\n\n` +
+    conceptsLine(idea.post_type, concepts);
 }
 
 export interface SlidesPlan {
@@ -143,16 +182,21 @@ export interface SlidesPlan {
 }
 
 /** Claude's slides as stored slides: one cover first, the ask last, pictures only the team's
- * own (a kept picture, or a still from a listed clip), at most MAX_SLIDES. */
+ * own (a kept picture, or a still from a listed clip) or a concept picture, at most MAX_SLIDES.
+ * opts.concepts: Studio can draw concept pictures (new ones are refused otherwise); opts.postType:
+ * the idea's kind now. A Finished homes post gets no concept at all (kept ones become text). */
 export function planSlides(
   result: unknown,
   current: Slide[],
   clips: ClipRow[],
   fallbackTitle: string,
   makeKey: () => string = newKey,
+  opts: { concepts?: boolean; postType?: string | null } = {},
 ): SlidesPlan {
   const r = asObject(result);
   const byId = new Map(clips.map((c) => [c.id, c]));
+  const kindNow = opts.postType || ((POST_TYPES as readonly string[]).includes(r.post_type as string) ? r.post_type as string : null);
+  const finished = kindNow === FINISHED;
   let slides: Slide[] = [];
   for (const raw of Array.isArray(r.slides) ? r.slides.slice(0, MAX_SLIDES * 2) : []) {
     const s = asObject(raw);
@@ -162,9 +206,14 @@ export function planSlides(
     const keep = typeof s.keep_image === "number" ? Math.round(s.keep_image) : 0;
     const clip = typeof s.clip_id === "number" ? byId.get(s.clip_id) : undefined;
     let image: SlideImage;
-    if (keep >= 1 && keep <= current.length && current[keep - 1].image.source !== "text") {
-      image = { ...current[keep - 1].image };
+    const kept = keep >= 1 && keep <= current.length ? current[keep - 1].image : null;
+    if (kept && kept.source === "concept" && finished) {
+      image = kept.note ? { source: "text", note: kept.note } : { source: "text" };
+    } else if (kept && kept.source !== "text") {
+      image = { ...kept };
       if (note && !image.note) image.note = note;
+    } else if (s.concept === true && opts.concepts && !finished) {
+      image = note ? { source: "concept", note } : { source: "concept" };
     } else if (clip) {
       const at = typeof s.at === "number" && Number.isFinite(s.at) ? s.at : 0;
       image = {

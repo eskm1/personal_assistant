@@ -6,12 +6,14 @@
 #   sudo bash setup.sh code claude/sleepy-thompson-iewk09  # get the code, Python and the renderer
 #   sudo bash setup.sh start                               # run Studio as a service
 #   sudo bash setup.sh status                              # is it running? recent log, disk use
+#   sudo bash setup.sh key gemini                          # put an API key in Studio's settings
 #
 # Every step is safe to run again: what's already done is checked and skipped.
 set -Eeuo pipefail
 
 STUDIO_USER=studio
-STUDIO_HOME=/home/studio
+# STUDIO_TEST_HOME is for testing this script only (a fake layout instead of /home/studio).
+STUDIO_HOME=${STUDIO_TEST_HOME:-/home/studio}
 REPO_DIR=$STUDIO_HOME/personal_assistant
 APP_DIR=$REPO_DIR/studio
 DATA_DIR=$STUDIO_HOME/Studio
@@ -73,13 +75,15 @@ Studio server setup. Run as root, in this order:
                                    the renderer and its Chrome, then a test render
   sudo bash $0 start               install and (re)start the Studio service
   sudo bash $0 status              service state, last 30 log lines, disk use
+  sudo bash $0 key gemini          paste the Gemini image key (hidden) into Studio's settings,
+                                   then restart Studio
 EOF
   exit 1
 }
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-has_systemd() { [ -d /run/systemd/system ]; }
+has_systemd() { [ -n "${STUDIO_TEST_SYSTEMD:-}" ] || [ -d /run/systemd/system ]; }
 in_container() { [ -f /.dockerenv ] || [ -f /run/.containerenv ] || grep -qa container= /proc/1/environ 2>/dev/null; }
 
 # Run a command as the studio user, from a given folder.
@@ -518,10 +522,81 @@ cmd_status() {
   fi
   echo "Disk           : $(df -h --output=used,size,pcent / | tail -n1 | awk '{print $1 " used of " $2 " (" $3 ")"}')"
   [ -d "$DATA_DIR" ] && echo "Studio data    : $(du -sh "$DATA_DIR" 2>/dev/null | cut -f1) in $DATA_DIR"
+  if [ -f "$APP_DIR/.env" ] && grep -qE '^[[:space:]]*GEMINI_API_KEY[[:space:]]*=[[:space:]]*[^[:space:]]' "$APP_DIR/.env"; then
+    echo "Concept images : on (the Gemini key is set)"
+  else
+    echo "Concept images : off (no Gemini key; add it with: bash $0 key gemini)"
+  fi
   if has_systemd; then
     echo
     echo "Last 30 log lines:"
     journalctl -u studio -n 30 --no-pager -o short-iso 2>/dev/null || true
+  fi
+}
+
+# ── key <name> ───────────────────────────────────────────────────────────────
+
+# Put an API key in Studio's settings (.env) without it ever showing on screen, in the
+# command line, the shell history or a log: asked for with hidden typing, written with the
+# .env's own owner and permissions (replacing the old line), then Studio restarts to use it.
+#   ssh -t root@<server> bash /home/studio/personal_assistant/studio/server/setup.sh key gemini
+cmd_key() {
+  local name=${1:-} var
+  case $name in
+    gemini) var=GEMINI_API_KEY ;;
+    *) echo "Usage: sudo bash $0 key gemini" >&2; exit 1 ;;
+  esac
+  need_root key "$name"
+  need_user
+  set +x  # never trace the key
+  local env=$APP_DIR/.env key="" tmp
+  [ -d "$APP_DIR" ] || fail "Studio's code isn't on this machine yet ($APP_DIR). Run first: sudo bash $0 code <branch>"
+
+  echo "Paste the Gemini API key from Google AI Studio (aistudio.google.com > Get API key),"
+  echo "then press Enter. It won't show as you paste. Press Enter on its own to cancel."
+  if [ -t 0 ]; then
+    IFS= read -rs -p "Gemini API key: " key || true
+    echo
+  else
+    warn "this isn't a terminal, so typing would show: next time use ssh -t (as in SERVER.md)"
+    IFS= read -r key || true
+  fi
+  key=${key//[$'\t\r\n ']/}
+  if [ -z "$key" ]; then
+    echo "Nothing pasted, so nothing changed."
+    return 0
+  fi
+  if [[ ! $key =~ ^[A-Za-z0-9._-]{20,200}$ ]]; then
+    fail "that doesn't look like an API key (it should be one long line of letters, numbers, - and _). Nothing changed; copy it again and rerun."
+  fi
+
+  if [ ! -f "$env" ]; then
+    install -m 600 -o "$STUDIO_USER" -g "$STUDIO_USER" /dev/null "$env"
+    info "made $env (only Studio can read it)"
+  fi
+  tmp=$(mktemp "$env.XXXXXX")
+  # Every line but the old key (written by bash itself: the key is never a command's argument).
+  grep -vE "^[[:space:]]*(export[[:space:]]+)?$var[[:space:]]*=" "$env" >"$tmp" || true
+  if [ -s "$tmp" ] && [ -n "$(tail -c1 "$tmp")" ]; then echo >>"$tmp"; fi
+  printf '%s=%s\n' "$var" "$key" >>"$tmp"
+  chown --reference="$env" "$tmp"
+  chmod --reference="$env" "$tmp"
+  mv -f "$tmp" "$env"
+  key=""
+  info "saved $var in $env (owner $(stat -c %U "$env"), permissions $(stat -c %a "$env"))"
+
+  if has_systemd; then
+    step "Restarting Studio so it uses the key"
+    systemctl restart studio
+    local _
+    for _ in $(seq 1 30); do
+      systemctl is-active --quiet studio && break
+      sleep 1
+    done
+    systemctl is-active --quiet studio || { journalctl -u studio -n 20 --no-pager >&2 || true; fail "Studio didn't start again; its last log lines are above."; }
+    info "Studio is running with the key. Within a minute the planner offers \"AI concept\" on carousel slides."
+  else
+    warn "no systemd here (a test container?), so restart Studio yourself to use the key"
   fi
 }
 
@@ -532,5 +607,6 @@ case ${1:-} in
   code) shift; cmd_code "$@" ;;
   start) cmd_start ;;
   status) cmd_status ;;
+  key) shift; cmd_key "$@" ;;
   *) usage ;;
 esac

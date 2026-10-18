@@ -1,11 +1,12 @@
 // A carousel's slides on the idea page (CONTRACT "Carousels"): a preview of every slide on the
 // left, and on the right the slides line by line (edit the words, reorder, add, delete, and pick
-// each slide's picture), "Write slides" (Claude, plan-develop) and Make this. Pictures come only
-// from Urban Makers' own footage (a still Studio takes from a clip) or photos uploaded from the
-// phone; AI concept images come in a later update.
+// each slide's picture), "Write slides" (Claude, plan-develop) and Make this. Pictures come from
+// Urban Makers' own footage (a still Studio takes from a clip), photos uploaded from the phone, or
+// an AI concept picture Studio draws when Bryan presses Make this (only when the Studio machine has
+// the image key, laptop_status.info.concepts; never in a Finished homes post; marked "Concept").
 import {
   $, esc, sb, must, toast, plural, mmss, shortDate, signPaths, stillUrl, jobView, jobActive, retakeBadge,
-  openModal, closeModal, laptopWait, SLIDE_ROLE, PICTURE,
+  openModal, closeModal, laptopWait, state, SLIDE_ROLE, PICTURE,
 } from "./core.js";
 import { addPhoto, canUpload, studioApi } from "./upload.js";
 
@@ -25,6 +26,16 @@ export function prepSlides(raw) {
 }
 export const slidePaths = (slides) => slides.map((s) => s.image?.thumb_path).filter(Boolean);
 const pictured = (s) => s.image?.source && s.image.source !== "text";
+const isConcept = (s) => s.image?.source === "concept";
+// Concept pictures: the Studio machine says whether it has the image key (never the key itself).
+export const conceptsOn = () => state.laptop?.info?.concepts?.on === true;
+const FINISHED = "finished";
+// About what one concept slide costs (two options).
+function conceptCost() {
+  const c = state.laptop?.info?.concepts;
+  const usd = Number(c?.per_image_usd) * (Number(c?.options) || 2);
+  return usd > 0 ? `about US$${usd.toFixed(2)}` : "";
+}
 // Made (or being made): the slides change in Review now, with notes.
 export const slidesLocked = (d) => d.status === "made" || !!d.production;
 
@@ -35,7 +46,8 @@ function miniHTML(s, i, n) {
   return `<button class="cs-mini ${esc(s.role)}${thumb ? " has-pic" : ""}" data-goto-slide="${esc(s.key)}" aria-label="Slide ${i + 1}: ${esc(s.heading || "no heading")}. Edit it">
     ${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : ""}
     <span class="cs-num">${i + 1}/${n}</span>
-    ${pictured(s) && !thumb ? `<span class="cs-pic-wait">${esc(PICTURE[s.image.source] || "Picture")}</span>` : ""}
+    ${isConcept(s) ? `<span class="cs-concept">Concept</span>` : ""}
+    ${pictured(s) && !thumb && !isConcept(s) ? `<span class="cs-pic-wait">${esc(PICTURE[s.image.source] || "Picture")}</span>` : ""}
     <span class="cs-text"><span class="cs-h">${esc(s.heading)}</span>${s.body ? `<span class="cs-b">${esc(s.body)}</span>` : ""}</span>
   </button>`;
 }
@@ -66,6 +78,31 @@ function pictureLine(s, d) {
   return PICTURE[img.source] || PICTURE.text;
 }
 
+// The picture buttons, and for a concept slide what it should show.
+function conceptHTML(s, i, d, locked) {
+  const id = `sl-${esc(s.key)}-concept`;
+  if (d.post_type === FINISHED) {
+    return isConcept(s) ? `<p class="error-text small">Finished homes posts show only real work: this slide is laid out as text unless you give it a still or a photo.</p>` : "";
+  }
+  if (!isConcept(s)) return "";
+  const cost = conceptCost();
+  return `<div class="slide-concept">
+    <label class="small" for="${id}">What should the concept show?</label>
+    <input id="${id}" data-slide-field="concept_note" maxlength="300" value="${esc(s.image.note || "")}" data-orig="${esc(s.image.note || "")}" placeholder="e.g. a reading corner by the window, light oak and linen" ${locked ? "disabled" : ""}>
+    <span class="muted small">${conceptsOn()
+      ? `Studio draws two options when ${locked ? "the carousel was made" : "Bryan presses Make this"}${cost ? ` (${esc(cost)})` : ""}, checks them, and Bryan picks one in Review. Marked “Concept” on the slide. A real still or photo is better where you have one.`
+      : "Studio needs the image key before it can draw concepts; until then this slide is laid out as text."}</span>
+  </div>`;
+}
+
+function conceptButtonHTML(s, i, d) {
+  if (d.post_type === FINISHED) return "";
+  if (!conceptsOn()) {
+    return `<button type="button" class="btn small ghost" disabled title="Bryan puts the Gemini image key on the Studio machine first (README, Carousels)">AI concept · needs the image key</button>`;
+  }
+  return isConcept(s) ? "" : `<button type="button" class="btn small" data-slide-pic="concept" aria-label="Slide ${i + 1}: an AI concept picture">AI concept</button>`;
+}
+
 function slideRowHTML(s, i, d, locked) {
   const n = d.slides.length;
   const thumb = stillUrl(s.image?.thumb_path);
@@ -87,18 +124,19 @@ function slideRowHTML(s, i, d, locked) {
     <label class="sr-only" for="${id("body")}">Slide ${i + 1} words</label>
     <textarea id="${id("body")}" data-slide-field="body" rows="${Math.min(6, Math.max(2, Math.ceil(s.body.length / 38)))}" maxlength="800" data-orig="${esc(s.body)}" placeholder="The words under it (optional)" ${dis}>${esc(s.body)}</textarea>
     <div class="slide-pic">
-      <span class="slide-thumb">${thumb ? `<img src="${esc(thumb)}" alt="">` : `<span class="slide-none">${pictured(s) ? "Preview soon" : "Text"}</span>`}</span>
+      <span class="slide-thumb">${thumb ? `<img src="${esc(thumb)}" alt="">` : `<span class="slide-none">${isConcept(s) ? "Drawn at Make this" : pictured(s) ? "Preview soon" : "Text"}</span>`}</span>
       <div class="slide-pic-info">
         <span class="small">${esc(pictureLine(s, d))}</span>
-        ${s.image?.note ? `<span class="muted small">Picture idea: ${esc(s.image.note)}</span>` : ""}
+        ${s.image?.note && !isConcept(s) ? `<span class="muted small">Picture idea: ${esc(s.image.note)}</span>` : ""}
         ${locked ? "" : `<span class="row tight slide-pic-btns">
           <button type="button" class="btn small" data-slide-pic="clip" aria-label="Slide ${i + 1}: a still from your footage">From footage</button>
           <button type="button" class="btn small" data-slide-pic="photo" aria-label="Slide ${i + 1}: upload a photo">Photo</button>
+          ${conceptButtonHTML(s, i, d)}
           ${pictured(s) ? `<button type="button" class="btn small ghost" data-slide-pic="text" aria-label="Slide ${i + 1}: text only">Text only</button>` : ""}
-          <button type="button" class="btn small ghost" disabled title="AI concept images come in the next update">AI concept · soon</button>
         </span>`}
       </div>
     </div>
+    ${conceptHTML(s, i, d, locked)}
   </li>`;
 }
 
@@ -109,6 +147,17 @@ export function slidesFieldHTML(d) {
     ${d.slides.length ? `<ol class="shot-list slide-list">${d.slides.map((s, i) => slideRowHTML(s, i, d, locked)).join("")}</ol>` : `<p class="muted">No slides yet.</p>`}
     ${locked || d.slides.length >= MAX_SLIDES ? "" : `<div class="row add-shot"><button class="btn" id="slide-add">+ Add slide</button></div>`}
   </div>`;
+}
+
+// For Make this: what the concept slides will cost, or why they'll be text.
+export function conceptsMakeLine(d) {
+  const n = d.slides.filter(isConcept).length;
+  if (!n) return "";
+  if (d.post_type === FINISHED) return `${plural(n, "concept slide")} will be text: Finished homes posts show only real work.`;
+  if (!conceptsOn()) return `${plural(n, "concept slide")} will be text until Studio has the image key.`;
+  const c = state.laptop?.info?.concepts;
+  const usd = Number(c?.per_image_usd) * (Number(c?.options) || 2) * n;
+  return `Studio draws ${n === 1 ? "the concept picture" : `${n} concept pictures`} (two options each${usd > 0 ? `, about US$${usd.toFixed(2)}` : ""}); you pick in Review.`;
 }
 
 export function writeSlidesHTML(d) {
@@ -142,7 +191,11 @@ export async function saveSlideField(el, d) {
   const slides = copy(d);
   const s = slides.find((x) => x.key === key);
   if (!s || !field) return false;
-  s[field] = field === "role" ? (ROLES.includes(el.value) ? el.value : "point") : el.value.trim();
+  if (field === "concept_note") {
+    // What the concept should show: a new brief for Studio (nothing is drawn until Make this).
+    const note = el.value.trim().slice(0, 300);
+    s.image = { source: "concept", ...(note ? { note } : {}) };
+  } else s[field] = field === "role" ? (ROLES.includes(el.value) ? el.value : "point") : el.value.trim();
   await save(d, slides);
   if (el.dataset.orig != null) el.dataset.orig = el.value;
   return true;
@@ -194,6 +247,14 @@ export async function slidesClick(t, d) {
       const s = slides.find((x) => x.key === key);
       s.image = { source: "text", ...(s.image?.note ? { note: s.image.note } : {}) };
       await save(d, slides);
+    } else if (ds.slidePic === "concept") {
+      if (!conceptsOn() || d.post_type === FINISHED) return true;
+      const slides = copy(d);
+      const s = slides.find((x) => x.key === key);
+      s.image = { source: "concept", ...(s.image?.note ? { note: s.image.note } : {}) };
+      await save(d, slides);
+      setTimeout(() => document.getElementById(`sl-${key}-concept`)?.focus(), 50);
+      toast(`Slide ${n} will get an AI concept picture when it's made. Say what it should show.`);
     } else if (ds.slidePic === "photo") pickPhoto(d, key, n);
     else if (ds.slidePic === "clip") openClipPicker(d, key, n);
     return true;

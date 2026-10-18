@@ -7,13 +7,14 @@ where its picture comes from (image["source"]):
            sharpest frame within half a second of that moment from the original video
   photo    a photo uploaded from the planner (photo_id): kept here as a JPEG (an iPhone's
            HEIC is converted when it arrives, uploads.py)
-  concept  an AI concept image: the next update. Until then it isn't available, and a slide
-           that asks for one is laid out as text (the planner doesn't offer it yet).
+  concept  an AI concept picture Gemini drew for this slide (concepts.py): drawn, checked and
+           cached when the carousel is made, two options Bryan picks between; always shown
+           with the "Concept" mark, never in a Finished homes post
 
 Each source is a small class (Source) with available() and picture(); carousel.py asks for
-a slide's picture through picture() and never needs to know where it came from. The concept
-images update adds its provider class to SOURCES (and nothing else here changes). Only Urban
-Makers' own footage and photos are ever used, never another company's images.
+a slide's picture through picture() and never needs to know where it came from. Only Urban
+Makers' own footage and photos are ever used (and concept pictures drawn for the slide),
+never another company's images.
 """
 import logging
 import re
@@ -213,15 +214,19 @@ class UploadedPhoto(Source):
 
 
 class Concept(Source):
-    """AI concept images (the next update: Gemini, GEMINI_API_KEY). Always marked "Concept",
-    never presented as Urban Makers' built work, never in a Finished homes post."""
+    """AI concept pictures (Gemini, GEMINI_API_KEY; concepts.py). Always marked "Concept",
+    never presented as Urban Makers' built work, never in a Finished homes post. The
+    pictures are drawn and checked by concepts.prepare() when the carousel is made (that's
+    where the spending is); here they're only ever read from its cache, so a layout never
+    pays. Pictures already drawn still lay out if the key is taken away."""
     key, label, mark = "concept", "AI concept image", "Concept"
 
-    def available(self) -> str | None:
-        return "AI concept images come in the next update"
-
     def picture(self, image: dict, conn) -> Path:
-        raise Unavailable(self.available())
+        import concepts
+        path = concepts.chosen_path(image)
+        if path is None:
+            raise Unavailable(image.get("why") or concepts.available() or "the concept picture isn't drawn yet")
+        return path
 
 
 SOURCES: dict[str, Source] = {s.key: s for s in (ClipStill(), UploadedPhoto(), Concept())}

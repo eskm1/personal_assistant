@@ -480,8 +480,8 @@ with no filming. In **New idea** pick **A carousel** (Claude's Organise also sug
 Know-how, Ideas or Work with us posts). On the idea, **Write slides** has Claude write a cover (the hook), 4 to 8
 points and the ask, plus the caption, in your voice; the ask only ever uses your offers. Edit any line, move,
 add or delete slides, and give each slide a picture: **From footage** (pick a clip, tap the moment; Studio takes
-the sharpest frame there), **Photo** (from your phone; iPhone photos are fine) or **Text only**. AI concept
-pictures come in the next update. **Make this** (you only) has Studio lay the slides out in the Urban Makers
+the sharpest frame there), **Photo** (from your phone; iPhone photos are fine), **AI concept** (below) or **Text
+only**. **Make this** (you only) has Studio lay the slides out in the Urban Makers
 look (1080x1350, big text for phones, the slide number and a small Urban Makers mark; the cover's words stay
 inside what the profile grid shows). The draft arrives in Review like a Reel: Studio's read first (is every
 slide easy to read, spelling, sensible claims, the ask only uses your offers, no place names), the slides small
@@ -489,6 +489,41 @@ and swipeable. A note can be about one slide. **Send back** and Claude rewrites 
 lays them out again as the next version; **Approve** and they're copied to OneDrive, **Studio Ready to post**,
 in a folder named after the post (01.png, 02.png ... and caption.txt), and **Download (.zip)** has them too.
 Writing slides costs a few cents; laying them out is free.
+
+**AI concept pictures.** For a design idea you haven't built yet (Ideas and Know-how posts mostly), a slide can
+show an AI picture of it instead of a photo. In the slide's picture buttons press **AI concept** and say in a few
+words what it should show ("a reading corner by the window, light oak and linen"); Claude's Write slides may
+suggest one too. Nothing is drawn (or paid) until you press **Make this**. Then Studio writes a picture brief for
+each concept slide (Singapore flat sizes: HDB ceilings, windows and room sizes, and the Urban Makers look from
+your style guide), has Google's Gemini draw **two options** of each, and has Claude check every picture: a
+warped chair, a room that couldn't be built, lettering, a face or the wrong room is drawn once more with the
+problem named; if it's still wrong, that slide is laid out as text and Studio's read tells you. In Review, under
+**Concept pictures**, tap the option you prefer (the slide is laid out again, free), or **Redraw** a slide (two
+new pictures, optionally with a change like "warmer light"). A note when you send it back, like "redraw slide 3,
+warmer", redraws only slide 3; everything already drawn is kept, so a new version never pays twice. The rules:
+every concept slide carries a small **Concept** mark; a concept is never shown as a home you built; it never goes
+in a **Finished homes** post (the planner doesn't offer it there, and Studio lays such a slide out as text and
+flags it); where you have a real photo of the idea, use it. Instagram may add its own "AI info" label to these
+posts; that's fine. Each picture costs about US$0.03 (a slide with its two options about US$0.07); Review shows
+the pictures' cost next to Claude's, per draft and for the month.
+
+*Turning it on (once, about 5 minutes):*
+
+1. Go to **aistudio.google.com**, sign in with a Google account, press **Get API key** > **Create API key**.
+   Turn on billing for it (Google AI Studio > **Billing**): the image model Studio uses needs it.
+   This key is Studio's own; it's not the quote tool's key.
+2. Copy the key (one long line, usually starting with `AIza`).
+3. In PowerShell on the laptop run this one command, and paste the key when it asks (it stays hidden while you
+   paste; press Enter after):
+
+   ```powershell
+   ssh -t root@46.62.223.220 bash /home/studio/personal_assistant/studio/server/setup.sh key gemini
+   ```
+
+   It saves the key in Studio's settings on the server and restarts Studio. Within a minute the planner shows
+   **AI concept** on carousel slides (before that it says "needs the image key"). Run the same command again to
+   change the key. (On the laptop instead of the server: put `GEMINI_API_KEY=<key>` in `studio\.env` and
+   restart Studio.)
 
 ### Planning online
 
@@ -671,6 +706,7 @@ Files the worker can't use are moved out of the inbox, not deleted. They go to
 ## Cost
 
 Whisper runs locally for free. Each clip is one Claude call with up to 20 small frames
-plus the transcript. Check the first week's usage in the Anthropic console before you
+plus the transcript. AI concept pictures for carousels are Google Gemini's, about US$0.03 each
+(`STUDIO_IMAGE_COST_USD`); the dashboard shows them next to the Claude cost. Check the first week's usage in the Anthropic console before you
 send it a backlog of hundreds of clips. To spend less, set `STUDIO_CLAUDE_EFFORT=low` or
 lower `STUDIO_MAX_FRAMES`.

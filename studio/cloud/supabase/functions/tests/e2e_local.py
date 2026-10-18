@@ -316,6 +316,10 @@ try:
                                     {"key": "k2", "role": "point", "heading": "Old point", "body": "",
                                      "image": {"source": "photo", "photo_id": "0123456789abcdef0123456789abcdef",
                                                "thumb_path": "photos/0123456789abcdef0123456789abcdef.jpg"}}]})[0]["id"]
+    # The Studio machine says it can draw concept pictures (laptop_status.info.concepts).
+    status_before = (svc("GET", "laptop_status?id=eq.1") or [{}])[0]
+    svc("PATCH", "laptop_status?id=eq.1", {"info": {**(status_before.get("info") or {}),
+                                                    "concepts": {"on": True, "model": "m", "per_image_usd": 0.034, "options": 2}}})
     s, body, _ = fn("plan-develop", {"idea_id": cid}, team_tok)
     j = wait_job(body["job_id"])
     c = svc("GET", f"ideas?id=eq.{cid}")[0]
@@ -328,6 +332,8 @@ try:
        and sl[2]["image"] == {"source": "clip", "clip_id": clip_ids[1], "at": 3.2, "thumb_path": f"clips/{clip_ids[1]}.jpg",
                               "note": "a warm lamp beside a reading chair"} and sl[3]["image"] == {"source": "text"},
        f"pictures: the photo kept, a still from a listed clip, an unknown clip dropped {[x['image'] for x in sl[1:4]]}")
+    ok(len(sl) > 4 and sl[4]["image"] == {"source": "concept", "note": "a window seat with closed storage"},
+       f"Studio can draw: Claude's concept slide accepted ({sl[4]['image'] if len(sl) > 4 else None})")
     ok(c["hook"] == sl[0]["heading"] and c["cta"].startswith("Planning a reno?") and c["caption"].startswith("A quiet corner")
        and c["post_type"] == "ideas" and c["format"] == "carousel" and c["title"] == "Quiet corner (slides)"
        and svc("GET", f"shots?idea_id=eq.{cid}") == [], "hook, ask, caption, kind written; still a carousel; no shots")
@@ -341,6 +347,19 @@ try:
     ok('2. [point] Old point | picture: a photo the team uploaded' in creq["messages"][0]["content"]
        and f'clip {clip_ids[1]}: "edge good"' in creq["messages"][0]["content"]
        and f'clip {clip_ids[0]}' not in creq["messages"][0]["content"], "prompt lists the slides, the usable clips, no retakes")
+    ok("AI concept pictures: available" in creq["messages"][0]["content"] and "Never in a Finished homes post" in creq["system"],
+       "slides prompt: concept pictures available, and their rules")
+    fid = svc("POST", "ideas", {"project_id": project_id, "title": "Finished kitchen", "format": "carousel",
+                                "post_type": "finished", "created_by": team_id})[0]["id"]
+    s, body, _ = fn("plan-develop", {"idea_id": fid}, team_tok)
+    j2 = wait_job(body["job_id"])
+    fs = svc("GET", f"ideas?id=eq.{fid}")[0]["slides"] or []
+    freq = [r for r in mock_requests() if "slides" in r["body"].get("output_config", {}).get("format", {}).get("schema", {})
+            .get("properties", {})][-1]["body"]
+    ok(j2["state"] == "done" and fs and not any(x["image"]["source"] == "concept" for x in fs)
+       and "never in this post (Finished homes" in freq["messages"][0]["content"],
+       f"Finished homes: Claude's concept slide dropped to text ({[x['image']['source'] for x in fs]})")
+    svc("PATCH", "laptop_status?id=eq.1", {"info": status_before.get("info") or {}})
     # Owner-only "Make this" for carousels (the RLS policy), only on a carousel.
     q = {"kind": "carousel", "runner": "laptop", "project_id": project_id, "idea_id": cid, "state": "queued"}
     st, _, _ = http("POST", f"{API}/rest/v1/jobs", q, {"apikey": ANON, "authorization": f"Bearer {team_tok}"})

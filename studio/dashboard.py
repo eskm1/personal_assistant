@@ -407,12 +407,27 @@ def _carousel_detail(row: sqlite3.Row) -> dict:
     the caption and the notes (a note can name a slide)."""
     import carousel
     import draft_review
+    import concepts
     data = carousel.current(row)
     pngs = carousel.files(row)
     missing = {p["n"]: p.get("missing") for p in data.get("pictures", []) if p.get("missing")}
+    stamp = f"{row['version']}.{data.get('layouts') or 1}"
+    finished = carousel.post_type(db(), row) == concepts.FINISHED
+
+    def concept(n: int, image: dict) -> dict | None:
+        """A concept slide's options, for Review's picker (pick one, or Redraw)."""
+        if image.get("source") != "concept":
+            return None
+        options = image.get("options") or []
+        return {"options": [{"option": o, "image": f"/media/production/{row['id']}/concept/{n}/{o}"} for o in options],
+                "chosen": image.get("chosen") if image.get("chosen") in options else (options[0] if options else None),
+                "note": image.get("note") or "", "why": missing.get(n) or image.get("why"),
+                "redraw": None if finished else concepts.available()}
+
     slides = [{"n": n, "role": s["role"], "heading": s["heading"], "body": s["body"],
                "picture": carousel.picture_text(s["image"]), "missing": missing.get(n),
-               "image": f"/media/production/{row['id']}/slide/{n}?v={row['version']}" if n <= len(pngs) else None}
+               "concept": concept(n, s["image"]),
+               "image": f"/media/production/{row['id']}/slide/{n}?v={stamp}" if n <= len(pngs) else None}
               for n, s in enumerate(data["slides"], 1)]
     item = _carousel_item(row, _open_notes("production"))
     item.update({"review": draft_review.current(row), "review_state": draft_review.state(row),
@@ -422,6 +437,9 @@ def _carousel_detail(row: sqlite3.Row) -> dict:
                  "notes": _notes("production", row["id"]), "error": row["error"],
                  "edit_summary": data.get("summary"), "missing_shots": [], "graphics": 0, "wishlist": [],
                  "cost": usage.total_for(db(), f"production:{row['id']}") if is_owner() else None,
+                 "cost_parts": usage.parts_for(db(), f"production:{row['id']}") if is_owner() else None,
+                 "concepts": {"finished": finished, "per_image_usd": settings.IMAGE_COST_USD,
+                              "options": len(concepts.OPTIONS), "why_not": concepts.available()},
                  "music": None, "qa": None, "resolve": None, "slides": slides,
                  "download": f"/api/production/{row['id']}/download" if pngs else None})
     clip_ids = json.loads(row["source_clips"] or "[]")
@@ -953,6 +971,49 @@ def production_slide(production_id: int, n: int):
     if not 1 <= n <= len(pngs):
         abort(404)
     return _file_response(str(pngs[n - 1]))
+
+
+@app.get("/media/production/<int:production_id>/concept/<int:n>/<option>")
+def production_concept(production_id: int, n: int, option: str):
+    """One of a concept slide's options (JPEG), for Review's picker."""
+    import carousel
+    import concepts
+    row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    slides = carousel.current(row)["slides"] if row is not None and row["format"] == "carousel" else []
+    image = slides[n - 1]["image"] if 1 <= n <= len(slides) else {}
+    if image.get("source") != "concept" or option not in (image.get("options") or []):
+        abort(404)
+    return _file_response(str(concepts.option_path(image["concept"], option)))
+
+
+def _concept_change(production_id: int, n: int, act):
+    try:
+        act()
+    except KeyError:
+        abort(404)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    log.info("Production %s slide %s: concept %s", production_id, n, request.path.rsplit("/", 1)[-1])
+    return jsonify({"ok": True})
+
+
+@app.post("/api/production/<int:production_id>/slide/<int:n>/choose")
+@owner_only
+def choose_concept(production_id: int, n: int):
+    """Bryan picks one of a concept slide's two options: laid out again, nothing drawn."""
+    import carousel
+    option = str(body().get("option") or "")
+    return _concept_change(production_id, n, lambda: carousel.choose(db(), production_id, n, option))
+
+
+@app.post("/api/production/<int:production_id>/slide/<int:n>/redraw")
+@owner_only
+def redraw_concept(production_id: int, n: int):
+    """Redraw (Bryan): two new options for one concept slide, as the next version. It spends,
+    like Make this, so only the owner may."""
+    import carousel
+    change = str(body().get("change") or "")[:300]
+    return _concept_change(production_id, n, lambda: carousel.redraw(db(), production_id, n, change))
 
 
 @app.get("/api/production/<int:production_id>/download")
