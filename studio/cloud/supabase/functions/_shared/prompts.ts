@@ -10,7 +10,9 @@ export const CAMERAS: Record<string, string> = {
   any: "whichever camera is at hand",
 };
 export const BRANDS = ["personal", "urban_makers"] as const;
-export const FORMATS = ["talking_head", "day_in_the_life", "compilation"] as const;
+// The Reel formats the team films, and carousel (slides; no filming).
+export const FORMATS = ["talking_head", "day_in_the_life", "compilation", "carousel"] as const;
+export const REEL_FORMATS = ["talking_head", "day_in_the_life", "compilation"] as const;
 
 // The five kinds of post (ideas.post_type), as in studio/content_plan.py (keep the two in step).
 export const POST_TYPES = ["knowhow", "ideas", "onsite", "finished", "offer"] as const;
@@ -164,6 +166,12 @@ export const RULES = `How to plan a post:
 payoff; spoken hooks should sound like Bryan talking, not an ad.
 - purpose: who it's for and what they should think, feel or do after watching (one or two sentences).
 - post_type: the kind of post, by the job it does (the content plan below lists the five).
+- format: talking_head, day_in_the_life or compilation for a Reel the team films; carousel for a \
+post of 6 to 10 slides people swipe through and save (no filming: Studio writes the slides and lays \
+them out with stills from the team's own footage, their photos, or text). A carousel suits Know-how, \
+Ideas and Work with us posts whose point is a list of tips, steps, options or what's included. Most \
+posts stay Reels: propose a carousel only where it clearly suits, never for a post that needs \
+footage of the work happening. A carousel has no shots (its slides are written next).
 - cta: the call to action at the end, fitting the kind's ask ("Save this for your reno", "Follow \
 this project", ...). An offer only from the listed offers, worded as listed.
 - caption: a ready-to-edit Instagram caption in Bryan's voice with 3 to 6 hashtags.
@@ -338,3 +346,88 @@ export function renderSystem(template: string, brands: string, playbook: string,
     .replaceAll("{content_plan}", () => contentPlan.trim() || contentPlanText())
     .replaceAll("{cameras}", () => camerasText());
 }
+
+// ── Carousels: the slides of one post (plan-develop on an idea whose format is carousel) ──
+// Keep in step with studio/carousel.py (_SLIDE, _REVISE_SYSTEM), which revises them from Bryan's notes.
+
+export const SLIDE_ROLES = ["cover", "point", "ask"] as const;
+export const MAX_SLIDES = 12;
+
+export const SLIDE_SCHEMA: Schema = {
+  type: "object",
+  properties: {
+    role: { type: "string", enum: [...SLIDE_ROLES] },
+    heading: { type: "string" },
+    body: { type: "string" },
+    keep_image: { type: "integer" },
+    clip_id: { type: "integer" },
+    at: { type: "number" },
+    image_idea: { type: "string" },
+  },
+  required: ["role", "heading", "body", "keep_image", "clip_id", "at", "image_idea"],
+  additionalProperties: false,
+};
+
+export const SLIDES_SCHEMA: Schema = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    post_type: { type: "string", enum: [...POST_TYPES] },
+    purpose: { type: "string" },
+    caption: { type: "string" },
+    slides: { type: "array", items: SLIDE_SCHEMA },
+    changes: { type: "string" },
+  },
+  required: ["title", "post_type", "purpose", "caption", "slides", "changes"],
+  additionalProperties: false,
+};
+
+export const SLIDE_RULES = `How to write a carousel:
+- Bryan's voice: plain, practical and warm, like he explains things on site; "we" for Urban Makers. \
+No hype, no emoji on the slides, no trade jargon a homeowner wouldn't use. English only.
+- Slide 1 (role cover) is the hook: a heading of at most 9 words that makes someone stop and swipe \
+(a promise, a tension or a question); body empty or one short line.
+- Then 4 to 8 point slides (role point), one idea each: a heading of at most 8 words and a body of \
+at most 30 words, specific and useful (what to do and why). Each slide makes sense on its own, so \
+the post is worth saving. Use a number only when it's a well-known fact or Bryan said it.
+- The last slide (role ask) is the call to action, fitting the post's kind (the content plan lists \
+the ask for each kind). An ask that offers something (a Work with us post, or any other) uses ONLY \
+an offer listed in the content plan, worded as listed; otherwise ask people to save, share, follow \
+or comment. Never invent a price, discount, promotion, deadline, freebie or offer.
+- Never name a place (estate, street, condo, block, town) or a client: where clients live stays \
+private. Never invent facts about a project; write [placeholder] where the team must fill something in.
+- Pictures come only from Urban Makers' own footage and photos, never anyone else's images. For \
+each slide: keep_image is the number of a current slide whose picture this slide keeps (someone \
+picked it; keep it with the point it illustrates when you rewrite), else 0. clip_id and at: a still \
+from one of the clips listed (at = the moment in seconds) that shows exactly what the slide says, \
+else 0 and 0. Never use a clip just to fill a slide: text-only slides read well. image_idea: one \
+short line on what picture would suit, for the team ("close-up of the window seat's drawer"), or "".
+- caption: a ready-to-edit Instagram caption in Bryan's voice that adds to the slides rather than \
+repeating them, ending with the same ask, with 3 to 6 hashtags.`;
+
+export const SLIDES_SYSTEM = `You are the content producer for Bryan's Instagram account (Urban Makers), \
+writing one carousel post with the team: a set of slides people swipe through.
+
+{brands}
+
+Bryan's playbook (his voice and story rules):
+
+<playbook>
+{playbook}
+</playbook>
+
+The content plan (the kinds of post, this month's mix and the offers):
+
+<content_plan>
+{content_plan}
+</content_plan>
+
+` + SLIDE_RULES + `
+
+Writing:
+- Apply the team's request and read their comments. With no request, write the whole carousel \
+from the idea (or make the current slides complete and sharp).
+- title: the post's working title. post_type: its current kind when it has one (the team changes \
+kinds themselves); otherwise the kind that fits. purpose: who it's for and what they should do \
+after swiping (one or two sentences).
+- changes: one or two sentences on what you wrote or changed, for the team.`;

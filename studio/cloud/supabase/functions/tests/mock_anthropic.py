@@ -12,6 +12,8 @@ the log for assertions. Words in the prompt switch behaviour:
   MOCK:fallback  a declined partial, a fallback block, then the answer (usage.iterations too)
   MOCK:dropall   develop keeps no shots (keep_id 0 everywhere)
   MOCK:error     HTTP 500 (the SDK retries once)
+A carousel (the schema has "slides") gets a cover, 5 points and an ask: the first point keeps
+the picture of current slide 2 when it has one, the second takes a still from the first clip listed.
 """
 import json
 import re
@@ -71,12 +73,36 @@ def develop(prompt: str) -> dict:
     arc = re.search(r"arc key: (arc:\d+)", prompt)
     return {
         "idea": {"arc": arc.group(1) if arc else "arc:0", "title": (title.group(1) if title else "Idea") + " (developed)",
-                 "brand": "urban_makers", "post_type": "offer", "format": "talking_head", "hook": "Sharper hook.",
+                 "brand": "urban_makers", "post_type": "offer",
+                 "format": "carousel" if "MOCK:tocarousel" in prompt else "talking_head", "hook": "Sharper hook.",
                  "purpose": "Clear purpose.",
                  "cta": "Save this", "caption": "Developed caption #reno", "est_seconds": 40,
                  "music": {"mood": "upbeat", "tempo_bpm": 110, "search": "upbeat house"}, "shots": out},
         "changes": f"Mock develop: {len(out)} shots, kept {[k for k in keep][:5]}.",
     }
+
+
+def slides(prompt: str) -> dict:
+    clips = re.findall(r"^  clip (\d+): ", prompt, re.M)
+    pictured = re.search(r"^  2\. \[\w+\] .*picture: (?!text only)", prompt, re.M)
+    title = re.search(r"^  title: (.*)$", prompt, re.M)
+    points = [("Mark it off without a wall", "A rug, an open shelf or a sheer curtain says this is a different space."),
+              ("Lamps, not downlights", "One warm lamp at sitting height. Put the ceiling lights on their own switch."),
+              ("Face away from the TV", "Turn the chair to the window so the corner feels like its own room."),
+              ("Keep the clutter behind doors", "Closed storage under the seat keeps the corner calm."),
+              ("How we did it in a 4-room flat", "A built-in window seat with storage under it.")]
+    out = [{"role": "cover", "heading": "Open-plan flat? Give yourself one quiet corner", "body": "",
+            "keep_image": 0, "clip_id": 0, "at": 0, "image_idea": ""}]
+    for n, (h, b) in enumerate(points):
+        out.append({"role": "point", "heading": h, "body": b, "keep_image": 2 if n == 0 and pictured else 0,
+                    "clip_id": int(clips[0]) if n == 1 and clips else (999999 if n == 2 else 0),
+                    "at": 3.2 if n == 1 else 0, "image_idea": "a warm lamp beside a reading chair" if n == 1 else ""})
+    out.append({"role": "ask", "heading": "Planning a reno?", "body": "Send us your floor plan and we'll suggest "
+                "where your quiet corner could go.", "keep_image": 0, "clip_id": 0, "at": 0, "image_idea": ""})
+    return {"title": (title.group(1) if title else "Carousel") + " (slides)", "post_type": "ideas",
+            "purpose": "Flat owners with an open plan get a quiet corner without building a wall.",
+            "caption": "A quiet corner doesn't need a wall. Save this for your reno. #hdbreno #interiordesign #singapore",
+            "slides": out, "changes": f"Mock slides: {len(out)} slides."}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -103,7 +129,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
         props = body.get("output_config", {}).get("format", {}).get("schema", {}).get("properties", {})
-        answer = develop(prompt) if "idea" in props else organise(prompt)
+        answer = slides(prompt) if "slides" in props else develop(prompt) if "idea" in props else organise(prompt)
         text = json.dumps(answer)
         slow = re.search(r"MOCK:slow=(\d+)", prompt)
         stop = "end_turn"

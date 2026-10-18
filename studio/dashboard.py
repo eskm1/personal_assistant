@@ -376,6 +376,8 @@ def _clip_item(row: sqlite3.Row, open_notes: dict[int, int]) -> dict:
 
 
 def _production_item(row: sqlite3.Row, open_notes: dict[int, int]) -> dict:
+    if row["format"] == "carousel":
+        return _carousel_item(row, open_notes)
     return {
         "kind": "production", "id": row["id"], "stage": PRODUCTION_STAGE.get(row["status"], "producing"),
         "status": row["status"], "title": row["title"], "brand": row["brand"], "format": row["format"],
@@ -385,6 +387,49 @@ def _production_item(row: sqlite3.Row, open_notes: dict[int, int]) -> dict:
         "video": f"/media/production/{row['id']}/video?v={row['version']}" if row["video_path"] else None,
         "updated": row["updated_at"],
     }
+
+
+def _carousel_item(row: sqlite3.Row, open_notes: dict[int, int]) -> dict:
+    """A carousel draft on the board: its cover is the tile, there's no video."""
+    import carousel
+    count = len(carousel.files(row))
+    return {
+        "kind": "production", "id": row["id"], "stage": PRODUCTION_STAGE.get(row["status"], "producing"),
+        "status": row["status"], "title": row["title"], "brand": row["brand"], "format": "carousel",
+        "version": row["version"], "duration": None, "open_notes": open_notes.get(row["id"], 0),
+        "thumb": f"/media/production/{row['id']}/thumb?v={row['version']}" if row["thumb_path"] else None,
+        "video": None, "slides_count": count, "updated": row["updated_at"],
+    }
+
+
+def _carousel_detail(row: sqlite3.Row) -> dict:
+    """What Review shows for a carousel: the slides (images, words, picture), the read,
+    the caption and the notes (a note can name a slide)."""
+    import carousel
+    import draft_review
+    data = carousel.current(row)
+    pngs = carousel.files(row)
+    missing = {p["n"]: p.get("missing") for p in data.get("pictures", []) if p.get("missing")}
+    slides = [{"n": n, "role": s["role"], "heading": s["heading"], "body": s["body"],
+               "picture": carousel.picture_text(s["image"]), "missing": missing.get(n),
+               "image": f"/media/production/{row['id']}/slide/{n}?v={row['version']}" if n <= len(pngs) else None}
+              for n, s in enumerate(data["slides"], 1)]
+    item = _carousel_item(row, _open_notes("production"))
+    item.update({"review": draft_review.current(row), "review_state": draft_review.state(row),
+                 "review_error": draft_review.errors.get(row["id"]) if is_owner() else None,
+                 "shot_list": False, "edit": None, "transcript": "", "words": 0, "languages": ["en"],
+                 "idea": row["idea"], "caption": row["caption"] or "", "sources": [],
+                 "notes": _notes("production", row["id"]), "error": row["error"],
+                 "edit_summary": data.get("summary"), "missing_shots": [], "graphics": 0, "wishlist": [],
+                 "cost": usage.total_for(db(), f"production:{row['id']}") if is_owner() else None,
+                 "music": None, "qa": None, "resolve": None, "slides": slides,
+                 "download": f"/api/production/{row['id']}/download" if pngs else None})
+    clip_ids = json.loads(row["source_clips"] or "[]")
+    if clip_ids:
+        marks = ",".join("?" * len(clip_ids))
+        item["sources"] = [{"id": r["id"], "title": r["title"] or r["source_name"]} for r in db().execute(
+            f"SELECT id, title, source_name FROM clips WHERE id IN ({marks})", clip_ids)]
+    return item
 
 
 def _frame_near(clip_dir: Path, t: float) -> Path | None:
@@ -515,6 +560,8 @@ def production_detail(production_id: int):
     row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
     if row is None:
         abort(404)
+    if row["format"] == "carousel":
+        return jsonify(_carousel_detail(row))
     item = _production_item(row, _open_notes("production"))
     clip_ids = json.loads(row["source_clips"] or "[]")
     sources = []
@@ -650,8 +697,16 @@ def add_note(target: str, target_id: int):
         return jsonify({"error": "empty note"}), 400
     at = (request.json or {}).get("at_seconds")
     remember = bool((request.json or {}).get("remember")) and is_owner()
+    slide = (request.json or {}).get("slide")
+    if slide is not None:  # a carousel note about one slide
+        row = db().execute("SELECT format, slides, plan FROM productions WHERE id = ?", (target_id,)).fetchone() \
+            if target == "production" else None
+        import carousel
+        count = len(carousel.current(row)["slides"]) if row and row["format"] == "carousel" else 0
+        if not isinstance(slide, int) or isinstance(slide, bool) or not 1 <= slide <= count:
+            return jsonify({"error": "that slide isn't in this carousel"}), 400
     note_id = catalog.add_feedback(db(), target, target_id, body,
-                                   None if at is None else round(float(at), 2), remember, g.user["name"])
+                                   None if at is None else round(float(at), 2), remember, g.user["name"], slide)
     if remember:
         table = {"clip": "clips", "production": "productions", "idea": "ideas"}[target]
         row = db().execute(f"SELECT brand, format FROM {table} WHERE id = ?", (target_id,)).fetchone()
@@ -716,7 +771,8 @@ def get_review(production_id: int):
     row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
     if row is None:
         abort(404)
-    if not row["edl"] or not row["video_path"]:
+    laid_out = row["slides"] if row["format"] == "carousel" else row["edl"] and row["video_path"]
+    if not laid_out:
         return jsonify({"error": "there's no finished draft to review yet"}), 400
     if not draft_review.start(production_id):
         return jsonify({"error": "Studio is already reading this draft"}), 409
@@ -832,7 +888,7 @@ def decide(production_id: int):
     if decision != "caption" and not is_owner():
         return jsonify({"error": "only Bryan can do this"}), 403
     if decision == "reopen":  # undo an approve or reject by mistake
-        if row["status"] not in ("approved", "rejected") or not row["video_path"]:
+        if row["status"] not in ("approved", "rejected") or not (row["video_path"] or row["slides"]):
             return jsonify({"error": "only an approved or rejected draft can go back to review"}), 400
         catalog.set_production_status(db(), production_id, "ready", caption)
     elif decision == "changes":
@@ -886,6 +942,31 @@ def idea_thumb(idea_id: int):
     clip = db().execute("SELECT clip_dir FROM clips WHERE id = ?", (segments[0]["clip_id"],)).fetchone()
     frame = _frame_near(Path(clip["clip_dir"]), segments[0]["start"]) if clip else None
     return _file_response(str(frame) if frame else None)
+
+
+@app.get("/media/production/<int:production_id>/slide/<int:n>")
+def production_slide(production_id: int, n: int):
+    """One slide of a carousel draft (PNG)."""
+    import carousel
+    row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    pngs = carousel.files(row) if row is not None and row["format"] == "carousel" else []
+    if not 1 <= n <= len(pngs):
+        abort(404)
+    return _file_response(str(pngs[n - 1]))
+
+
+@app.get("/api/production/<int:production_id>/download")
+def download_carousel(production_id: int):
+    """A carousel's slides and caption as a .zip (01.png, 02.png ... caption.txt)."""
+    import carousel
+    row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    files = carousel.download_files(row) if row is not None and row["format"] == "carousel" else []
+    if not files:
+        abort(404)
+    name = re.sub(r"[^\w\- ]+", "", row["title"] or "Carousel").strip()[:60] or "Carousel"
+    folder = f"{name} v{row['version']}"
+    return Response(_zip_stream([(f"{folder}/{n}", p) for n, p in files]), mimetype="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{folder}.zip"'})
 
 
 @app.get("/media/production/<int:production_id>/<what>")

@@ -5,6 +5,7 @@ import {
   pbarHTML, prepShots, progress, signPaths, stillUrl, takePaths, jobView, jobActive, kickDevelop,
   openModal, closeModal, formError, nameOf, PRODUCTION, state, fbarHTML, isFilmed, folderLineHTML, httpsUrl,
   laptopWait, ago, dayOf, todayISO, parseDay, dayLabel, withKinds, kindsQuery, kindChip, schema, POST_TYPES, POST_TYPE,
+  isCarousel,
 } from "./core.js";
 import { shoot, loadShoot, renderShoot } from "./shoot.js";
 import { loadMonth, renderStrip } from "./month.js";
@@ -87,6 +88,11 @@ export async function loadBoard() {
     i.votes = { up, down, mine };
     i.comments = i.comments?.[0]?.count ?? 0;
     i.filmedCount = i.shots.filter(isFilmed).length;
+    // A carousel: its slides count, and the first slide with a picture is the card's still.
+    i.slideCount = Array.isArray(i.slides) ? i.slides.length : 0;
+    i.slideThumb = isCarousel(i) && Array.isArray(i.slides) ? i.slides.map((x) => x?.image?.thumb_path).find(Boolean) || "" : "";
+    if (i.slideThumb) stills.push(i.slideThumb);
+    delete i.slides; // only the count and the still are needed here
   }
   plan.folders = new Map(folders.map((f) => [f.id, f.folder]));
   await signPaths(stills).catch(() => {});
@@ -457,7 +463,8 @@ function columnHTML(c, arcCount) {
 
 function cardHTML(i, footage = false) {
   const p = i.progress;
-  const thumb = i.first ? stillUrl(...takePaths(i.first)) : "";
+  const carousel = isCarousel(i);
+  const thumb = carousel ? stillUrl(i.slideThumb) : i.first ? stillUrl(...takePaths(i.first)) : "";
   const ups = i.votes.up.length, downs = i.votes.down.length;
   const dev = jobView(plan.board.develop.get(i.id));
   const prod = i.production?.status;
@@ -469,7 +476,8 @@ function cardHTML(i, footage = false) {
   ].filter(Boolean).join("");
   const decision = { go: "Go", parked: "Parked", proposed: "Idea" }[i.decision] || "Idea";
   const fresh = footage && plan.footageFresh?.has(i.id);
-  const label = [i.title, decision, POST_TYPE[i.post_type] || "", footage ? "found in your footage" : "", fresh ? "new" : "", p.total ? `${filmed} of ${p.total} shots filmed` : "No shots yet", ups ? `${ups} keen` : ""].filter(Boolean).join(", ");
+  const label = [i.title, decision, POST_TYPE[i.post_type] || "", carousel ? "carousel" : "", footage ? "found in your footage" : "", fresh ? "new" : "",
+    carousel ? (i.slideCount ? plural(i.slideCount, "slide") : "No slides yet") : p.total ? `${filmed} of ${p.total} shots filmed` : "No shots yet", ups ? `${ups} keen` : ""].filter(Boolean).join(", ");
   const folder = plan.folders?.get(i.id);
   const card = `<button class="card ${esc(i.decision)}" data-plan-idea="${esc(i.id)}" draggable="true" aria-label="${esc(label)}">
     ${thumb ? `<img class="card-thumb" src="${esc(thumb)}" alt="" loading="lazy">` : ""}
@@ -478,13 +486,15 @@ function cardHTML(i, footage = false) {
       <span class="card-chips">
         <span class="chip ${esc(i.decision)}">${decision}</span>
         ${kindChip(i.post_type)}
+        ${carousel ? `<span class="chip carousel">Carousel</span>` : ""}
         ${footage ? `<span class="chip footage">${fresh ? "New · " : ""}From footage</span>` : ""}
         ${oneBrand ? "" : `<span class="chip ${esc(i.brand)}">${esc(BRAND[i.brand] || i.brand)}</span>`}
         ${i.status === "made" || prod ? `<span class="chip producing">${esc(prod ? PRODUCTION[prod] || prod : "In edit")}</span>` : ""}
-        ${jobActive(dev) ? `<span class="chip drafting"><span class="spin"></span>Drafting storyboard…</span>` : ""}
-        ${dev?.state === "failed" && !p.total ? `<span class="chip failed">Storyboard failed</span>` : ""}
+        ${jobActive(dev) ? `<span class="chip drafting"><span class="spin"></span>${carousel ? "Writing slides…" : "Drafting storyboard…"}</span>` : ""}
+        ${dev?.state === "failed" && !(carousel ? i.slideCount : p.total) ? `<span class="chip failed">${carousel ? "Slides failed" : "Storyboard failed"}</span>` : ""}
       </span>
-      ${p.total ? `<span class="card-progress"><span>${esc(filmed)} of ${esc(p.total)} shots</span>${fbarHTML(filmed, p.total)}</span>` : `<span class="card-progress muted">No shots yet</span>`}
+      ${carousel ? `<span class="card-progress${i.slideCount ? "" : " muted"}">${i.slideCount ? esc(plural(i.slideCount, "slide")) : "No slides yet"}</span>`
+        : p.total ? `<span class="card-progress"><span>${esc(filmed)} of ${esc(p.total)} shots</span>${fbarHTML(filmed, p.total)}</span>` : `<span class="card-progress muted">No shots yet</span>`}
       ${meta ? `<span class="card-meta">${meta}</span>` : ""}
     </span>
   </button>`;
@@ -633,6 +643,9 @@ export function openQuickAdd() {
     <form class="form">
       <label>Idea<textarea id="qa-text" rows="4" maxlength="300" placeholder="e.g. Why we flood-test every bathroom for 24 hours" required></textarea></label>
       <label>Link <span class="muted">(optional, e.g. a reel that inspired it)</span><input id="qa-link" type="url" inputmode="url" maxlength="500" placeholder="https://"></label>
+      ${schema.slides ? `<fieldset class="qa-format"><legend>Make it as</legend>
+        <label class="radio"><input type="radio" name="qa-format" value="reel" checked> A Reel <span class="muted small">(filmed)</span></label>
+        <label class="radio"><input type="radio" name="qa-format" value="carousel"> A carousel <span class="muted small">(slides; no filming)</span></label></fieldset>` : ""}
       <label>Series<select id="qa-arc"><option value="">Unsorted</option>${arcs.map((a) => `<option value="${esc(a.id)}">${esc(a.title)}</option>`).join("")}</select></label>
       ${schema.kinds ? `<label>Kind of post<select id="qa-kind">${options(POST_TYPES, POST_TYPE, "", "Let Studio decide")}</select></label>` : ""}
       <p class="error-text" id="modal-error" role="alert" hidden></p>
@@ -650,7 +663,8 @@ export function openQuickAdd() {
     let row;
     try {
       const kind = $("#qa-kind")?.value || null;
-      row = must(await sb.from("ideas").insert({ project_id: plan.pid, title, brand: p?.brand || "urban_makers", arc_id: $("#qa-arc").value ? Number($("#qa-arc").value) : null, position: pos, ...(kind ? { post_type: kind } : {}) }).select("id").single());
+      const carousel = document.querySelector("input[name=qa-format]:checked")?.value === "carousel";
+      row = must(await sb.from("ideas").insert({ project_id: plan.pid, title, brand: p?.brand || "urban_makers", arc_id: $("#qa-arc").value ? Number($("#qa-arc").value) : null, position: pos, ...(kind ? { post_type: kind } : {}), ...(carousel ? { format: "carousel" } : {}) }).select("id").single());
       if (link) must(await sb.from("comments").insert({ idea_id: row.id, body: `Link: ${link}` }));
     } catch (err) { e.target.disabled = false; return formError(err.message); }
     closeModal();

@@ -375,10 +375,14 @@ def run_editor(stop_after_one: bool = False) -> None:
                 return
             time.sleep(15)
             continue
-        title = conn.execute("SELECT title FROM productions WHERE id = ?", (production_id,)).fetchone()["title"]
-        log.info("Editing production %s: %s", production_id, title)
+        row = conn.execute("SELECT title, format FROM productions WHERE id = ?", (production_id,)).fetchone()
+        log.info("Editing production %s: %s", production_id, row["title"])
         try:
-            editor.edit(conn, production_id)
+            if row["format"] == "carousel":  # slides laid out as PNGs (carousel.py), not a video edit
+                import carousel
+                carousel.run(conn, production_id)
+            else:
+                editor.edit(conn, production_id)
             notify.digest.add("draft")
         except Exception as e:
             log.exception("Edit failed for production %s", production_id)
@@ -653,8 +657,13 @@ def main() -> int:
         conn.execute("UPDATE productions SET status = 'planned' WHERE id = ? AND status NOT IN ('revising')",
                      (args.edit,))
         conn.commit()
-        import editor
-        editor.edit(conn, args.edit)
+        row = conn.execute("SELECT format FROM productions WHERE id = ?", (args.edit,)).fetchone()
+        if row and row["format"] == "carousel":
+            import carousel
+            carousel.run(conn, args.edit)
+        else:
+            import editor
+            editor.edit(conn, args.edit)
         return 0
 
     if not args.once:

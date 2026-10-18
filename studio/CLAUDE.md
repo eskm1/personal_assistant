@@ -46,13 +46,19 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
 - Bryan to run once on the laptop: `git pull` then `.\venv\Scripts\python cloud_setup.py --update`
   (shoot-plan tables, the team function's domain rule, migration 20261019000000_footage_ideas: the `ideas`
   job kind, `clips.usable`/`clips.flagged`; and migration 20261020000000_content_plan with the updated
-  plan-organise / plan-develop functions). Re-run after any new migration. Until then the planner hides the
-  "This month" strip and the server sends no `post_type`.
+  plan-organise / plan-develop functions; and migration 20261021000000_carousels with plan-develop's slide
+  writing). Re-run after any new migration. Until then the planner hides the "This month" strip and carousels,
+  and the server sends no `post_type`.
 - Content plan (Bryan approved the proposal 2026-10-18: https://claude.ai/artifact/UyGPCh6YJv3y334g6531Ke), built in
   four steps. Step 1 done: kinds of post (`ideas.post_type`, `content_plan.py`), the month's mix
   (`content_plan` table, `content_month()`), the "This month" strip and Content plan page, the standing
-  Topics project. Next: 2 carousels (format `carousel` and job kind `carousel` already allowed), 3 Gemini
-  concept images (`GEMINI_API_KEY`, always marked "Concept", never in Finished homes), 4 weekly suggested
+  Topics project. Step 2 built (not yet proven on the server): carousels (`ideas.slides`, Write slides in
+  `plan-develop`, pictures from footage stills / uploaded photos incl. HEIC (`slide_images.py`, `uploads.py`),
+  layout to PNG with puppeteer-core + HyperFrames' Chrome (`carousel.py`, `render/carousel/`), Review with a
+  carousel read, send back = Claude revises the slides, OneDrive folder + zip). Needs on the server: the
+  updater's pip install (pillow, pillow-heif) and npm ci (puppeteer-core) on the next update, then
+  `cloud_setup.py --update` from the laptop. Next: 3 Gemini concept images (`GEMINI_API_KEY`; a `concept`
+  provider in `slide_images.SOURCES`, always marked "Concept", never in Finished homes), 4 weekly suggested
   topics (job kind `topics`). Offers: only the ones in the planner; never invent prices or promotions.
 - Ideas live only in the planner (footage_ideas.py proposes ideas from new footage into each project's
   "From your footage" arc after uploads go quiet; "Everyday posts" project for loose clips).

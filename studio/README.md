@@ -475,6 +475,21 @@ your offers: it never makes up a price, discount or promotion. You can change an
 batch). Posts that aren't about one client's renovation go in the standing **Topics** project, like
 **Everyday posts** for loose footage. After this update, run `cloud_setup.py --update` once (below).
 
+**Carousels.** A post can be a carousel instead of a Reel: 6 to 10 slides people swipe through and save,
+with no filming. In **New idea** pick **A carousel** (Claude's Organise also suggests one now and then, for
+Know-how, Ideas or Work with us posts). On the idea, **Write slides** has Claude write a cover (the hook), 4 to 8
+points and the ask, plus the caption, in your voice; the ask only ever uses your offers. Edit any line, move,
+add or delete slides, and give each slide a picture: **From footage** (pick a clip, tap the moment; Studio takes
+the sharpest frame there), **Photo** (from your phone; iPhone photos are fine) or **Text only**. AI concept
+pictures come in the next update. **Make this** (you only) has Studio lay the slides out in the Urban Makers
+look (1080x1350, big text for phones, the slide number and a small Urban Makers mark; the cover's words stay
+inside what the profile grid shows). The draft arrives in Review like a Reel: Studio's read first (is every
+slide easy to read, spelling, sensible claims, the ask only uses your offers, no place names), the slides small
+and swipeable. A note can be about one slide. **Send back** and Claude rewrites the slides from your notes and
+lays them out again as the next version; **Approve** and they're copied to OneDrive, **Studio Ready to post**,
+in a folder named after the post (01.png, 02.png ... and caption.txt), and **Download (.zip)** has them too.
+Writing slides costs a few cents; laying them out is free.
+
 ### Planning online
 
 Planning can live on the online planner instead (a website on Netlify with its data in Supabase),
@@ -488,7 +503,8 @@ While the worker runs, it syncs about every 30 seconds:
 - it pushes each library clip (title, quality verdict and tips, a still) and every matched take
   (with a still), so the planner shows what's filmed;
 - it runs what only this laptop can do: **Shortlist music** (Epidemic Sound) and **Make this**
-  (the editor), and keeps each made idea's status (draft ready, approved, posted) up to date;
+  (the editor; for a carousel, the slide layout), and keeps each made idea's status (draft ready,
+  approved, posted) up to date;
 - it analyses the reference reels on the planner's **References** tab and drafts the style guide
   (section 14).
 

@@ -1,0 +1,678 @@
+"""
+Carousels on the Studio machine (cloud/CONTRACT.md, "Carousels"): a post of 1080x1350
+slides people swipe through, made without a shoot.
+
+  1. The slides are written in the planner (Claude's "Write slides", then edited line by
+     line): a cover (the hook), the points, and the ask, each with a picture: a still from
+     Urban Makers' own footage, a photo uploaded from the phone, or text only
+     (slide_images.py).
+  2. "Make this" (the owner) queues a `carousel` job; cloud_sync runs make(), which files a
+     'planned' production (format 'carousel') for the editing queue, like a Reel.
+  3. render() lays it out: each slide becomes a page in the Urban Makers look (the bundled
+     fonts in render/carousel/fonts, the brand green and amber), and the headless Chrome the
+     editor already uses saves each one as a PNG (render/carousel/shoot.mjs). The cover's
+     words stay inside the middle of the slide, so the profile grid's 3:4 crop keeps them.
+  4. Studio's read (draft_review.py) looks at the slides; Bryan approves, rejects or sends
+     it back with notes (a note can name a slide). A send-back has Claude revise the slides
+     from the notes (revise()) and lays them out again as the next version.
+  5. Approved carousels are copied to OneDrive "Studio Ready to post/<title>/" as 01.png,
+     02.png ... and caption.txt (onedrive.py), and Review offers them as a .zip.
+
+English only. Only the offers listed in the planner, never a made-up price or promotion,
+and never a place name.
+"""
+import html
+import json
+import logging
+import os
+import shutil
+import subprocess
+import tempfile
+import uuid
+from pathlib import Path
+
+import catalog
+import render
+import settings
+import slide_images
+
+log = logging.getLogger("studio.carousel")
+
+W, H = 1080, 1350
+# Instagram's profile grid shows a 3:4 crop of each post: on a 1080x1350 slide that's the
+# middle 1012 px across. The cover's words must stay inside it.
+GRID_LEFT, GRID_RIGHT = round((W - H * 3 / 4) / 2), round(W - (W - H * 3 / 4) / 2)
+MAX_SLIDES = 12
+ROLES = ("cover", "point", "ask")
+RENDERS = settings.ROOT / "Renders"
+HERE = render.RENDER_DIR / "carousel"
+FONTS = {"display": HERE / "fonts" / "BricolageGrotesque-latin.woff2", "text": HERE / "fonts" / "Figtree-latin.woff2"}
+SHOOT = HERE / "shoot.mjs"
+# The Urban Makers look: the green Bryan approved in the content plan, warm white, and the
+# amber accent Studio's Reels graphics use.
+COLOURS = {"bg": "#22302c", "deep": "#18231f", "ink": "#f6f4ee", "soft": "#d6ddd8", "accent": "#f5a524"}
+# Heading and body sizes (px at 1080 wide) by layout; each shrinks to fit (down to FIT_MIN).
+SIZES = {"cover-text": (120, 48), "cover-photo": (106, 44), "point-text": (96, 52), "point-photo": (70, 42),
+         "ask-text": (108, 54), "ask-photo": (70, 44)}
+FIT_MIN = 0.56
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+_chrome: str | None = None
+
+
+def ready() -> str | None:
+    """None when slides can be laid out here, else what's missing."""
+    try:
+        render.node_version()
+    except Exception as e:
+        return f"Node.js {e}"
+    if not (render.RENDER_DIR / "node_modules" / "puppeteer-core" / "package.json").exists():
+        return f"the renderer's packages are out of date; run npm ci in {render._RENDER_DIR}"
+    missing = [p.name for p in (*FONTS.values(), SHOOT) if not p.exists()]
+    if missing:
+        return "carousel files are missing: " + ", ".join(missing)
+    try:
+        _browser()
+    except Exception as e:
+        return str(e)
+    return None
+
+
+def _browser() -> str:
+    global _chrome
+    if _chrome is None or not Path(_chrome).exists():
+        _chrome = render.browser_path()
+    return _chrome
+
+
+# ── Slides ────────────────────────────────────────────────────────────────────
+
+def _text(v, limit: int) -> str:
+    return v.strip()[:limit].strip() if isinstance(v, str) else ""
+
+
+def _key() -> str:
+    return uuid.uuid4().hex[:10]
+
+
+def clean_image(v) -> dict:
+    """A picture as the planner stores it (what valid_slides() online accepts)."""
+    i = v if isinstance(v, dict) else {}
+    source = i.get("source") if i.get("source") in slide_images.SOURCES or i.get("source") == "text" else "text"
+    out = {"source": source}
+    if source == "clip" and isinstance(i.get("clip_id"), int) and not isinstance(i.get("clip_id"), bool):
+        out["clip_id"] = i["clip_id"]
+        out["at"] = round(max(float(i.get("at") or 0), 0.0), 1) if isinstance(i.get("at"), (int, float)) else 0.0
+    elif source == "photo" and isinstance(i.get("photo_id"), str) and slide_images._ID.match(i["photo_id"]):
+        out["photo_id"] = i["photo_id"]
+    elif source in ("clip", "photo"):
+        out = {"source": "text"}
+    if isinstance(i.get("thumb_path"), str) and len(i["thumb_path"]) <= 200 and \
+            i["thumb_path"].split("/")[0] in ("clips", "takes", "stills", "photos") and ".." not in i["thumb_path"]:
+        out["thumb_path"] = i["thumb_path"]
+    note = _text(i.get("note"), 300)
+    if note:
+        out["note"] = note
+    return out
+
+
+def clean_slides(raw) -> list[dict]:
+    """The slides stored on an idea, cleaned; empty slides are left out."""
+    out = []
+    for s in (raw if isinstance(raw, list) else [])[:MAX_SLIDES]:
+        if not isinstance(s, dict):
+            continue
+        heading, body = _text(s.get("heading"), 200), _text(s.get("body"), 800)
+        if not heading and not body:
+            continue
+        out.append({"key": _text(s.get("key"), 40) or _key(), "role": s.get("role") if s.get("role") in ROLES else "point",
+                    "heading": heading, "body": body, "image": clean_image(s.get("image"))})
+    return out
+
+
+def plan_slides(raw_slides, current: list[dict], clips: dict[int, dict]) -> list[dict]:
+    """Claude's slides as stored slides (like _shared/slides.ts planSlides): one cover first,
+    the ask last, a picture only when it's one the team picked (keep_image) or a still from a
+    listed clip, at most MAX_SLIDES."""
+    slides = []
+    for s in (raw_slides if isinstance(raw_slides, list) else [])[:MAX_SLIDES * 2]:
+        if not isinstance(s, dict):
+            continue
+        heading, body = _text(s.get("heading"), 200), _text(s.get("body"), 800)
+        if not heading and not body:
+            continue
+        note = _text(s.get("image_idea"), 300)
+        keep = round(s["keep_image"]) if isinstance(s.get("keep_image"), (int, float)) else 0
+        clip = clips.get(s.get("clip_id")) if isinstance(s.get("clip_id"), int) else None
+        if 1 <= keep <= len(current) and current[keep - 1]["image"].get("source") != "text":
+            image = dict(current[keep - 1]["image"])
+            if note and not image.get("note"):
+                image["note"] = note
+        elif clip:
+            at = float(s["at"]) if isinstance(s.get("at"), (int, float)) else 0.0
+            image = {"source": "clip", "clip_id": clip["id"],
+                     "at": round(min(max(at, 0.0), clip.get("duration") or at), 1)}
+            if note:
+                image["note"] = note
+        else:
+            image = {"source": "text", **({"note": note} if note else {})}
+        slides.append({"key": _key(), "role": s.get("role") if s.get("role") in ROLES else "point",
+                       "heading": heading, "body": body, "image": image})
+    if not slides:
+        return []
+    covers = [k for k, s in enumerate(slides) if s["role"] == "cover"]
+    cover = slides.pop(covers[0] if covers else 0)
+    cover["role"] = "cover"
+    asks = [k for k, s in enumerate(slides) if s["role"] == "ask"]
+    ask = slides.pop(asks[-1]) if asks else None
+    for s in slides:
+        s["role"] = "point"
+    return [cover, *slides[:MAX_SLIDES - 1 - (1 if ask else 0)], *([ask] if ask else [])]
+
+
+def picture_text(image: dict, clips: dict[int, dict] | None = None) -> str:
+    """How a slide's picture reads to Claude and to Bryan."""
+    source = image.get("source")
+    if source == "clip":
+        title = ((clips or {}).get(image.get("clip_id")) or {}).get("title")
+        return f"a still from clip {image.get('clip_id')}" + (f" (\"{title}\")" if title else "") + f" at {image.get('at', 0)}s"
+    if source == "photo":
+        return "a photo the team uploaded"
+    if source == "concept":
+        return "an AI concept image"
+    return "text only"
+
+
+# ── Making one ────────────────────────────────────────────────────────────────
+
+def make(conn, idea_id: int, slides, caption: str | None = None) -> int:
+    """"Make this" on a carousel: a 'planned' production for the editing queue, from the
+    idea's slides. Returns its id (the existing one if it's already made)."""
+    idea = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
+    if idea is None:
+        raise KeyError(idea_id)
+    if idea["production_id"]:
+        return idea["production_id"]
+    slides = clean_slides(slides)
+    if len(slides) < 2:
+        raise RuntimeError("write the slides first (a cover and at least one more)")
+    plan = {"idea_id": idea_id, "title": idea["title"], "brand": idea["brand"], "format": "carousel",
+            "post_type": idea["post_type"], "hook": idea["hook"] or slides[0]["heading"], "purpose": idea["purpose"] or "",
+            "cta": idea["cta"] or "", "slides": slides}
+    clip_ids = list(dict.fromkeys(s["image"]["clip_id"] for s in slides if s["image"].get("source") == "clip"))
+    stamp = catalog.now()
+    cur = conn.execute(
+        """INSERT INTO productions (title, brand, format, status, version, idea, source_clips, caption, plan,
+               created_at, updated_at) VALUES (?, ?, 'carousel', 'planned', 0, ?, ?, ?, ?, ?, ?)""",
+        (idea["title"], idea["brand"], f"{plan['hook']}\n\n{plan['purpose']}".strip(), json.dumps(clip_ids),
+         caption if caption is not None else idea["caption"], json.dumps(plan), stamp, stamp))
+    conn.execute("UPDATE ideas SET status = 'made', production_id = ?, slides = ? WHERE id = ?",
+                 (cur.lastrowid, json.dumps(slides), idea_id))
+    conn.commit()
+    log.info("Carousel %s queued: %s (%d slides)", cur.lastrowid, idea["title"], len(slides))
+    return cur.lastrowid
+
+
+def current(row) -> dict:
+    """The production's latest slides ({slides, files, ...}); before the first render, the
+    slides it was made from (no files yet)."""
+    try:
+        data = json.loads(row["slides"] or "null")
+    except ValueError:
+        data = None
+    if isinstance(data, dict) and isinstance(data.get("slides"), list):
+        return data
+    plan = json.loads(row["plan"] or "{}")
+    return {"slides": clean_slides(plan.get("slides")), "files": []}
+
+
+# ── Layout ────────────────────────────────────────────────────────────────────
+
+_ARROW = ('<svg width="34" height="22" viewBox="0 0 34 22" aria-hidden="true"><path d="M2 11h27M20 2l9 9-9 9" '
+          'fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+
+_CSS = """
+@font-face{font-family:"UM Display";src:url("%(display)s") format("woff2");font-weight:200 800;font-display:block}
+@font-face{font-family:"UM Text";src:url("%(text)s") format("woff2");font-weight:300 900;font-display:block}
+:root{--bg:%(bg)s;--deep:%(deep)s;--ink:%(ink)s;--soft:%(soft)s;--accent:%(accent)s}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1080px;background:#000}
+.slide{position:relative;width:1080px;height:1350px;overflow:hidden;background:var(--bg);color:var(--ink);
+  font-family:"UM Text",sans-serif;font-weight:500;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
+.pic{position:absolute;left:0;top:0;width:1080px;height:1350px;object-fit:cover;object-position:center 45%%;display:block}
+.shade-top{position:absolute;left:0;right:0;top:0;height:250px;z-index:1;
+  background:linear-gradient(rgba(10,16,14,.7),rgba(10,16,14,0))}
+.shade{position:absolute;left:0;right:0;bottom:0;height:960px;z-index:1;
+  background:linear-gradient(rgba(14,22,19,0),rgba(14,22,19,.80) 42%%,rgba(14,22,19,.96))}
+.top{position:absolute;left:84px;right:84px;top:64px;height:40px;display:flex;align-items:center;
+  justify-content:space-between;z-index:3}
+.mark{display:flex;align-items:center;gap:14px;font:800 25px/1 "UM Text";letter-spacing:.16em;text-transform:uppercase}
+.mark i{display:block;width:20px;height:20px;border-radius:5px;background:var(--accent)}
+.num{font:700 27px/1 "UM Text";letter-spacing:.06em;font-variant-numeric:tabular-nums}
+.tag{position:absolute;left:84px;top:132px;z-index:3;font:800 22px/1 "UM Text";letter-spacing:.12em;
+  text-transform:uppercase;color:var(--accent);background:rgba(10,16,14,.74);padding:10px 14px;border-radius:8px}
+.copy{position:absolute;left:84px;right:84px;display:flex;flex-direction:column;gap:30px;overflow:hidden;z-index:2}
+.bar{flex:none;width:112px;height:12px;border-radius:6px;background:var(--accent)}
+.h{font-family:"UM Display",sans-serif;font-weight:800;line-height:1.04;letter-spacing:-.015em;text-wrap:balance;
+  overflow-wrap:break-word}
+.b{font-weight:500;line-height:1.38;color:var(--soft);text-wrap:pretty;overflow-wrap:break-word}
+.cover.text .copy{top:236px;bottom:240px;justify-content:center}
+.cover.photo .copy{top:520px;bottom:200px;justify-content:flex-end}
+.cover.photo .h{text-shadow:0 2px 24px rgba(0,0,0,.35)}
+.cover.photo .b{color:var(--ink)}
+.swipe{position:absolute;right:84px;bottom:92px;z-index:3;display:flex;align-items:center;gap:14px;
+  font:800 26px/1 "UM Text";letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.point.text .copy{top:236px;bottom:160px;justify-content:center}
+.photo.split .pic{height:var(--pic,780px)}
+.photo.split .panel{position:absolute;left:0;right:0;bottom:0;top:var(--pic,780px);background:var(--bg);z-index:1}
+.photo.split .copy{top:calc(var(--pic,780px) + 44px);bottom:72px;gap:22px;justify-content:center}
+.ask{background:var(--deep)}
+.ask .h{color:var(--accent)}
+.ask .b{color:var(--ink)}
+.ask.text .copy{top:236px;bottom:280px;justify-content:center}
+.ask.photo .panel{background:var(--deep)}
+.sign{position:absolute;left:84px;right:84px;bottom:92px;display:flex;align-items:center;gap:18px;z-index:2;
+  font:800 34px/1 "UM Text";letter-spacing:.16em;text-transform:uppercase}
+.sign i{display:block;width:30px;height:30px;border-radius:7px;background:var(--accent)}
+"""
+
+_FIT = """
+window.studioFit = () => [...document.querySelectorAll(".slide")].map((s) => {
+  const copy = s.querySelector(".copy"), h = s.querySelector(".h"), b = s.querySelector(".b");
+  const H = Number(s.dataset.h), B = Number(s.dataset.b);
+  // Too much text: the blocks (and the gaps between them) are taller than the space, or a
+  // word is wider than the line.
+  const over = () => {
+    const kids = [...copy.children], gap = parseFloat(getComputedStyle(copy).rowGap) || 0;
+    const need = kids.reduce((a, k) => a + k.getBoundingClientRect().height, 0) + gap * Math.max(kids.length - 1, 0);
+    return need > copy.clientHeight + 1 || kids.some((k) => k.scrollWidth > k.clientWidth + 1);
+  };
+  let f = 1;
+  const set = () => { if (h) h.style.fontSize = Math.round(H * f) + "px"; if (b) b.style.fontSize = Math.round(B * f) + "px"; };
+  set();
+  // Smaller words first; a photo slide then gives its text more of the slide.
+  while (over() && f > %(min)s) { f = Math.round((f - 0.03) * 100) / 100; set(); }
+  if (s.classList.contains("split")) {
+    let pic = 780;
+    while (over() && pic > 520) { pic -= 40; s.style.setProperty("--pic", pic + "px"); }
+  }
+  const t = s.getBoundingClientRect();
+  const box = (el) => {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return [Math.round(r.left - t.left), Math.round(r.top - t.top), Math.round(r.right - t.left), Math.round(r.bottom - t.top)];
+  };
+  // Where the words really are (not the boxes around them).
+  const ink = (el) => {
+    if (!el || !el.textContent.trim()) return null;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const rs = [...range.getClientRects()];
+    if (!rs.length) return null;
+    return [Math.round(Math.min(...rs.map((r) => r.left)) - t.left), Math.round(Math.min(...rs.map((r) => r.top)) - t.top),
+            Math.round(Math.max(...rs.map((r) => r.right)) - t.left), Math.round(Math.max(...rs.map((r) => r.bottom)) - t.top)];
+  };
+  return { n: Number(s.dataset.n), layout: s.dataset.layout, fit: f, overflow: over(),
+           heading_px: h ? parseFloat(h.style.fontSize) : null, body_px: b ? parseFloat(b.style.fontSize) : null,
+           boxes: { copy: box(copy), heading: ink(h), body: ink(b), mark: box(s.querySelector(".mark")),
+                    num: box(s.querySelector(".num")), tag: box(s.querySelector(".tag")) } };
+});
+"""
+
+
+def _lines(text: str) -> str:
+    return "<br>".join(html.escape(line) for line in text.split("\n"))
+
+
+def slide_html(n: int, total: int, slide: dict, picture: Path | None, mark: str = "") -> str:
+    """One slide as a section of the page (layout by role, and whether it has a picture)."""
+    role = slide["role"]
+    layout = f"{role}-{'photo' if picture else 'text'}"
+    h_px, b_px = SIZES[layout]
+    split = picture is not None and role in ("point", "ask")
+    classes = ["slide", role, "photo" if picture else "text"] + (["split"] if split else [])
+    parts = []
+    if picture:
+        parts.append(f'<img class="pic" src="{html.escape(picture.resolve().as_uri())}" alt="">')
+        parts.append('<div class="shade-top"></div>')
+        parts.append('<div class="panel"></div>' if split else '<div class="shade"></div>')
+    top_mark = '<span class="mark"><i></i>Urban Makers</span>' if role != "ask" else "<span></span>"
+    parts.append(f'<div class="top">{top_mark}<span class="num">{n}/{total}</span></div>')
+    if mark:
+        parts.append(f'<span class="tag">{html.escape(mark)}</span>')
+    copy = []
+    if not picture or role == "cover":
+        copy.append('<span class="bar"></span>')
+    if slide["heading"]:
+        copy.append(f'<div class="h">{_lines(slide["heading"])}</div>')
+    if slide["body"]:
+        copy.append(f'<div class="b">{_lines(slide["body"])}</div>')
+    parts.append(f'<div class="copy">{"".join(copy)}</div>')
+    if role == "cover" and total > 1:
+        parts.append(f'<div class="swipe">Swipe{_ARROW}</div>')
+    if role == "ask" and not picture:
+        parts.append('<div class="sign"><i></i>Urban Makers</div>')
+    return (f'<section class="{" ".join(classes)}" id="slide-{n}" data-n="{n}" data-layout="{layout}" '
+            f'data-h="{h_px}" data-b="{b_px}">{"".join(parts)}</section>')
+
+
+def page_html(slides: list[dict], pictures: list[tuple[Path | None, str]]) -> str:
+    """The whole carousel as one page: every slide 1080x1350, one under the other."""
+    css = _CSS % {"display": FONTS["display"].resolve().as_uri(), "text": FONTS["text"].resolve().as_uri(), **COLOURS}
+    body = "".join(slide_html(n, len(slides), s, pic, mark) for n, (s, (pic, mark)) in enumerate(zip(slides, pictures), 1))
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><style>{css}</style></head>'
+            f'<body>{body}<script>{_FIT % {"min": FIT_MIN}}</script></body></html>')
+
+
+def shoot(page: str, out_dir: Path) -> dict:
+    """Lay out the page in the headless Chrome and save each slide as NN.png in out_dir.
+    Returns shoot.mjs's report (each slide's fit and text boxes, the fonts' state)."""
+    node = render._node()
+    if not node:
+        raise RuntimeError(f"Node.js not found; install it with: {render._NODE_FIX}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="studio-carousel-") as tmp:
+        page_file, job_file = Path(tmp) / "slides.html", Path(tmp) / "job.json"
+        page_file.write_text(page, encoding="utf-8")
+        job_file.write_text(json.dumps({"chrome": _browser(), "html": str(page_file), "out_dir": str(out_dir),
+                                        "width": W, "height": H}), encoding="utf-8")
+        result = subprocess.run([node, str(SHOOT), str(job_file)], cwd=HERE, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=600, creationflags=_NO_WINDOW)
+    if result.returncode != 0:
+        raise RuntimeError("laying out the slides failed: " + (result.stderr or result.stdout).strip()[-400:])
+    report = json.loads(result.stdout)
+    unloaded = [f["family"] for f in report.get("fonts", []) if f.get("status") != "loaded"]
+    if unloaded:
+        raise RuntimeError(f"the carousel fonts didn't load ({', '.join(unloaded)})")
+    return report
+
+
+def lay_out(conn, slides: list[dict], out_dir: Path) -> dict:
+    """Pictures, layout and PNGs for these slides. Returns {files, layout, pictures}."""
+    pictures, notes = [], []
+    for n, s in enumerate(slides, 1):
+        path, mark, why = slide_images.picture(s["image"], conn)
+        pictures.append((path, mark))
+        notes.append({"n": n, "source": s["image"].get("source", "text") if path else "text",
+                      **({"missing": why} if why else {})})
+    report = shoot(page_html(slides, pictures), out_dir)
+    files = [s["file"] for s in report["slides"]]
+    if len(files) != len(slides) or not all(Path(f).is_file() for f in files):
+        raise RuntimeError("Chrome didn't save every slide")
+    layout = [{k: v for k, v in s.items() if k != "file"} for s in report["slides"]]
+    return {"files": files, "layout": layout, "pictures": notes, "fonts": report.get("fonts", [])}
+
+
+def _thumb(png: Path, out: Path) -> None:
+    from PIL import Image
+    with Image.open(png) as img:
+        img = img.convert("RGB")
+        img.thumbnail((540, 675), Image.LANCZOS)
+        img.save(out, "JPEG", quality=85)
+
+
+def _summary(slides: list[dict], pictures: list[dict], revision: dict | None) -> str:
+    counts = {"clip": 0, "photo": 0, "text": 0}
+    for p in pictures:
+        counts[p["source"] if p["source"] in counts else "text"] += 1
+    parts = [f"{counts['clip']} with stills from your footage" if counts["clip"] else "",
+             f"{counts['photo']} with your photos" if counts["photo"] else "",
+             f"{counts['text']} text only" if counts["text"] else ""]
+    line = f"Laid out {len(slides)} slides: " + ", ".join(p for p in parts if p) + "."
+    missing = [p for p in pictures if p.get("missing")]
+    if missing:
+        line += " " + " ".join(f"Slide {p['n']} is text only for now ({p['missing']})." for p in missing)
+    if revision and revision.get("summary"):
+        line = revision["summary"].strip() + " " + line
+    return line
+
+
+# ── Rendering a version (the editing queue, worker.run_editor) ────────────────
+
+def run(conn, production_id: int, client=None) -> Path:
+    """Make the next draft of a carousel: revise the slides from Bryan's open notes when it
+    was sent back, then lay them out. Returns the folder of PNGs."""
+    row = conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    if row is None:
+        raise KeyError(production_id)
+    was = row["status"]
+    data = current(row)
+    slides = data["slides"]
+    if not slides:
+        raise RuntimeError("this carousel has no slides")
+    catalog.set_production_status(conn, production_id, "producing")
+    notes = [dict(r) for r in conn.execute(
+        "SELECT * FROM feedback WHERE target = 'production' AND target_id = ? AND status = 'open' ORDER BY id",
+        (production_id,))]
+    revision = None
+    # Sent back (or interrupted while revising): Bryan's open notes on the last version.
+    if notes and (was == "revising" or row["version"] >= 1):
+        revision = revise(conn, dict(row), slides, notes, client)
+        slides = revision["slides"]
+    version = row["version"] + 1
+    out_dir = RENDERS / f"carousel_{production_id}_v{version}"
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    made = lay_out(conn, slides, out_dir)
+    thumb = out_dir / "thumb.jpg"
+    _thumb(Path(made["files"][0]), thumb)
+    stored = {"version": version, "slides": slides, **made, "summary": _summary(slides, made["pictures"], revision),
+              "notes_addressed": (revision or {}).get("notes_addressed", [])}
+    caption = row["caption"]
+    if revision and revision.get("caption"):
+        caption = revision["caption"]
+    clip_ids = list(dict.fromkeys(s["image"]["clip_id"] for s in slides if s["image"].get("source") == "clip"))
+    conn.execute(
+        """UPDATE productions SET status = 'ready', version = ?, thumb_path = ?, slides = ?, caption = ?,
+               source_clips = ?, duration = NULL, error = NULL, updated_at = ? WHERE id = ?""",
+        (version, str(thumb), json.dumps(stored, ensure_ascii=False), caption, json.dumps(clip_ids), catalog.now(),
+         production_id))
+    conn.execute("""UPDATE feedback SET status = 'addressed'
+                    WHERE target = 'production' AND target_id = ? AND status = 'open'""", (production_id,))
+    conn.commit()
+    log.info("Carousel %s v%d laid out: %d slides", production_id, version, len(slides))
+    import draft_review
+    draft_review.safe_run(conn, production_id)  # Studio's read; a failure leaves the draft as it is
+    return out_dir
+
+
+# ── Revising from Bryan's notes ───────────────────────────────────────────────
+
+# Keep in step with cloud/supabase/functions/_shared/prompts.ts (SLIDE_SCHEMA, SLIDE_RULES).
+_SLIDE = {
+    "type": "object",
+    "properties": {
+        "role": {"type": "string", "enum": list(ROLES)},
+        "heading": {"type": "string"}, "body": {"type": "string"},
+        "keep_image": {"type": "integer"}, "clip_id": {"type": "integer"}, "at": {"type": "number"},
+        "image_idea": {"type": "string"},
+    },
+    "required": ["role", "heading", "body", "keep_image", "clip_id", "at", "image_idea"],
+    "additionalProperties": False,
+}
+REVISE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "slides": {"type": "array", "items": _SLIDE},
+        "caption_changed": {"type": "boolean"},
+        "caption": {"type": "string"},
+        "summary": {"type": "string"},
+        "notes_addressed": {"type": "array", "items": {
+            "type": "object", "properties": {"note_id": {"type": "integer"}, "how": {"type": "string"}},
+            "required": ["note_id", "how"], "additionalProperties": False}},
+    },
+    "required": ["slides", "caption_changed", "caption", "summary", "notes_addressed"],
+    "additionalProperties": False,
+}
+
+SLIDE_RULES = """How to write a carousel:
+- Bryan's voice: plain, practical and warm, like he explains things on site; "we" for Urban Makers. \
+No hype, no emoji on the slides, no trade jargon a homeowner wouldn't use. English only.
+- Slide 1 (role cover) is the hook: a heading of at most 9 words that makes someone stop and swipe \
+(a promise, a tension or a question); body empty or one short line.
+- Then 4 to 8 point slides (role point), one idea each: a heading of at most 8 words and a body of \
+at most 30 words, specific and useful (what to do and why). Each slide makes sense on its own, so \
+the post is worth saving. Use a number only when it's a well-known fact or Bryan said it.
+- The last slide (role ask) is the call to action, fitting the post's kind (the content plan lists \
+the ask for each kind). An ask that offers something (a Work with us post, or any other) uses ONLY \
+an offer listed in the content plan, worded as listed; otherwise ask people to save, share, follow \
+or comment. Never invent a price, discount, promotion, deadline, freebie or offer.
+- Never name a place (estate, street, condo, block, town) or a client: where clients live stays \
+private. Never invent facts about a project; write [placeholder] where the team must fill something in.
+- Pictures come only from Urban Makers' own footage and photos, never anyone else's images. For \
+each slide: keep_image is the number of a current slide whose picture this slide keeps (someone \
+picked it; keep it with the point it illustrates when you rewrite), else 0. clip_id and at: a still \
+from one of the clips listed (at = the moment in seconds) that shows exactly what the slide says, \
+else 0 and 0. Never use a clip just to fill a slide: text-only slides read well. image_idea: one \
+short line on what picture would suit, for the team ("close-up of the window seat's drawer"), or "".
+- caption: a ready-to-edit Instagram caption in Bryan's voice that adds to the slides rather than \
+repeating them, ending with the same ask, with 3 to 6 hashtags."""
+
+_REVISE_SYSTEM = """You revise a draft Instagram carousel for Bryan, who owns Urban Makers, a \
+renovation company in Singapore, from the notes he left on it.
+
+{brands}
+
+Bryan's playbook (his voice and story rules):
+
+<playbook>
+{playbook}
+</playbook>
+
+The content plan (the kinds of post, this month's mix and the offers):
+
+<content_plan>
+{content_plan}
+</content_plan>
+
+""" + SLIDE_RULES + """
+
+Revising:
+- Apply every note. A note marked with a slide number is about that slide; one without is about \
+the whole post. Keep everything the notes don't ask to change, word for word, with keep_image set \
+to its own slide number so its picture stays.
+- caption_changed: true only when a note asks for a different caption; then caption is the new \
+caption, otherwise caption is "".
+- summary: one or two sentences for Bryan on what you changed.
+- notes_addressed: every note id, with how you handled it."""
+
+
+def _clips(conn, production: dict, slides: list[dict]) -> dict[int, dict]:
+    """Clips Claude may take stills from: those already on the slides, the project's own
+    usable clips, then recent ones from elsewhere (no retakes)."""
+    plan = json.loads(production.get("plan") or "{}")
+    idea = conn.execute("SELECT project_id FROM ideas WHERE id = ?", (plan.get("idea_id"),)).fetchone()
+    project_id = idea["project_id"] if idea else None
+    used = [s["image"]["clip_id"] for s in slides if s["image"].get("source") == "clip"]
+    rows = []
+    if used:
+        rows += conn.execute(f"SELECT * FROM clips WHERE id IN ({','.join('?' * len(used))})", used).fetchall()
+    base = "SELECT * FROM clips WHERE status = 'tagged' AND COALESCE(usable, 1) = 1 AND {} ORDER BY COALESCE(recorded_at, ingested_at) DESC LIMIT ?"
+    if project_id:
+        rows += conn.execute(base.format("project_id = ?"), (project_id, 30)).fetchall()
+        rows += conn.execute(base.format("COALESCE(project_id, -1) <> ?"), (project_id, 20)).fetchall()
+    else:
+        rows += conn.execute(base.format("1 = 1"), (40,)).fetchall()
+    out = {}
+    for r in rows:
+        q = json.loads(r["quality"] or "{}") if r["quality"] else {}
+        if q.get("verdict") == "retake" and r["id"] not in used:
+            continue
+        out.setdefault(r["id"], {"id": r["id"], "title": r["title"] or r["source_name"], "duration": r["duration"]})
+    return out
+
+
+def _mmss(s) -> str:
+    s = int(round(s or 0))
+    return f"{s // 60}:{s % 60:02d}"
+
+
+def revise_prompt(production: dict, slides: list[dict], notes: list[dict], clips: dict[int, dict]) -> str:
+    plan = json.loads(production.get("plan") or "{}")
+    lines = [f"The carousel: {production['title']} (kind: {plan.get('post_type') or 'not set'}), draft "
+             f"v{production['version']}.", f"Purpose: {plan.get('purpose') or '-'}", "Slides now:"]
+    for n, s in enumerate(slides, 1):
+        lines.append(f"  {n}. [{s['role']}] {s['heading'] or '(no heading)'}" + (f" | {s['body']}" if s["body"] else "")
+                     + f" | picture: {picture_text(s['image'], clips)}")
+    lines.append(f"Caption now: {production.get('caption') or '(none)'}")
+    lines.append("Bryan's notes:")
+    for note in notes:
+        lines.append(f"  note {note['id']}" + (f" (slide {note['slide']})" if note.get("slide") else "")
+                     + f": {note['body']}")
+    lines.append("Clips from Urban Makers' own footage you may take stills from (id, title, length):")
+    lines += [f"  clip {c['id']}: \"{c['title'] or 'untitled'}\", {_mmss(c['duration'])}" for c in clips.values()] \
+        or ["  (none: keep text-only slides)"]
+    return "\n".join(lines)
+
+
+def _context_text() -> str:
+    import cloud_sync
+    import content_plan
+    try:
+        api = cloud_sync.Client() if cloud_sync.enabled() else None
+    except Exception:
+        api = None
+    return content_plan.context_text(api)
+
+
+def revise(conn, production: dict, slides: list[dict], notes: list[dict], client=None) -> dict:
+    """One Claude call: the slides (and caption, when a note asks) changed as the notes say.
+    Returns {slides, caption, summary, notes_addressed}."""
+    import anthropic
+
+    import llm
+    import playbook
+    import usage
+    clips = _clips(conn, production, slides)
+    system = (_REVISE_SYSTEM.replace("{brands}", settings.brands_text()).replace("{playbook}", playbook.text())
+              .replace("{content_plan}", _context_text()))
+    client = client or anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY or None)
+    response = llm.final_message(
+        client, model=settings.CLAUDE_MODEL, max_tokens=24000,
+        betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+        output_config={"effort": "high", "format": {"type": "json_schema", "schema": REVISE_SCHEMA}},
+        system=system, messages=[{"role": "user", "content": revise_prompt(production, slides, notes, clips)}])
+    usage.record("carousel", f"production:{production['id']}", response)
+    if response.stop_reason in ("refusal", "max_tokens"):
+        raise RuntimeError(f"Claude couldn't revise the slides ({response.stop_reason})")
+    answer = json.loads(next(b.text for b in response.content if b.type == "text"))
+    new = plan_slides(answer.get("slides"), slides, clips)
+    if len(new) < 2:
+        raise RuntimeError("Claude's revision had no slides; send it back again")
+    ids = {n["id"] for n in notes}
+    return {"slides": new, "caption": _text(answer.get("caption"), 4000) if answer.get("caption_changed") else "",
+            "summary": _text(answer.get("summary"), 600),
+            "notes_addressed": [{"note_id": a["note_id"], "how": _text(a.get("how"), 300)}
+                                for a in answer.get("notes_addressed", []) if a.get("note_id") in ids]}
+
+
+# ── Files ─────────────────────────────────────────────────────────────────────
+
+def files(row) -> list[Path]:
+    """The current draft's PNGs, in order (only files Studio rendered)."""
+    data = current(row)
+    out = []
+    for f in data.get("files") or []:
+        p = Path(f)
+        try:
+            p.resolve().relative_to(RENDERS.resolve())
+        except ValueError:
+            continue
+        if p.is_file():
+            out.append(p)
+    return out
+
+
+def caption_text(row) -> str:
+    return (row["caption"] or "").strip() + "\n"
+
+
+def download_files(row) -> list[tuple[str, Path]]:
+    """For the Review download: 01.png, 02.png ... (and the caption, written next to them)."""
+    pngs = files(row)
+    if not pngs:
+        return []
+    out = [(p.name, p) for p in pngs]
+    cap = pngs[0].parent / "caption.txt"
+    cap.write_text(caption_text(row), encoding="utf-8")
+    out.append(("caption.txt", cap))
+    return out

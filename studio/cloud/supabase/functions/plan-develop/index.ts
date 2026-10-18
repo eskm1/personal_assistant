@@ -2,6 +2,8 @@
 // POST {job_id}            -> {job_id} | {job_id, already: true}   runs a queued develop job
 // Claude refines one idea's plan and storyboard (plan.develop): filmed shots and shots with
 // footage are kept, unfilmed shots it didn't keep are deleted, new ones inserted, positions 1..n.
+// A carousel (format 'carousel') gets its slides written instead ("Write slides"): a cover,
+// the points and the ask, each with a picture the team picked or a still from a clip Studio has.
 import { ask } from "../_shared/claude.ts";
 import { check, db, requireMember } from "../_shared/db.ts";
 import { background, HttpError, idParam, json, readJson, serve } from "../_shared/http.ts";
@@ -16,7 +18,11 @@ import {
   shotState,
   text,
 } from "../_shared/plan.ts";
-import { DEVELOP_SCHEMA, DEVELOP_SYSTEM, renderSystem } from "../_shared/prompts.ts";
+import { DEVELOP_SCHEMA, DEVELOP_SYSTEM, renderSystem, SLIDES_SCHEMA, SLIDES_SYSTEM } from "../_shared/prompts.ts";
+import { type ClipRow, planSlides, slidesPrompt, storedSlides } from "../_shared/slides.ts";
+
+// Clips a carousel may take stills from: the project's own, then recent ones from other projects.
+const PROJECT_CLIPS = 30, OTHER_CLIPS = 20;
 
 const MAX_REQUEST = 2000;
 const OPEN_STATES = ["queued", "running"];
@@ -111,6 +117,7 @@ async function develop(ideaId: number, request: string, deadline: number) {
     "read idea",
   ) as (DevelopIdea & { id: number; project_id: number }) | null;
   if (!idea) throw new JobError("The idea was deleted");
+  if (idea.format === "carousel") return writeSlides(idea, request, deadline);
   const [projectRes, commentsRes, shots, context] = await Promise.all([
     db().from("projects").select("name, brief").eq("id", idea.project_id).maybeSingle(),
     db().from("comments").select("author_name, body").eq("idea_id", ideaId).order("id", { ascending: false })
@@ -132,6 +139,8 @@ async function develop(ideaId: number, request: string, deadline: number) {
   });
 
   const fields = ideaFields(result.idea, { brand: idea.brand, format: idea.format, title: idea.title });
+  // A Reel stays a Reel (its shots are planned): a carousel is made as one from the start.
+  if (fields.format === "carousel") fields.format = idea.format as typeof fields.format;
   const { music: newMusic, post_type: newType, ...ideaUpdate } = fields;
   // The kind is filled in when it's empty; one already set stays (it may be someone's choice).
   const kind = !idea.post_type && newType ? { post_type: newType } : {};
@@ -169,4 +178,70 @@ async function develop(ideaId: number, request: string, deadline: number) {
     kept: plan.update.map((u) => u.id),
     usage,
   };
+}
+
+/** The usable clips a carousel may take stills from (no retakes). */
+async function carouselClips(projectId: number): Promise<ClipRow[]> {
+  const cols = "id, title, duration, thumb_path, project_id, verdict, usable";
+  const [own, other] = await Promise.all([
+    db().from("clips").select(cols).eq("project_id", projectId).order("recorded_at", {
+      ascending: false,
+      nullsFirst: false,
+    })
+      .limit(PROJECT_CLIPS * 2),
+    db().from("clips").select(cols).or(`project_id.is.null,project_id.neq.${projectId}`)
+      .order("recorded_at", { ascending: false, nullsFirst: false }).limit(OTHER_CLIPS * 2),
+  ]);
+  const fine = (rows: ClipRow[]) => rows.filter((c) => c.verdict !== "retake" && c.usable !== false);
+  return [
+    ...fine(check(own, "read clips") as ClipRow[]).slice(0, PROJECT_CLIPS),
+    ...fine(check(other, "read clips") as ClipRow[]).slice(0, OTHER_CLIPS),
+  ];
+}
+
+/** "Write slides": a carousel's cover, points and ask (plus its caption), in Bryan's voice. */
+async function writeSlides(
+  idea: DevelopIdea & { id: number; project_id: number },
+  request: string,
+  deadline: number,
+) {
+  const [projectRes, commentsRes, slidesRes, clips, context] = await Promise.all([
+    db().from("projects").select("name, brief, standing").eq("id", idea.project_id).maybeSingle(),
+    db().from("comments").select("author_name, body").eq("idea_id", idea.id).order("id", { ascending: false })
+      .limit(20),
+    db().from("ideas").select("slides, status, production").eq("id", idea.id).maybeSingle(),
+    carouselClips(idea.project_id),
+    loadContext(),
+  ]);
+  const project = check(projectRes, "read project") as { name: string; brief: string; standing: string | null } | null;
+  const comments = check(commentsRes, "read comments") as { author_name: string; body: string }[];
+  const row = check(slidesRes, "read slides") as
+    | { slides: unknown; status: string; production: unknown }
+    | null;
+  // Once made, the draft's slides change in Review (Send back with notes), not here.
+  if (row && (row.status === "made" || row.production)) {
+    throw new JobError("This carousel is in Review now: send the draft back with notes there to change its slides");
+  }
+  const current = storedSlides(row?.slides);
+
+  const { result, usage } = await ask({
+    system: renderSystem(SLIDES_SYSTEM, context.brands, context.playbook, context.contentPlan),
+    user: slidesPrompt(project, idea, current, clips, comments, request, idea.project_id),
+    schema: SLIDES_SCHEMA,
+    effort: "high",
+    maxTokens: 24000,
+    cutOffMessage: "Claude's answer was cut off; try a shorter request",
+    deadline,
+  });
+  const plan = planSlides(result, current, clips, idea.title);
+  if (plan.slides.length < 2) throw new JobError("Claude didn't write any slides; try again");
+  const { post_type: newType, ...fields } = plan.idea;
+  // The kind is filled in when it's empty; one already set stays (it may be someone's choice).
+  const kind = !idea.post_type && newType ? { post_type: newType } : {};
+  const updated = check(
+    await db().from("ideas").update({ ...fields, ...kind, slides: plan.slides }).eq("id", idea.id).select("id"),
+    "save slides",
+  ) as { id: number }[];
+  if (!updated.length) throw new JobError("The idea was deleted");
+  return { changes: plan.changes, slides: plan.slides.length, usage };
 }

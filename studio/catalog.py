@@ -242,6 +242,9 @@ _ADDED_COLUMNS = {
         "error": "TEXT",  # why the last edit failed, if it did
         "review": "TEXT",          # JSON: Studio's read of a draft (draft_review.py)
         "review_version": "INTEGER",  # the draft version that read describes
+        # JSON, carousels only (format 'carousel'): the current draft's slides and their
+        # rendered PNGs {slides: [...], files: [...], summary, notes_addressed} (carousel.py)
+        "slides": "TEXT",
     },
     "ideas": {
         "wishlist": "TEXT",     # JSON: shots Bryan could film to make the idea stronger
@@ -258,8 +261,10 @@ _ADDED_COLUMNS = {
         "remote_id": "INTEGER",  # its row in the online planner (cloud_sync.py)
         "folder": "TEXT",        # its post folder in the inbox (Inbox/<project>/<folder>/), if it has one
         "post_type": "TEXT",     # knowhow | ideas | onsite | finished | offer: the job the post does (content_plan.py)
+        "slides": "TEXT",        # JSON: a carousel's slides, as in the planner (carousel.py)
     },
-    "feedback": {"author": "TEXT"},
+    "feedback": {"author": "TEXT",
+                 "slide": "INTEGER"},  # a carousel note about one slide (1 = the cover), if any
     "shots": {"camera": "TEXT",  # iphone | zfc | gopro | any: which of the team's cameras films it
               "remote_id": "INTEGER"},
     # remote_id: the row's id in the online planner, when planning is online (cloud_sync.py).
@@ -372,15 +377,16 @@ def unfinished(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 # ── Review (dashboard) ────────────────────────────────────────────────────────
 
 def add_feedback(conn: sqlite3.Connection, target: str, target_id: int, body: str,
-                 at_seconds: float | None = None, remember: bool = False, author: str | None = None) -> int:
+                 at_seconds: float | None = None, remember: bool = False, author: str | None = None,
+                 slide: int | None = None) -> int:
     version = 0
     if target == "production":
         row = conn.execute("SELECT version FROM productions WHERE id = ?", (target_id,)).fetchone()
         version = row["version"] if row else 0
     cur = conn.execute(
-        """INSERT INTO feedback (target, target_id, version, at_seconds, body, remember, author, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (target, target_id, version, at_seconds, body, int(remember), author, now()),
+        """INSERT INTO feedback (target, target_id, version, at_seconds, body, remember, author, slide, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (target, target_id, version, at_seconds, body, int(remember), author, slide, now()),
     )
     conn.commit()
     return cur.lastrowid
@@ -388,7 +394,7 @@ def add_feedback(conn: sqlite3.Connection, target: str, target_id: int, body: st
 
 def feedback_for(conn: sqlite3.Connection, target: str, target_id: int) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT * FROM feedback WHERE target = ? AND target_id = ? ORDER BY version, COALESCE(at_seconds, 1e9), id",
+        "SELECT * FROM feedback WHERE target = ? AND target_id = ? ORDER BY version, COALESCE(at_seconds, slide, 1e9), id",
         (target, target_id),
     ).fetchall()
 

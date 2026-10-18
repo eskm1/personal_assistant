@@ -4,11 +4,15 @@
 // drops are retried with backoff and resumed when the phone comes back online or the
 // page becomes visible again. Uploads keep going while you move around the planner;
 // the tray at the bottom shows them. Then shot_uploads (live) says what Studio did with it.
+// Photos for carousel slides go the same way (POST with idea_id instead of shot_id); Studio
+// keeps them as JPEGs (an iPhone's HEIC converted) and answers with the photo's id and preview.
 import { $, cfg, esc, sb, state, toast, store, recall, plural, httpUrl, underPlan, laptopOn, ownerName } from "./core.js";
 
 const MAX_SIZE = 8 * 1024 ** 3;
 const VIDEO_EXT = /\.(mp4|mov|m4v|mts|m2ts|avi|mkv|3gp|webm|insv|lrv|mxf|hevc)$/i;
-const EXT_TYPE = { mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", mts: "video/mp2t", m2ts: "video/mp2t", avi: "video/x-msvideo", mkv: "video/x-matroska", "3gp": "video/3gpp", webm: "video/webm" };
+const PHOTO_EXT = /\.(jpe?g|png|heic|heif)$/i;
+const MAX_PHOTO = 60 * 1024 ** 2;
+const EXT_TYPE = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", heic: "image/heic", heif: "image/heif", mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", mts: "video/mp2t", m2ts: "video/mp2t", avi: "video/x-msvideo", mkv: "video/x-matroska", "3gp": "video/3gpp", webm: "video/webm" };
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
 // Where the upload API lives. "" in config = the same origin (the planner served by the
@@ -126,6 +130,19 @@ function guessType(file) {
   return EXT_TYPE[ext] || "application/octet-stream";
 }
 const isVideo = (f) => /^video\//.test(f.type || "") || VIDEO_EXT.test(f.name || "");
+export const isPhoto = (f) => /^image\/(jpeg|png|heic|heif)/.test(f.type || "") || PHOTO_EXT.test(f.name || "");
+
+// One photo for a carousel slide. onDone({id, thumb_path, width, height}) once Studio has it.
+export function addPhoto(ideaId, file, label, onDone) {
+  if (!isPhoto(file)) { toast(`“${file.name}” isn't a photo Studio can use (JPEG, PNG or HEIC).`, 6000); return false; }
+  if (file.size > MAX_PHOTO) { toast(`“${file.name}” is over 60 MB, too big for a slide.`, 6000); return false; }
+  if (!file.size) { toast(`“${file.name}” is empty.`); return false; }
+  ups.push({ key: ++seq, file, shotId: null, photo: { ideaId: Number(ideaId), onDone }, label: label || "", id: null, offset: 0, chunk: 8 * 1024 ** 2, state: "queued", error: "", speed: 0, sent: 0, tries: 0, row: null });
+  trayOpen = true;
+  render();
+  pump();
+  return true;
+}
 
 export function addFiles(shotId, files, label = "") {
   let added = 0;
@@ -168,7 +185,8 @@ class NetError extends Error {}
 
 const url = (path) => `${studioBase() ?? ""}${path}`;
 
-// fetch for the small JSON calls.
+// fetch for the small JSON calls (also stills and clip moments for carousel slides).
+export async function studioApi(method, path, body) { return api(method, path, body); }
 async function api(method, path, body, retried = false) {
   let res;
   try {
@@ -247,7 +265,9 @@ async function run(u) {
     if (u.cancelled) return;
     try {
       if (!u.id) {
-        const r = await api("POST", "/api/uploads", { shot_id: u.shotId, name: u.file.name, size: u.file.size, type: guessType(u.file) });
+        const r = await api("POST", "/api/uploads", u.photo
+          ? { idea_id: u.photo.ideaId, name: u.file.name, size: u.file.size, type: guessType(u.file) }
+          : { shot_id: u.shotId, name: u.file.name, size: u.file.size, type: guessType(u.file) });
         u.id = r.id;
         u.offset = Number(r.offset) || 0;
         if (Number(r.chunk) > 0) u.chunk = Math.min(Number(r.chunk), 16 * 1024 ** 2);
@@ -296,7 +316,7 @@ async function run(u) {
       if (status === 404 && u.id && !u.restarted) { u.id = null; u.restarted = true; continue; } // Studio forgot it: start again (it resumes if it can)
       if (FAIL_TEXT[status] || (status >= 400 && status < 500)) {
         u.state = "failed";
-        u.error = FAIL_TEXT[status] || err.message;
+        u.error = (u.photo && status !== 401 ? "" : FAIL_TEXT[status]) || err.message;
         render();
         return;
       }
@@ -319,11 +339,23 @@ function finish(u, r) {
   u.state = "done";
   u.speed = 0;
   u.error = "";
+  if (u.photo) { donePhoto(u, r); return; }
   u.row = u.row || { state: r.state || "received" };
   render();
   // The live update on shot_uploads normally arrives; read it once in case it didn't.
   setTimeout(() => refreshRow(u), 1500);
   document.dispatchEvent(new CustomEvent("studio:refresh"));
+}
+
+// A photo: Studio's answer names it; put it on the slide.
+async function donePhoto(u, r) {
+  let photo = r?.photo;
+  if (!photo && u.id) photo = (await api("GET", `/api/uploads/${encodeURIComponent(u.id)}`).catch(() => ({}))).photo;
+  u.row = photo ? { state: "ingested" } : { state: "failed", error: "Studio didn't keep the photo; try again" };
+  render();
+  if (photo) {
+    try { await u.photo.onDone(photo); } catch (err) { toast(`Couldn't put the photo on the slide: ${err.message}`, 6000); }
+  }
 }
 
 async function refreshRow(u) {
@@ -386,7 +418,8 @@ function stateText(u) {
   if (u.state === "failed") return `Couldn't upload: ${u.error}`;
   if (u.state === "cancelled") return "Cancelled";
   const r = u.row?.state;
-  if (r === "ingested") return "Done: it's on the shot";
+  if (u.photo && !r) return "Done: Studio is saving the photo";
+  if (r === "ingested") return u.photo ? "Done: it's on the slide" : "Done: it's on the shot";
   if (r === "failed") return `Uploaded, but Studio couldn't use it: ${u.row.error || "unknown error"}`;
   return laptopOn() || studioBase() === "" ? "Done: Studio is checking it" : "Done: Studio checks it when it's back on";
 }
@@ -413,7 +446,7 @@ function render() {
   const total = active.reduce((n, u) => n + u.file.size, 0);
   const sent = active.reduce((n, u) => n + u.offset + u.sent, 0);
   const head = active.length
-    ? `Uploading ${plural(active.length, "video")} · ${total ? Math.floor((sent / total) * 100) : 0}%`
+    ? `Uploading ${plural(active.length, active.every((x) => x.photo) ? "photo" : "video")} · ${total ? Math.floor((sent / total) * 100) : 0}%`
     : `${plural(ups.length, "upload")} finished`;
   const iosNote = isIOS && active.length && recall("studio.iosUploadNote") !== "1";
   tray.hidden = false;

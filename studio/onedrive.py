@@ -9,7 +9,8 @@ folder (STUDIO_ONEDRIVE_INBOX). The server has no OneDrive app, so this module:
      OneDrive original into the archive folder (STUDIO_ONEDRIVE_ARCHIVE\\<YYYY-MM>\\...)
      so OneDrive keeps a backup and the inbox only shows what's still waiting;
   2. copies every approved reel to the "ready to post" folder (STUDIO_ONEDRIVE_READY),
-     so it can be posted straight from the phone's OneDrive app.
+     so it can be posted straight from the phone's OneDrive app; an approved carousel goes
+     there as a folder of its own: "<title> (<id>)/01.png, 02.png ... caption.txt".
 
 Nothing is ever deleted from OneDrive: originals are only moved to the archive.
 rclone keeps the OneDrive sign-in fresh by itself (in rclone.conf, set up by
@@ -361,18 +362,42 @@ def pull(max_files: int = FILES_PER_PULL, budget: float = PULL_BUDGET) -> list[s
 
 # ── Push: approved reels -> "ready to post" folder ────────────────────────────
 
-def _ready_name(title: str, production_id: int, suffix: str) -> str:
-    """A file name OneDrive accepts: no \\ / : * ? " < > | and no trailing dot or space."""
+def _ready_name(title: str, production_id: int, suffix: str | None) -> str:
+    """A file name OneDrive accepts: no \\ / : * ? " < > | and no trailing dot or space.
+    suffix None = a folder's name (a carousel)."""
     safe = re.sub(r'[\\/:*?"<>|#%\x00-\x1f]+', " ", title or "")
     safe = re.sub(r"\s+", " ", safe).strip(" .")[:80].strip(" .") or "Reel"
-    return f"{safe} ({production_id}){suffix or '.mp4'}"
+    return f"{safe} ({production_id})" + ("" if suffix is None else suffix or ".mp4")
+
+
+def _carousel_item(row, pushed: dict) -> dict | None:
+    """An approved carousel's slides and caption, if they aren't in the ready folder as they are now."""
+    import hashlib
+
+    import carousel
+    pngs = carousel.files(row)
+    if not pngs:
+        return None
+    caption = carousel.caption_text(row)
+    sig = "|".join([*(f"{p}:{p.stat().st_size}:{int(p.stat().st_mtime)}" for p in pngs),
+                    hashlib.sha256(caption.encode()).hexdigest()[:16]])
+    if pushed.get(str(row["id"]), {}).get("sig") == sig:
+        return None
+    return {"id": row["id"], "files": [str(p) for p in pngs], "caption": caption, "sig": sig,
+            "name": _ready_name(row["title"], row["id"], None)}
 
 
 def ready_to_push(conn) -> list[dict]:
     """Approved productions whose current video isn't in the ready folder yet.
-    A reel re-approved after changes is copied again (its video changed)."""
+    A reel re-approved after changes is copied again (its video changed); so is a
+    carousel whose slides or caption changed."""
     pushed = _state().get("pushed", {})
     items = []
+    for row in conn.execute("SELECT * FROM productions WHERE status = 'approved' AND format = 'carousel' "
+                            "AND slides IS NOT NULL ORDER BY id").fetchall():
+        item = _carousel_item(row, pushed)
+        if item:
+            items.append(item)
     for row in conn.execute("SELECT id, title, video_path FROM productions WHERE status = 'approved' "
                             "AND video_path IS NOT NULL AND video_path != '' ORDER BY id").fetchall():
         path = Path(row[2])
@@ -392,10 +417,13 @@ def _push(items: list[dict]) -> list[str]:
     done, problems = [], []
     with _pull_lock:
         for item in items:
-            size = Path(item["path"]).stat().st_size if Path(item["path"]).exists() else 0
             try:
-                _run(["copyto", item["path"], _remote(settings.ONEDRIVE_READY, item["name"])],
-                     timeout=600 + size / 1_000_000)
+                if item.get("files"):
+                    _push_folder(item)
+                else:
+                    size = Path(item["path"]).stat().st_size if Path(item["path"]).exists() else 0
+                    _run(["copyto", item["path"], _remote(settings.ONEDRIVE_READY, item["name"])],
+                         timeout=600 + size / 1_000_000)
             except OneDriveError as e:
                 problems.append(str(e))
                 continue
@@ -406,6 +434,18 @@ def _push(items: list[dict]) -> list[str]:
     if problems:
         raise OneDriveError(problems[0])
     return done
+
+
+def _push_folder(item: dict) -> None:
+    """A carousel: its slides (01.png, 02.png ...) and caption.txt into a folder of its own
+    in the ready folder, overwriting an earlier version's files of the same name."""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="studio-ready-") as tmp:
+        folder = Path(tmp)
+        for f in item["files"]:
+            shutil.copyfile(f, folder / Path(f).name)
+        (folder / "caption.txt").write_text(item["caption"], encoding="utf-8")
+        _run(["copy", str(folder), _remote(settings.ONEDRIVE_READY, item["name"])], timeout=600)
 
 
 def push_ready(conn) -> list[str]:

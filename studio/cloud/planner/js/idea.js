@@ -6,9 +6,13 @@ import {
   nameOf, state, pbarHTML, prepShots, progress, bestTake, takeRetake, takeFlags, retakeBadge, signPaths, stillUrl,
   takePaths, jobView, jobActive, kickDevelop, laptopWait, httpUrl, httpsUrl, openModal, closeModal, syncInert,
   missingTable, dayLabel, folderLineHTML, pageMode, PHONE, POST_TYPES, POST_TYPE, KIND_INFO, kindDot, sentence,
+  isCarousel, REEL_FORMATS, schema,
 } from "./core.js";
 import { plan } from "./board.js";
 import { uploadButtonsHTML, rememberShot } from "./upload.js";
+import {
+  prepSlides, slidePaths, slidesStoryHTML, slidesFieldHTML, writeSlidesHTML, saveSlideField, slidesClick, slidesLocked,
+} from "./slides.js";
 
 // clips(*): its "flagged" column (needs a retake) comes with a database update.
 const IDEA_SEL = "*,shots(*,takes(*,clips(*))),"
@@ -164,7 +168,16 @@ export async function loadIdea(force = false) {
   d.jobs = {};
   for (const j of jobs) if (!d.jobs[j.kind]) d.jobs[j.kind] = j;
   d.canMake = d.shots.some((s) => s.takes.length);
-  await signPaths(d.shots.flatMap((s) => s.takes.flatMap(takePaths))).catch(() => {});
+  // A carousel: its slides (and the titles of the clips its stills come from).
+  d.slidesOnline = "slides" in d; // the carousels database update is in
+  d.slides = prepSlides(d.slides);
+  if (isCarousel(d)) {
+    d.canMake = d.slides.length >= 2;
+    const ids = [...new Set(d.slides.map((x) => x.image?.clip_id).filter((x) => Number.isInteger(x)))];
+    const clips = ids.length ? await sb.from("clips").select("id,title").in("id", ids).then(must).catch(() => []) : [];
+    d.clipTitles = new Map(clips.map((c) => [c.id, c.title]));
+  }
+  await signPaths([...d.shots.flatMap((s) => s.takes.flatMap(takePaths)), ...slidePaths(d.slides)]).catch(() => {});
   if (stale()) {
     if (force && view.id === id) view.forceNext = true;
     return;
@@ -180,9 +193,14 @@ function render(force = false) {
   const d = view.d;
   if (!d) return;
   const jobs = Object.fromEntries(Object.entries(d.jobs).map(([k, j]) => [k, jobView(j)]));
-  const shotsSig = JSON.stringify([d.shots, d.title, jobs.develop?.state, d.shots.map((s) => s.takes.map((t) => stillUrl(...takePaths(t))))]);
+  const shotsSig = JSON.stringify([d.shots, d.title, d.format, d.slides, jobs.develop?.state, d.shots.map((s) => s.takes.map((t) => stillUrl(...takePaths(t)))),
+    d.slides.map((x) => stillUrl(x.image?.thumb_path))]);
   if (force || shotsSig !== view.storySig) {
-    renderStoryboard();
+    if (isCarousel(d)) {
+      const scroll = $("#player-frame").scrollTop;
+      $("#player-frame").innerHTML = slidesStoryHTML(d);
+      $("#player-frame").scrollTop = scroll;
+    } else renderStoryboard();
     view.storySig = shotsSig;
   }
   const sig = JSON.stringify([d, jobs, state.laptop?.last_seen ? Math.floor(Date.parse(state.laptop.last_seen) / 60e3) : 0]);
@@ -242,9 +260,10 @@ function renderStoryboard() {
 }
 
 $("#player-frame").addEventListener("click", (e) => {
-  const go = e.target.closest("[data-goto-shot]");
+  const go = e.target.closest("[data-goto-shot], [data-goto-slide]");
   if (!go) return;
-  const row = document.getElementById(`shot-${Number(go.dataset.gotoShot)}`);
+  const row = go.dataset.gotoSlide ? document.getElementById(`slide-${go.dataset.gotoSlide}`)
+    : document.getElementById(`shot-${Number(go.dataset.gotoShot)}`);
   if (!row) return;
   row.scrollIntoView({ behavior: "smooth", block: "center" });
   row.classList.remove("flash");
@@ -377,12 +396,14 @@ function makeHTML(d) {
   const prod = d.production && typeof d.production === "object" ? d.production : null;
   // "" = the planner is served by the dashboard itself (/plan/): same origin.
   const studio = cfg.studioUrl === "" ? "" : httpUrl(cfg.studioUrl);
+  const carousel = isCarousel(d);
   if (d.status === "made" || prod) {
-    const label = prod?.status ? PRODUCTION[prod.status] || prod.status : "The editor is on it";
+    const label = prod?.status ? PRODUCTION[prod.status] || prod.status : carousel ? "Studio is laying it out" : "The editor is on it";
     const link = (studio || cfg.studioUrl === "") && prod?.id != null
       ? `<a class="btn" href="${esc(`${studio}/#/production/${encodeURIComponent(prod.id)}`)}" target="_blank" rel="noopener noreferrer" title="Opens the draft on the Studio dashboard">Open the draft ↗</a>` : "";
     return `<div class="decision row"><span><strong>In the edit.</strong> ${esc(label)}${prod?.version ? ` · v${esc(prod.version)}` : ""}${prod?.updated_at ? ` <span class="muted small">(${esc(ago(prod.updated_at))})</span>` : ""}</span>${link}</div>`;
   }
+  if (carousel) return makeCarouselHTML(d, owner);
   if (jobActive(job)) {
     return `<div class="decision row"><span class="small"><span class="spin"></span> <strong>Sent to the editor.</strong> ${job.state === "queued" ? esc(laptopWait()) : "Studio is starting the edit."}</span></div>`;
   }
@@ -394,6 +415,20 @@ function makeHTML(d) {
   return `<div class="decision row"><span class="muted small">${esc(ownerName())} sends it to the editor once the footage is in.</span>${failed}</div>`;
 }
 
+// Make this, for a carousel: Studio lays the slides out (job kind 'carousel', the owner only).
+function makeCarouselHTML(d, owner) {
+  const job = jobView(d.jobs.carousel);
+  if (jobActive(job)) {
+    return `<div class="decision row"><span class="small"><span class="spin"></span> <strong>Sent to Studio.</strong> ${job.state === "queued" ? esc(laptopWait()) : "Studio is laying out the slides."}</span></div>`;
+  }
+  const failed = job?.state === "failed" ? `<span class="error-text small">Last try failed: ${esc(job.error || "unknown error")}</span>` : "";
+  if (owner) {
+    return `<div class="decision row"><button class="btn primary" id="plan-make" ${d.canMake ? "" : "disabled"}>Make this</button>
+      <span class="muted small">${d.canMake ? "Studio lays out the slides in the Urban Makers look; the draft arrives in Review." : "Needs slides first (a cover and at least one more)."}</span>${failed}</div>`;
+  }
+  return `<div class="decision row"><span class="muted small">${esc(ownerName())} sends it to Studio once the slides are ready.</span>${failed}</div>`;
+}
+
 function renderPanel() {
   const d = view.d;
   const owner = isOwner();
@@ -403,6 +438,11 @@ function renderPanel() {
     <h3><label for="f-${key}">${esc(label)}</label> <span class="saved" aria-live="polite"></span></h3>
     <textarea id="f-${key}" data-idea-field="${key}" rows="${rows}" maxlength="${max}" data-orig="${esc(d[key])}" placeholder="${esc(ph)}">${esc(d[key])}</textarea></div>`;
   const dismissed = d.status === "dismissed";
+  const carousel = isCarousel(d);
+  // A Reel with shots stays a Reel (and a carousel with slides a carousel) unless it's emptied first.
+  // (Carousels need the database update: until then "slides" isn't there to write.)
+  const formats = carousel ? (d.slides.length ? ["carousel"] : PLAN_FORMATS)
+    : d.shots.length || !schema.slides || !d.slidesOnline ? REEL_FORMATS : PLAN_FORMATS;
   const decision = owner
     ? `<div class="row">
         <div class="seg decision-seg" role="group" aria-label="Decision">${["go", "parked", "proposed"].map((k) =>
@@ -425,8 +465,8 @@ function renderPanel() {
         <label>Arc<select data-idea-field="arc_id">${`<option value="">Unsorted</option>` + d.arcs.map((a) => `<option value="${esc(a.id)}" ${a.id === d.arc_id ? "selected" : ""}>${esc(a.title)}</option>`).join("")}</select></label>
         ${oneBrand ? "" : `<label>Account<select data-idea-field="brand">${options(ACCOUNTS, BRAND, d.brand)}</select></label>`}
         ${"post_type" in d ? `<label class="kind-pick">Kind of post<span class="kind-select">${kindDot(d.post_type)}<select data-idea-field="post_type" aria-describedby="kind-hint">${options(POST_TYPES, POST_TYPE, d.post_type || "", "Not set: Studio picks one")}</select></span></label>` : ""}
-        <label>Format<select data-idea-field="format">${options(PLAN_FORMATS, FORMAT, d.format)}</select></label>
-        <label>Length<span class="num-field"><input type="number" min="3" max="180" step="1" data-idea-field="est_seconds" value="${esc(Math.round(d.est_seconds || 30))}" data-orig="${esc(Math.round(d.est_seconds || 30))}"> s</span></label>
+        <label>Format<select data-idea-field="format" ${carousel && slidesLocked(d) ? "disabled" : ""}>${options(formats, FORMAT, d.format)}</select></label>
+        ${carousel ? `<label>Slides<span class="num-field">${esc(d.slides.length)} slides</span></label>` : `<label>Length<span class="num-field"><input type="number" min="3" max="180" step="1" data-idea-field="est_seconds" value="${esc(Math.round(d.est_seconds || 30))}" data-orig="${esc(Math.round(d.est_seconds || 30))}"> s</span></label>`}
         ${"post_type" in d ? `<p class="kind-hint muted small" id="kind-hint">${kindHint(d.post_type)}</p>` : ""}
         <span class="saved" aria-live="polite"></span>
       </div>
@@ -436,7 +476,9 @@ function renderPanel() {
           <button class="vote${v.mine === -1 ? " on down" : ""}" data-vote="-1" aria-pressed="${v.mine === -1}" title="Not worth it" aria-label="Not worth it, ${v.down.length} so far">👎 ${v.down.length}</button>
           <span class="muted small">${esc(voters)}</span>
         </div></div>
-      ${field("hook", "Hook (first 3 seconds)", "The line or moment that stops the scroll")}
+      ${carousel ? `${field("purpose", "Who it's for and why", "Who should swipe, and what they should do after")}
+      ${slidesFieldHTML(d)}
+      ${writeSlidesHTML(d)}` : `${field("hook", "Hook (first 3 seconds)", "The line or moment that stops the scroll")}
       ${field("purpose", "Who it's for and why", "Who should watch, and what they should think, feel or do after")}
       ${field("cta", "Call to action", "e.g. Save this for your reno", 1, 500)}
       <div class="field"><h3>Shots · ${esc(d.progress.got)}/${esc(d.progress.total)} got</h3>
@@ -445,7 +487,7 @@ function renderPanel() {
           <button class="btn" id="shot-add">+ Add shot</button></div>
       </div>
       ${refineHTML(d)}
-      ${musicHTML(d)}
+      ${musicHTML(d)}`}
       ${field("caption", "Caption", "The Instagram caption, with hashtags", 4, 5000)}
       ${commentsHTML(d.notes)}
       ${makeHTML(d)}`;
@@ -516,7 +558,12 @@ async function saveShotField(el) {
 // Text saves when you click away; selects and ticks save straight away.
 panel().addEventListener("focusout", async (e) => {
   const el = e.target;
-  if (isTextField(el) && (el.dataset.ideaField || el.dataset.shotField) && el.value !== el.dataset.orig) {
+  if (isTextField(el) && el.dataset.slideField && el.value !== el.dataset.orig && view.d) {
+    try {
+      if (await saveSlideField(el, view.d)) flashSaved(el);
+      await loadIdea();
+    } catch (err) { toast(`Couldn't save: ${err.message}`); }
+  } else if (isTextField(el) && (el.dataset.ideaField || el.dataset.shotField) && el.value !== el.dataset.orig) {
     try {
       if (el.dataset.ideaField) await saveIdeaField(el); else await saveShotField(el);
       await loadIdea();
@@ -532,6 +579,7 @@ panel().addEventListener("change", async (e) => {
   try {
     if (el.dataset.ideaField) await saveIdeaField(el);
     else if (el.dataset.shotField != null || el.dataset.shotFilmed != null) await saveShotField(el);
+    else if (el.dataset.slideField && view.d) { if (await saveSlideField(el, view.d)) flashSaved(el); }
     else return;
     await loadIdea();
   } catch (err) { toast(`Couldn't save: ${err.message}`); }
@@ -571,7 +619,7 @@ async function startRefine() {
   box.value = "";
   d.jobs.develop = { id: res?.job_id, kind: "develop", runner: "cloud", state: "running", started_at: new Date().toISOString() };
   render(true);
-  toast("Claude is refining it. About a minute.");
+  toast(isCarousel(d) ? "Claude is writing the slides. About a minute." : "Claude is refining it. About a minute.");
 }
 
 async function moveShot(shotId, delta) {
@@ -593,6 +641,7 @@ panel().addEventListener("click", async (e) => {
   const ds = t.dataset;
   const shotId = Number(t.closest("[data-shot]")?.dataset.shot);
   try {
+    if (await slidesClick(t, d)) { await loadIdea(true); return; }
     if (ds.attach != null) { openPicker(shotId); return; }
     if (t.id === "shot-add") { await addShot(); return; }
     if (t.id === "comment-add") { await addComment(); return; }
@@ -644,8 +693,9 @@ panel().addEventListener("click", async (e) => {
     } else if (t.id === "plan-make") {
       const caption = $("#f-caption")?.value ?? d.caption;
       if (caption !== d.caption) must(await sb.from("ideas").update({ caption }).eq("id", d.id));
-      must(await sb.from("jobs").insert({ kind: "make", runner: "laptop", idea_id: d.id, project_id: d.project_id, state: "queued", payload: { caption } }));
-      toast("Sent to Studio's editor.");
+      const kind = isCarousel(d) ? "carousel" : "make";
+      must(await sb.from("jobs").insert({ kind, runner: "laptop", idea_id: d.id, project_id: d.project_id, state: "queued", payload: { caption } }));
+      toast(kind === "carousel" ? "Sent to Studio to lay out the slides." : "Sent to Studio's editor.");
     } else return;
     await loadIdea(true);
   } catch (err) {
@@ -664,7 +714,7 @@ panel().addEventListener("keydown", (e) => {
   } else if (e.target.id === "refine-request" && ctrlEnter) {
     e.preventDefault();
     startRefine();
-  } else if (e.key === "Enter" && e.target.matches("input[data-idea-field], input[data-shot-field]")) {
+  } else if (e.key === "Enter" && e.target.matches("input[data-idea-field], input[data-shot-field], input[data-slide-field]")) {
     e.target.blur();
   }
 });

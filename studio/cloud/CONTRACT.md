@@ -14,7 +14,7 @@ studio/cloud/
     functions/
       _shared/                prompts, schemas, Claude + DB helpers shared by the functions
       plan-organise/index.ts  brain-dump -> arcs + ideas, then one develop job per new idea
-      plan-develop/index.ts   one idea's full plan + storyboard (also "Refine with Claude")
+      plan-develop/index.ts   one idea's full plan + storyboard (also "Refine with Claude"), or a carousel's slides
       team/index.ts           owner: list members, invite by email, remove
   planner/                    the static web app Netlify serves (no framework, no bundler)
     index.html, app.js, style.css
@@ -54,6 +54,7 @@ progress.
 | develop | cloud | `plan-develop` function, or `plan-organise` (one per new idea) | `{request}` | `{changes}` |
 | music | laptop | any member (insert) | `{}` | the idea's `music` (also written to ideas.music) |
 | make | laptop | owner (insert) | `{caption?}` | `{production_id}` |
+| carousel | laptop | owner (insert), carousel ideas only | `{caption?}` | `{production_id}` (see "Carousels") |
 | ideas | laptop | any member (insert) | `{}` (project_id set) | see "Ideas from new footage" |
 
 A `cloud` job still `running` 4 minutes after `started_at` died with its function (Supabase
@@ -330,3 +331,72 @@ waiting for a decision). `#/content-plan` (More on phones, "Targets and offers" 
 per kind with the total and per-week equivalent, the offers, and the five kinds explained; the owner edits,
 the team reads. Cards show a coloured kind chip. Until the database update the strip stays away and ideas
 load without `post_type`.
+
+## Carousels (migration 20261021000000_carousels.sql)
+
+An idea is a Reel or a **carousel** (`ideas.format = 'carousel'`): 6 to 10 slides of 1080x1350 people swipe
+through, with no shoot. English only; offers only from `content_plan`; never a place name; pictures only from
+Urban Makers' own footage and photos.
+
+**Schema.**
+- `ideas.slides` jsonb null (null for a Reel), checked by `valid_slides()`: at most 12 of
+  `{key, role: cover|point|ask, heading (<= 200), body (<= 800), image}`, with
+  `image = {source: text|clip|photo|concept, clip_id, at, photo_id, thumb_path, note}`. `clip` = a still from a
+  library clip at `at` seconds; `photo` = a photo uploaded to the Studio machine (`photo_id`, 32 hex); `concept` =
+  an AI concept image (the next update; not offered yet); `thumb_path` = a preview in the `thumbs` bucket
+  (`clips/`, `takes/`, `stills/<clip>_<ms>.jpg`, `photos/<photo_id>.jpg`); `note` = what picture would suit.
+  Anyone who can edit ideas edits slides (the planner writes the whole array).
+- Policy "owner queues carousels": jobs insert, owner only, `kind = 'carousel'`, `runner = 'laptop'`,
+  `state = 'queued'`, and `idea_id` must be a carousel.
+
+| kind | runner | queued by | payload | result |
+|---|---|---|---|---|
+| develop | cloud | `plan-develop`, as for Reels | `{request}` | for a carousel: `{changes, slides, usage}` |
+| carousel | laptop | owner (insert; "Make this" on a carousel) | `{caption?}` | `{production_id}` |
+
+**Write slides = plan-develop.** On a carousel idea, `plan-develop` (and the develop job `plan-organise` queues
+for a new carousel idea) writes slides instead of shots: Claude (effort high, `SLIDES_SYSTEM` with brands,
+playbook and the content plan) gets the idea, its current slides with their pictures, the team's comments and
+request, and up to 30 usable clips of the project plus 20 recent ones from elsewhere (no retakes). It returns
+title, kind, purpose, caption and slides (`role, heading, body, keep_image, clip_id, at, image_idea`);
+`planSlides()` (`_shared/slides.ts`) keeps one cover first and the ask last, keeps a picture someone picked
+(`keep_image`), accepts a clip only from the list (its `thumb_path` = the clip's still until Studio takes the
+exact one) and writes `ideas.slides`, `hook` (the cover), `cta` (the ask), `caption`, `purpose`, `post_type`
+(only when empty). A made carousel (status made / production set) is refused: its slides change in Review.
+A Reel never turns into a carousel through a refine. Organise may propose carousels (rarely, Know-how / Ideas /
+Work with us); ideas from footage may too (cloud only), with their footage as the first slides' pictures and a
+queued develop job to write the slides.
+
+**Pictures (Studio machine, uploads.py; planner session, CORS as for uploads).**
+- `POST /api/uploads {idea_id, name, size, type}` (JPEG, PNG or HEIC/HEIF, at most 60 MB) then the same PUTs as
+  a video: once complete the photo is kept as `Photos/<photo_id>.jpg` (HEIC converted with pillow-heif, turned
+  upright, at most 2400 px), its 540 px preview is uploaded to `photos/<photo_id>.jpg`, and the PUT (and GET)
+  answer carries `photo: {id, thumb_path, width, height}`. 415 not a photo (or unreadable), 413 too big, 404 no
+  such idea. Nothing is written to `shot_uploads`. The planner then sets the slide's image.
+- `POST /api/uploads/stills {clip_id, at}` -> `{clip_id, at, taken, thumb_path}`: the sharpest of 7 frames within
+  0.5 s of `at` in the original video (OpenCV), cached full size in `Stills/`, preview to `stills/<clip>_<ms>.jpg`.
+- `GET /api/uploads/clips/<id>/moments` -> `{id, title, duration, moments, frames: [{at, src: data:image/jpeg}]}`.
+
+**Making it (cloud_sync + carousel.py).** The Studio machine claims the `carousel` job, reads the idea's slides
+fresh and files a production (`format 'carousel'`, `status 'planned'`, `plan.slides`), marks the idea made and
+writes `ideas.production`. The editing queue (worker) lays it out: each slide's picture
+(`slide_images.picture()`), one HTML page in the Urban Makers look (fonts bundled in `render/carousel/fonts`,
+green #22302c, amber #f5a524), shot slide by slide to PNG by `render/carousel/shoot.mjs` (puppeteer-core with
+HyperFrames' headless Chrome; every non-file request refused). The cover's words stay inside x 34..1046 (the
+profile grid's 3:4 crop). Files: `Renders/carousel_<id>_v<n>/01.png ...`, `thumb.jpg`; `productions.slides` =
+`{version, slides, files, layout, pictures, summary, notes_addressed}`. Then Studio's read (draft_review.py,
+vision on every slide: cover, legibility, spelling, claims, the ask; fixes name a slide).
+
+**Review.** Feedback first, the slides small (a swipeable tile on a computer, a slide section on a phone);
+notes may name a slide (`feedback.slide`). Send back: Claude revises the slides from the open notes
+(`carousel.revise`, keeps untouched slides and their pictures, changes the caption only when a note asks) and
+lays out version n+1. After each version the Studio machine writes the slides (and caption) to the idea, so the
+planner shows the draft's. `GET /api/production/<id>/download` = the zip (01.png ... caption.txt).
+`/media/production/<id>/slide/<n>` = one slide. Approved: OneDrive `Studio Ready to post/<title> (<id>)/`
+with 01.png ... and caption.txt (copied again when the slides or caption change). The month counts it like a
+Reel (`ideas.production`).
+
+**Concept images plug in at `slide_images.SOURCES`**: a provider class with `key = "concept"`, `mark =
+"Concept"`, `available()` (GEMINI_API_KEY set) and `picture(image, conn)` (draw, check, cache, return a JPEG);
+the layout already shows its mark on the slide. The planner's disabled "AI concept · soon" button and the
+prompts' picture rules are the other two places to change.

@@ -5,6 +5,11 @@ the checks) and writes a short review for Bryan: a one-line verdict, a good/fix 
 for hook, pace, sound, captions and picture, the few changes that matter most (each
 pinned to a moment), and what already works.
 
+A carousel (format 'carousel') gets its own read: Claude looks at every slide image and the
+slide text, and checks the words are big enough to read on a phone, the spelling, that the
+claims are sensible, that the ask uses only the offers listed in the planner, and that no
+place name or address appears. Its fixes name a slide instead of a moment.
+
 One Claude call per draft version, a few cents. A failed review never fails the draft:
 it's logged, the draft stays ready, and the dashboard offers "Get Studio's read".
 Stored as productions.review (JSON) with review_version, the version it describes.
@@ -94,6 +99,151 @@ client's name appears in the on-screen text, captions or hook, that is always a 
 - Only say what the material shows. Never invent facts, numbers, times or problems; if you're \
 unsure something is wrong, leave it out. Use the timestamps given, don't guess new ones.
 - Plain words, no jargon (no "LUFS", "dB", "EDL", "B-roll" or "SNR"). Short sentences."""
+
+
+# ── Carousels ─────────────────────────────────────────────────────────────────
+
+CAROUSEL_AREAS = ["cover", "text", "legibility", "spelling", "claims", "ask", "picture", "caption", "other"]
+CAROUSEL_SCORES = ("cover", "legibility", "spelling", "claims", "ask")
+_slide_no = {"anyOf": [{"type": "integer"}, {"type": "null"}]}
+CAROUSEL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "verdict": {"type": "string"},
+        "scores": {
+            "type": "object",
+            "properties": {k: _score for k in CAROUSEL_SCORES},
+            "required": list(CAROUSEL_SCORES),
+            "additionalProperties": False,
+        },
+        "fixes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "what": {"type": "string"},
+                    "why": {"type": "string"},
+                    "slide": _slide_no,
+                    "area": {"type": "string", "enum": CAROUSEL_AREAS},
+                },
+                "required": ["what", "why", "slide", "area"],
+                "additionalProperties": False,
+            },
+        },
+        "works": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["verdict", "scores", "fixes", "works"],
+    "additionalProperties": False,
+}
+
+_CAROUSEL_SYSTEM = """You review draft Instagram carousels for Bryan, who owns Urban Makers, a \
+renovation company in Singapore. He isn't technical and often reads this on his phone. You get \
+every slide as an image (1080x1350, shown on a phone about 390 points wide), the words on each \
+slide, the post caption, the kind of post, and the offers Urban Makers really makes. Give him a \
+quick, honest read: is it ready to post, and what are the few changes that would make it better.
+
+<content_plan>
+{content_plan}
+</content_plan>
+
+How to answer:
+- verdict: one short line. "Ready to post" when nothing needs changing; "Nearly ready: N things \
+to fix" (N = your fixes) for small fixes; "Needs work: <the main problem in a few words>" when it \
+shouldn't go out as it is.
+- scores: "good" or "fix" for the cover (does slide 1 stop the scroll and say what the post \
+gives), legibility (every word big and clear enough on a phone, enough contrast over pictures, \
+nothing cut off or crowded), spelling (spelling and grammar), claims (sensible and true for a \
+Singapore renovation company: no made-up figures, guarantees or rules) and ask (the last slide's \
+call to action fits the kind of post and offers only what's listed under Offers).
+- fixes: at most 5, the most important first. "what" is the action in at most 12 words, starting \
+with a verb ("Shorten slide 3's text to two lines"). "why" is one plain reason in at most 18 \
+words. slide is the slide number it's about (1 = the cover), or null for the whole post or the \
+caption. area is what it's about.
+- An offer, price, discount, promotion or deadline that isn't in the listed offers is always a \
+fix (area ask). A place name (estate, condo, street, block, town), an address or a client's name \
+on a slide or in the caption is always a fix to remove it.
+- works: 2 to 4 short points on what already works, so it's kept in the next version.
+- Only say what the slides show. Never invent problems; if you're unsure something is wrong, \
+leave it out. Plain words, no jargon. Short sentences."""
+
+
+def _slide_jpegs(paths: list[Path], work: Path) -> list[Path]:
+    """Each slide as a small JPEG for Claude to look at (540 px wide is plenty to judge a phone)."""
+    from PIL import Image
+    out = []
+    for n, png in enumerate(paths, 1):
+        jpg = work / f"slide_{n}.jpg"
+        with Image.open(png) as img:
+            img = img.convert("RGB")
+            img.thumbnail((540, 675), Image.LANCZOS)
+            img.save(jpg, "JPEG", quality=85)
+        out.append(jpg)
+    return out
+
+
+def carousel_context(production: dict, data: dict) -> str:
+    import carousel
+    import content_plan
+    plan = json.loads(production.get("plan") or "{}")
+    kind = content_plan.KINDS.get(plan.get("post_type") or "")
+    lines = [f"Post: {production['title']}, a carousel of {len(data['slides'])} slides, draft v{production['version']}.",
+             "Kind of post: " + (f"{kind['label']} (its ask: {kind['ask']})" if kind else "not set"),
+             "Slides (the words on each, and its picture):"]
+    for n, s in enumerate(data["slides"], 1):
+        lines.append(f"  {n}. [{s['role']}] {s['heading']}" + (f" | {s['body']}" if s.get("body") else "")
+                     + f" | picture: {carousel.picture_text(s['image'])}")
+    missing = [p for p in data.get("pictures", []) if p.get("missing")]
+    for p in missing:
+        lines.append(f"  (slide {p['n']} asked for a picture Studio couldn't get, so it's text only: {p['missing']})")
+    lines.append(f"Caption:\n{production.get('caption') or '(none yet)'}")
+    return "\n".join(lines)
+
+
+def _clean_carousel(result: dict, slides: int) -> dict:
+    fixes = []
+    for f in result.get("fixes", [])[:MAX_FIXES]:
+        n = f.get("slide")
+        fixes.append({"what": f.get("what", ""), "why": f.get("why", ""),
+                      "slide": n if isinstance(n, int) and 1 <= n <= slides else None,
+                      "area": f.get("area") if f.get("area") in CAROUSEL_AREAS else "other",
+                      # Everything in a carousel can change in this draft.
+                      "when": "this_draft", "start": None, "end": None, "kind": None})
+    works = [w.strip() for w in result.get("works", []) if w.strip()][:MAX_WORKS]
+    return {"kind": "carousel", "verdict": result.get("verdict", "").strip(),
+            "scores": {k: v for k, v in (result.get("scores") or {}).items() if k in CAROUSEL_SCORES},
+            "fixes": fixes, "works": works}
+
+
+def run_carousel(conn, production: dict, client=None) -> dict:
+    """Studio's read of a carousel's current slides (vision). Raises on failure."""
+    import anthropic
+
+    import carousel
+    import llm
+    import usage
+    data = carousel.current(production)
+    pngs = carousel.files(production)
+    if not pngs or len(pngs) != len(data["slides"]):
+        raise RuntimeError("the carousel's slides haven't been laid out")
+    with tempfile.TemporaryDirectory(prefix="studio-review-") as tmp:
+        content = []
+        for n, jpg in enumerate(_slide_jpegs(pngs, Path(tmp)), 1):
+            content.append({"type": "text", "text": f"Slide {n} of {len(pngs)}"})
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                        "data": base64.standard_b64encode(jpg.read_bytes()).decode()}})
+    content.append({"type": "text", "text": carousel_context(production, data)})
+    client = client or anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY or None)
+    response = llm.final_message(
+        client, model=settings.CLAUDE_MODEL, max_tokens=16000,
+        betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+        output_config={"effort": "low", "format": {"type": "json_schema", "schema": CAROUSEL_SCHEMA}},
+        system=_CAROUSEL_SYSTEM.replace("{content_plan}", carousel._context_text()),
+        messages=[{"role": "user", "content": content}],
+    )
+    usage.record("review", f"production:{production['id']}", response)
+    if response.stop_reason in ("refusal", "max_tokens"):
+        raise RuntimeError(f"Claude couldn't review these slides ({response.stop_reason})")
+    return _clean_carousel(json.loads(next(b.text for b in response.content if b.type == "text")), len(pngs))
 
 
 # ── What the draft contains ───────────────────────────────────────────────────
@@ -241,6 +391,14 @@ def run(conn, production_id: int, client=None) -> dict:
     import playbook
     import usage
     row = conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    if row is not None and row["format"] == "carousel":
+        review = run_carousel(conn, dict(row), client)
+        review["at"] = catalog.now()
+        conn.execute("UPDATE productions SET review = ?, review_version = ? WHERE id = ?",
+                     (json.dumps(review, ensure_ascii=False), row["version"], production_id))
+        conn.commit()
+        log.info("Studio's read of carousel %s v%s: %s", production_id, row["version"], review["verdict"])
+        return review
     if row is None or not row["edl"] or not row["video_path"]:
         raise RuntimeError("there's no finished draft to review")
     production = dict(row)
@@ -349,8 +507,9 @@ def backfill(limit: int = 10, client=None) -> int:
         log.exception("Review backfill couldn't open the catalogue")
         return 0
     try:
-        rows = conn.execute("""SELECT id FROM productions WHERE status = 'ready' AND edl IS NOT NULL
-                                   AND video_path IS NOT NULL
+        rows = conn.execute("""SELECT id FROM productions WHERE status = 'ready'
+                                   AND ((edl IS NOT NULL AND video_path IS NOT NULL)
+                                        OR (format = 'carousel' AND slides IS NOT NULL))
                                    AND (review IS NULL OR review_version IS NULL OR review_version <> version)
                                ORDER BY updated_at DESC LIMIT ?""", (limit,)).fetchall()
         if rows:

@@ -92,7 +92,8 @@ def _schema() -> dict:
                 "properties": {
                     "title": {"type": "string"}, "brand": {"type": "string", "enum": list(settings.BRANDS)},
                     "post_type": {"type": "string", "enum": list(content_plan.KINDS)},
-                    "format": {"type": "string", "enum": ["talking_head", "day_in_the_life", "compilation"]},
+                    "format": {"type": "string", "enum": ["talking_head", "day_in_the_life", "compilation"]
+                               + (["carousel"] if _carousels() else [])},
                     "hook": {"type": "string"}, "purpose": {"type": "string"}, "cta": {"type": "string"},
                     "caption": {"type": "string"}, "est_seconds": {"type": "number"},
                     "shots": {"type": "array", "items": shot},
@@ -134,7 +135,7 @@ starts and ends on whole phrases); a shot still to film has clip_id 0, start 0 a
 exactly what to film. kind: talking, broll, detail, before_after, reaction, screen. framing: wide, \
 medium, close, detail, pov, overhead. camera: {cameras}. Return no new ideas when the footage \
 doesn't support a strong post: fewer, stronger posts beat stretching thin footage.
-- post_type: the kind of post, by the job it does (the content plan, with the message, lists the \
+{carousel}- post_type: the kind of post, by the job it does (the content plan, with the message, lists the \
 five). The footage decides what a post can be; among the posts it supports, prefer the kinds that \
 are short this month.
 - hook: the opening line or visual of the first 3 seconds, quoted from the transcript when possible. \
@@ -158,7 +159,7 @@ def _ask(user: str, ref: str, client=None) -> dict:
     import usage
     client = client or anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY or None)
     system = (_SYSTEM.replace("{brands}", settings.brands_text()).replace("{playbook}", playbook.text())
-              .replace("{count}", str(MAX_NEW_IDEAS))
+              .replace("{count}", str(MAX_NEW_IDEAS)).replace("{carousel}", CAROUSEL_RULE if _carousels() else "")
               .replace("{cameras}", "; ".join(f"{k} = {v}" for k, v in plan.CAMERAS.items())))
     response = llm.final_message(
         client, model=settings.CLAUDE_MODEL, max_tokens=32000,
@@ -171,6 +172,40 @@ def _ask(user: str, ref: str, client=None) -> dict:
     if response.stop_reason == "max_tokens":
         raise RuntimeError("Claude's answer was cut off (max_tokens)")
     return json.loads(next(b.text for b in response.content if b.type == "text"))
+
+
+CAROUSEL_RULE = """- format carousel (rarely): when the footage is a set of clear stills that teach or show \
+something people would save (a finished detail from several angles, the steps of a fix), a carousel \
+of slides can beat a Reel. Its shots are then the slides' pictures, in order (each with clip_id and \
+the moment in start; end as start), on_screen the slide's heading and line its words; the hook \
+is the cover and cta the last slide. Studio writes the slides properly next. Keep it to Know-how, \
+Ideas or Finished homes posts, and only where it clearly suits: most posts stay Reels.
+"""
+
+
+def _carousels() -> bool:
+    """Carousels are online (migration 20261021000000: ideas.slides)."""
+    import cloud_sync
+    return cloud_sync._carousels_online
+
+
+def _carousel_slides(fields: dict, shots: list[dict]) -> list[dict]:
+    """A carousel idea from footage: its shots as first slides (cover, pictures, ask), for
+    "Write slides" to finish (the planner starts it; the pictures are kept)."""
+    import uuid
+    pictured = [s for s in shots if s.get("clip_id")]
+    def image(s):
+        return {"source": "clip", "clip_id": s["clip_id"], "at": round(float(s.get("start") or 0), 1)} if s else {"source": "text"}
+    slides = [{"key": uuid.uuid4().hex[:10], "role": "cover", "heading": fields["hook"][:200] or fields["title"][:200],
+               "body": "", "image": image(pictured[0] if pictured else None)}]
+    for s in shots[:9]:
+        slides.append({"key": uuid.uuid4().hex[:10], "role": "point",
+                       "heading": (s.get("on_screen") or s["description"])[:200], "body": (s.get("line") or "")[:800],
+                       "image": image(s if s.get("clip_id") else None)})
+    if fields.get("cta"):
+        slides.append({"key": uuid.uuid4().hex[:10], "role": "ask", "heading": fields["cta"][:200], "body": "",
+                       "image": {"source": "text"}})
+    return slides[:12]
 
 
 # ── Where the ideas go: the online planner, or this machine's plan ───────────
@@ -248,7 +283,15 @@ class _Cloud:
             "hook": f["hook"], "purpose": f["purpose"], "cta": f["cta"], "caption": f["caption"],
             "est_seconds": f["est_seconds"], "decision": "proposed", "status": "new",
             **({"post_type": f["post_type"]} if f.get("post_type") and _plan_online() else {}),
+            **({"slides": f["slides"]} if f.get("slides") else {}),
             "position": max((i["position"] for i in taken), default=0) + 1})[0]["id"]
+
+    def write_slides(self, ref, idea_id) -> None:
+        """Queue "Write slides" for a carousel from footage (the planner starts it, like a storyboard)."""
+        self.api.insert("jobs", {"kind": "develop", "runner": "cloud", "project_id": ref, "idea_id": idea_id,
+                                 "state": "queued", "payload": {"request": "Write the slides from the footage: keep "
+                                                                "the pictures the current slides have."}},
+                        returning=False)
 
     def add_shots(self, idea_id, shots: list[dict]) -> list[int]:
         if not shots:
@@ -516,13 +559,23 @@ def _apply(store, ref, project: dict, ideas: list[dict], answer: dict, new_ids: 
             "brand": settings.SINGLE_BRAND or (idea.get("brand") if idea.get("brand") in settings.BRANDS else "urban_makers"),
             "post_type": content_plan.clean_type(idea.get("post_type")),
             "format": idea.get("format") if idea.get("format") in ("talking_head", "day_in_the_life", "compilation")
-            else "talking_head",
+            or (idea.get("format") == "carousel" and _carousels() and store.place == "cloud") else "talking_head",
             "hook": _private(idea.get("hook") or "", names), "purpose": idea.get("purpose") or "",
             "cta": _private(idea.get("cta") or "", names), "caption": _private(idea.get("caption") or "", names),
             "est_seconds": idea.get("est_seconds") if isinstance(idea.get("est_seconds"), (int, float))
             and 5 <= idea["est_seconds"] <= 180 else 30}
         for s in shots:
             s["on_screen"] = _private(s["on_screen"], names)
+            s["line"] = _private(s["line"], names)
+        if fields["format"] == "carousel":  # slides, not shots (nothing to film)
+            fields["slides"] = _carousel_slides(fields, shots)
+            idea_id = store.add_idea(ref, arc_id, fields)
+            try:
+                store.write_slides(ref, idea_id)
+            except Exception:
+                log.warning("Couldn't queue Write slides for carousel %s; the planner's button still works", idea_id)
+            result["new_ideas"].append(idea_id)
+            continue
         idea_id = store.add_idea(ref, arc_id, fields)
         try:
             shot_ids = store.add_shots(idea_id, shots)

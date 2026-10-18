@@ -10,6 +10,17 @@ and carry on after a dropped connection:
   GET    /api/uploads/<id>                                      -> {offset, size, state}
   DELETE /api/uploads/<id>                                      cancels an unfinished one
 
+Carousels use the same pieces for photos (cloud/CONTRACT.md, "Carousels"):
+
+  POST   /api/uploads               {idea_id, name, size, type} (a .jpg/.png/.heic photo for a
+                                     carousel slide) -> 201 {id, offset, chunk}; the PUTs as above;
+                                     once complete it's kept as a JPEG (HEIC converted) and the answer
+                                     (and GET) carry photo: {id, thumb_path, width, height}
+  POST   /api/uploads/stills        {clip_id, at} -> {clip_id, at, thumb_path}: the sharpest frame
+                                     near that moment of a library clip, for a slide
+  GET    /api/uploads/clips/<id>/moments -> {id, title, duration, moments, frames}: the clip's
+                                     best moments and a small frame every few seconds, to pick from
+
 Every request carries the planner session (Authorization: Bearer <access token>),
 checked with Supabase (cloud_auth.verify). Pieces collect in ROOT/Uploads/<id>.part
 next to a small <id>.json. A finished file moves to Inbox/<project>/<post folder>/
@@ -36,6 +47,7 @@ import catalog
 import cloud_auth
 import cloud_sync
 import settings
+import slide_images
 from webutil import body, client_ip, db, own_origin
 
 log = logging.getLogger("studio.uploads")
@@ -47,6 +59,7 @@ MAX_SIZE = 8 << 30          # biggest upload
 MIN_FREE = 5 << 30          # disk that must stay free after an upload
 STALE_SECONDS = 3 * 86400   # an unfinished upload untouched this long is removed
 MAX_OPEN = 20               # unfinished uploads per person
+MAX_PHOTO = 60 << 20        # biggest photo for a carousel slide
 # Requests per person per minute (a PUT is 8 MB, so 600 is ~80 MB/s) and new uploads per 10 minutes.
 RATE = {"any": (600, 60), "new": (60, 600)}
 _rate: dict[tuple[str, str], deque] = {}
@@ -236,10 +249,57 @@ def _answer(state: dict, status: int = 200, **extra):
                     "size": state["size"], "state": state["state"], **extra}), status
 
 
+def _idea(idea_id: int) -> dict | None:
+    """The idea (from the planner), or None."""
+    rows = cloud_sync.Client().select("ideas", {"id": f"eq.{idea_id}", "select": "id,title,format,project_id"})
+    return rows[0] if rows else None
+
+
+def _start_photo(user: dict, data: dict):
+    """A photo for a carousel slide: same pieces as a video, kept on the Studio machine."""
+    try:
+        idea_id, size = int(data.get("idea_id")), int(data.get("size"))
+    except (TypeError, ValueError):
+        return _error(400, "idea_id and size are needed")
+    name = safe_name(str(data.get("name") or ""))
+    kind = str(data.get("type") or "")
+    if size <= 0:
+        return _error(400, "the file is empty")
+    if size > MAX_PHOTO:
+        return _error(413, f"That photo is over {MAX_PHOTO >> 20} MB.")
+    if not slide_images.is_photo(name, kind):
+        return _error(415, "Only photos (JPEG, PNG or HEIC) can go on a slide")
+    mine = [s for s in _all() if s["user"] == user["id"] and s["state"] == "uploading"]
+    for s in mine:  # resume
+        if s.get("idea_id") == idea_id and s["name"] == name and s["size"] == size:
+            return jsonify({"id": s["id"], "offset": _received(s), "chunk": CHUNK}), 201
+    if len(mine) >= MAX_OPEN:
+        return _error(429, "You have too many unfinished uploads: finish or cancel some first")
+    if _limited(user["id"], "new"):
+        return _error(429, "Too many new uploads at once: try again in a few minutes")
+    try:
+        idea = _idea(idea_id)
+    except cloud_sync.CloudError as e:
+        log.warning("Photo upload not started: %s", e)
+        return _error(502, "Can't reach the planner's database right now; try again")
+    if idea is None:
+        return _error(404, "That idea isn't in the planner any more")
+    upload_id = str(uuid.uuid4())
+    _part(upload_id).touch()
+    _save({"id": upload_id, "idea_id": idea_id, "shot_id": None, "user": user["id"], "email": user["email"],
+           "name": name, "size": size, "type": kind[:100], "state": "uploading", "created": catalog.now(),
+           "path": None, "kind": "photo"})
+    log.info("Photo upload %s started by %s: %s (%.1f MB) for idea %s", upload_id, user["email"], name, size / 1e6, idea_id)
+    return jsonify({"id": upload_id, "offset": 0, "chunk": CHUNK}), 201
+
+
 @bp.post("/api/uploads")
 def start():
     user = g.planner_user
     data = body()
+    if data.get("idea_id") is not None and data.get("shot_id") is None:
+        cleanup()
+        return _start_photo(user, data)
     try:
         shot_id, size = int(data.get("shot_id")), int(data.get("size"))
     except (TypeError, ValueError):
@@ -329,12 +389,38 @@ def put(upload_id: str):
             return jsonify({"offset": have})
         error = _finish(state)
     if error:
-        return _error(500, error, offset=have)
-    return jsonify({"offset": have, "state": "received"})
+        return _error(415 if state.get("kind") == "photo" else 500, error, offset=have)
+    return jsonify({"offset": have, "state": "received", **({"photo": state["photo"]} if state.get("photo") else {})})
+
+
+def _finish_photo(state: dict) -> str | None:
+    """A whole photo: kept as a JPEG (HEIC converted), its preview uploaded for the planner."""
+    part = _part(state["id"])
+    try:
+        photo = slide_images.save_photo(part)
+    except ValueError as e:
+        state.update(state="failed", error=str(e))
+        _save(state)
+        part.unlink(missing_ok=True)
+        return str(e)
+    thumb = f"photos/{photo['id']}.jpg"
+    try:
+        cloud_sync.Client().upload(thumb, slide_images.preview(photo["path"]))
+    except cloud_sync.CloudError as e:
+        log.warning("Photo %s kept, but its preview didn't upload: %s", photo["id"], e)
+        thumb = None
+    part.unlink(missing_ok=True)
+    state.update(state="received", received=catalog.now(),
+                 photo={"id": photo["id"], "thumb_path": thumb, "width": photo["width"], "height": photo["height"]})
+    _save(state)
+    log.info("Photo upload %s kept as photo %s (%dx%d)", state["id"], photo["id"], photo["width"], photo["height"])
+    return None
 
 
 def _finish(state: dict) -> str | None:
     """The whole file is here: move it into the inbox, pinned to its shot."""
+    if state.get("kind") == "photo":
+        return _finish_photo(state)
     try:
         try:
             shot = _shot(state["shot_id"]) or {}
@@ -375,8 +461,8 @@ def status(upload_id: str):
     state = _mine(upload_id)
     if state is None:
         return _error(404, "No such upload")
-    extra = {}
-    if state["state"] == "received":
+    extra = {"photo": state["photo"]} if state.get("photo") else {}
+    if state["state"] == "received" and state.get("kind") != "photo":
         pin = db().execute("SELECT state, clip_id, error FROM upload_pins WHERE upload_id = ?", (upload_id,)).fetchone()
         if pin and pin["state"] != "received":
             state = {**state, "state": pin["state"]}
@@ -394,12 +480,72 @@ def cancel(upload_id: str):
         if state["state"] != "uploading":
             return _error(409, "That upload has already finished")
         _remove(upload_id)
+    if state.get("kind") == "photo":
+        return jsonify({"ok": True})
     try:
         cloud_sync.Client().request("DELETE", "/rest/v1/shot_uploads", params={"id": f"eq.{upload_id}"})
     except cloud_sync.CloudError as e:
         log.warning("Couldn't remove cancelled upload %s online: %s", upload_id, e)
     log.info("Upload %s cancelled", upload_id)
     return jsonify({"ok": True})
+
+
+# ── Pictures from footage, for carousel slides ───────────────────────────────
+
+@bp.post("/api/uploads/stills")
+def still():
+    """The sharpest frame near a moment of a library clip, for a slide: kept full size on the
+    Studio machine (carousel.py lays it out), a preview uploaded for the planner."""
+    data = body()
+    try:
+        clip_id, at = int(data.get("clip_id")), float(data.get("at") or 0)
+    except (TypeError, ValueError):
+        return _error(400, "clip_id and at are needed")
+    conn = catalog.connect()
+    try:
+        row = conn.execute("SELECT duration FROM clips WHERE id = ?", (clip_id,)).fetchone()
+        if row is None:
+            return _error(404, "That clip isn't in Studio's library")
+        at = min(max(at, 0.0), max((row["duration"] or at) - 0.05, 0.0))
+        try:
+            path, taken = slide_images.clip_still(conn, clip_id, at)
+        except slide_images.Unavailable as e:
+            return _error(404, f"Studio couldn't take a still: {e}")
+    finally:
+        conn.close()
+    thumb = f"stills/{clip_id}_{int(round(at * 1000))}.jpg"
+    try:
+        cloud_sync.Client().upload(thumb, slide_images.preview(path))
+    except cloud_sync.CloudError as e:
+        log.warning("Still of clip %s at %.1fs kept, but its preview didn't upload: %s", clip_id, at, e)
+        return _error(502, "Can't reach the planner's storage right now; try again")
+    # at stays the moment asked for (the still is cached by it); taken is the sharp frame's time
+    return jsonify({"clip_id": clip_id, "at": round(at, 2), "taken": round(taken, 2), "thumb_path": thumb})
+
+
+@bp.get("/api/uploads/clips/<int:clip_id>/moments")
+def moments(clip_id: int):
+    """A clip's best moments (Claude's tags) and its library frames as small images, so a
+    slide's moment can be picked on a phone."""
+    import base64
+    row = db().execute("SELECT id, title, source_name, duration, moments, clip_dir FROM clips WHERE id = ?",
+                       (clip_id,)).fetchone()
+    if row is None:
+        return _error(404, "That clip isn't in Studio's library")
+    try:
+        marks = [{"start": m.get("start"), "end": m.get("end"), "description": m.get("description", "")}
+                 for m in json.loads(row["moments"] or "[]") if isinstance(m, dict)][:12]
+    except ValueError:
+        marks = []
+    frames = []
+    for t, frame in cloud_sync._frames(row["clip_dir"])[:24]:
+        try:
+            data = slide_images.preview(frame, 240)
+        except OSError:
+            continue
+        frames.append({"at": t, "src": "data:image/jpeg;base64," + base64.b64encode(data).decode()})
+    return jsonify({"id": row["id"], "title": row["title"] or row["source_name"], "duration": row["duration"],
+                    "moments": marks, "frames": frames})
 
 
 def _remove(upload_id: str) -> None:
@@ -429,7 +575,7 @@ def cleanup(api=None) -> int:
             if now - touched < STALE_SECONDS:
                 continue
             _remove(state["id"])
-            if state["state"] == "uploading":
+            if state["state"] == "uploading" and state.get("kind") != "photo":
                 n += 1
                 log.info("Upload %s (%s) removed: unfinished for 3 days", state["id"], state["name"])
                 try:

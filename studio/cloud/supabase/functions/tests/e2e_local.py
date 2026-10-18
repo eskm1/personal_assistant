@@ -308,6 +308,60 @@ try:
     ok(new_ideas[2]["arc_id"] == arcs[0]["id"] and new_ideas[2]["position"] == 2,
        f"existing arc reused by key, idea positioned at its end ({new_ideas[2]['arc_id']}, {new_ideas[2]['position']})")
 
+    print("carousels: Write slides")
+    svc("PATCH", f"clips?id=eq.{clip_ids[1]}", {"project_id": project_id, "duration": 30, "thumb_path": f"clips/{clip_ids[1]}.jpg"})
+    cid = svc("POST", "ideas", {"project_id": project_id, "title": "Quiet corner", "format": "carousel",
+                                "created_by": team_id, "slides": [
+                                    {"key": "k1", "role": "cover", "heading": "Old hook", "body": "", "image": {"source": "text"}},
+                                    {"key": "k2", "role": "point", "heading": "Old point", "body": "",
+                                     "image": {"source": "photo", "photo_id": "0123456789abcdef0123456789abcdef",
+                                               "thumb_path": "photos/0123456789abcdef0123456789abcdef.jpg"}}]})[0]["id"]
+    s, body, _ = fn("plan-develop", {"idea_id": cid}, team_tok)
+    j = wait_job(body["job_id"])
+    c = svc("GET", f"ideas?id=eq.{cid}")[0]
+    sl = c["slides"] or []
+    ok(j["state"] == "done" and j["result"].get("slides") == 7 and j["result"].get("usage", {}).get("cost_usd", 0) > 0,
+       f"write slides done ({j['state']} {j['error']} {j['result']})")
+    ok([x["role"] for x in sl] == ["cover"] + ["point"] * 5 + ["ask"] and all(x["key"] for x in sl),
+       f"cover, 5 points, the ask: {[x['role'] for x in sl]}")
+    ok(sl[1]["image"]["source"] == "photo" and sl[1]["image"]["photo_id"] == "0123456789abcdef0123456789abcdef"
+       and sl[2]["image"] == {"source": "clip", "clip_id": clip_ids[1], "at": 3.2, "thumb_path": f"clips/{clip_ids[1]}.jpg",
+                              "note": "a warm lamp beside a reading chair"} and sl[3]["image"] == {"source": "text"},
+       f"pictures: the photo kept, a still from a listed clip, an unknown clip dropped {[x['image'] for x in sl[1:4]]}")
+    ok(c["hook"] == sl[0]["heading"] and c["cta"].startswith("Planning a reno?") and c["caption"].startswith("A quiet corner")
+       and c["post_type"] == "ideas" and c["format"] == "carousel" and c["title"] == "Quiet corner (slides)"
+       and svc("GET", f"shots?idea_id=eq.{cid}") == [], "hook, ask, caption, kind written; still a carousel; no shots")
+    creq = [r for r in mock_requests() if "slides" in r["body"].get("output_config", {}).get("format", {}).get("schema", {})
+            .get("properties", {})][-1]["body"]
+    month = svc("POST", "rpc/content_month", {})
+    ok(creq["output_config"]["effort"] == "high" and "Bryan's voice" in creq["system"] and "4 to 8 point slides" in creq["system"]
+       and "uses ONLY" in creq["system"] and all(o["name"] in creq["system"] for o in offers)
+       and "- ideas (Ideas, to get found)" in creq["system"] and "{content_plan}" not in creq["system"]
+       and "Never name a place" in creq["system"], "slides prompt: voice, kinds and their asks, offers only, no place names")
+    ok('2. [point] Old point | picture: a photo the team uploaded' in creq["messages"][0]["content"]
+       and f'clip {clip_ids[1]}: "edge good"' in creq["messages"][0]["content"]
+       and f'clip {clip_ids[0]}' not in creq["messages"][0]["content"], "prompt lists the slides, the usable clips, no retakes")
+    # Owner-only "Make this" for carousels (the RLS policy), only on a carousel.
+    q = {"kind": "carousel", "runner": "laptop", "project_id": project_id, "idea_id": cid, "state": "queued"}
+    st, _, _ = http("POST", f"{API}/rest/v1/jobs", q, {"apikey": ANON, "authorization": f"Bearer {team_tok}"})
+    ok(st in (401, 403), f"team member can't queue a carousel ({st})")
+    st, _, _ = http("POST", f"{API}/rest/v1/jobs", {**q, "idea_id": ideas[0]["id"]},
+                    {"apikey": ANON, "authorization": f"Bearer {owner_tok}"})
+    ok(st in (401, 403), f"owner can't queue a carousel job for a Reel ({st})")
+    st, made, _ = http("POST", f"{API}/rest/v1/jobs", q, {"apikey": ANON, "authorization": f"Bearer {owner_tok}",
+                                                         "prefer": "return=representation"})
+    ok(st == 201, f"owner queues the carousel ({st} {made})")
+    svc("PATCH", f"ideas?id=eq.{cid}", {"status": "made", "production": {"id": 1, "status": "ready", "version": 1}})
+    s, body, _ = fn("plan-develop", {"idea_id": cid}, team_tok)
+    j = wait_job(body["job_id"])
+    ok(j["state"] == "failed" and "Review" in j["error"] and svc("GET", f"ideas?id=eq.{cid}")[0]["slides"] == sl,
+       f"a made carousel's slides change in Review, not here ({j['error']})")
+    s, body, _ = fn("plan-develop", {"idea_id": ideas[0]["id"], "request": "MOCK:tocarousel"}, team_tok)
+    j = wait_job(body["job_id"])
+    r2 = svc("GET", f"ideas?id=eq.{ideas[0]['id']}&select=format,slides")[0]
+    ok(j["state"] == "done" and r2["format"] == "talking_head" and r2["slides"] is None,
+       f"a Reel stays a Reel when Claude's refine says carousel ({j['error']} {r2})")
+
     print("team")
     s, body, _ = fn("team", None, team_tok, "GET")
     ok(s == 403, f"team member -> 403 on team ({s} {body})")

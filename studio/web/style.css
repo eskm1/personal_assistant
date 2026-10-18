@@ -854,3 +854,32 @@ body:has(.viewer.detail-mode:not([hidden]) .decision-bar:not([hidden])) .toast {
   .post-summary { font-size: 14px; }
   .used-link { min-height: 32px; }
 }
+
+/* ── Carousel drafts: the slides to swipe (a tile on a computer, a section on a phone) ── */
+.viewer.detail-mode .player-frame.carousel { aspect-ratio: auto; overflow: visible; background: none; border: 0; border-radius: 0; }
+.cs-swipe { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.cs-track {
+  display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth; border-radius: 12px;
+  background: #22302c; border: 1px solid #2c3640; scrollbar-width: none; overscroll-behavior-x: contain;
+}
+.cs-track::-webkit-scrollbar { display: none; }
+.cs-track:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cs-slide { flex: 0 0 100%; margin: 0; scroll-snap-align: start; aspect-ratio: 4 / 5; }
+.cs-slide img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.cs-nav { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.cs-step { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: #18181c; color: var(--text); font-size: 20px; line-height: 1; }
+.cs-step:hover { filter: brightness(1.2); }
+.cs-count { font-size: 13px; font-weight: 700; color: #b4b4bc; min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
+.cs-cover { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 10px; }
+.cs-cover-btn { padding: 0; border: 0; background: none; width: 100%; height: 100%; display: block; }
+.slide-chip { white-space: nowrap; }
+.note-slide-pick select { min-height: 40px; max-width: 130px; }
+.slide-words { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 14px; line-height: 1.45; color: #d4d4d8; }
+@media (max-width: 720px) {
+  .viewer.detail-mode .player-frame.carousel { width: 64px; height: 80px; }
+  #slides-sec .cs-track { border-radius: 14px; }
+  #slides-sec .cs-step { width: 48px; height: 48px; }
+  .composer:has(#note-slide) { flex-wrap: wrap; }
+  .note-slide-pick { flex: 1 1 100%; }
+  .note-slide-pick select { max-width: none; width: 100%; }
+}

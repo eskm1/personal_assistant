@@ -25,7 +25,8 @@ const STAGES = [
 ];
 const shell = window.StudioShell;
 const BRAND = { personal: "Personal", urban_makers: "Urban Makers", unsure: "Brand unsure" };
-const FORMAT = { talking_head: "Talking head", day_in_the_life: "Day in the life", compilation: "Compilation", other: "Other" };
+const FORMAT = { talking_head: "Talking head", day_in_the_life: "Day in the life", compilation: "Compilation", other: "Other", carousel: "Carousel" };
+const isCarousel = (d) => d?.kind === "production" && d.format === "carousel";
 const STATUS = {
   ready: "Ready for review", revising: "Revising", producing: "Editing", planned: "Planned",
   approved: "Approved", posted: "Posted", rejected: "Rejected", queued: "Queued", uploading: "Uploading",
@@ -438,7 +439,8 @@ function tileHTML(item, index) {
   const media = thumb
     ? `<img src="${esc(thumb)}" alt="" loading="lazy">`
     : `<div class="placeholder">${item.kind === "inbox" ? `${esc(item.size_mb)} MB<br>in OneDrive` : "No preview yet"}</div>`;
-  const meta = [item.format && FORMAT[item.format], item.duration && `${item.kind === "idea" ? "~" : ""}${mmss(item.duration)}`].filter(Boolean);
+  const meta = [item.format && FORMAT[item.format], item.duration && `${item.kind === "idea" ? "~" : ""}${mmss(item.duration)}`,
+    item.slides_count && `${item.slides_count} slides`].filter(Boolean);
   return `<button class="tile" data-index="${index}" aria-label="${esc(item.title)}">
     ${media}
     <div class="chips">${chips(item, true)}</div>
@@ -1109,6 +1111,7 @@ async function openItem(item) {
   const fresh = !viewerOpen();
   if (fresh) rememberList();
   $("#player-frame").querySelectorAll("video, audio").forEach((m) => m.pause());
+  if (!state.current || state.current.kind !== item.kind || String(state.current.id) !== String(item.id)) state.slideInView = 1;
   state.current = { kind: item.kind, id: item.id };
   state.lastItem = state.current;
   routeTo(`#/${item.kind}/${encodeURIComponent(item.id)}`, fresh);
@@ -1158,6 +1161,11 @@ function renderPlayer(item) {
   const frame = $("#player-frame");
   const video = safeSrc(item.video), original = safeSrc(item.original), thumb = safeSrc(item.thumb);
   frame.classList.remove("playing");
+  frame.classList.toggle("carousel", isCarousel(item));
+  if (isCarousel(item)) {
+    frame.innerHTML = thumb ? `<img class="cs-cover" src="${esc(thumb)}" alt="">` : `<div class="placeholder">No slides yet</div>`;
+    return;
+  }
   if (video && isDetail(item.kind)) return renderTile(item, video, original, thumb);
   if (video) {
     const useOriginal = original && recall("studio.original") === "1";
@@ -1378,8 +1386,9 @@ function renderPanel() {
   }
 
   keepDrafts(["note-body", "caption"], () => {
-    panel.innerHTML = d.kind === "production" ? productionPageHTML(d) : clipPageHTML(d);
+    panel.innerHTML = isCarousel(d) ? carouselPageHTML(d) : d.kind === "production" ? productionPageHTML(d) : clipPageHTML(d);
   });
+  if (isCarousel(d)) renderCarouselTile(d);
   renderTileMeta(d);
   renderHead();
   renderDecisionBar();
@@ -1418,7 +1427,7 @@ function readHTML(d) {
   if (!r) {
     const running = d.review_state === "running";
     const failed = d.review_state === "failed";
-    const canAsk = isOwner() && !running && d.video;
+    const canAsk = isOwner() && !running && (d.video || d.download);
     return `<section class="read-card pending" aria-live="polite">
       <div class="read-head"><span class="eyebrow">Studio's read</span>
         <span class="read-verdict">${running ? `<span class="spin"></span> Reading this draft…` : "Studio's read isn't ready yet"}</span></div>
@@ -1484,7 +1493,7 @@ function noteListHTML(notes, currentVersion, isProduction) {
       n.status === "addressed" ? "done by the editor" : "",
       n.remember ? "in playbook" : "",
     ].filter(Boolean).join(" · ");
-    return `<li class="${esc(n.status)}">${timeChip(n.at_seconds)}<span class="note-text"><span class="note-body">${esc(n.body)}</span>${tags ? `<span class="note-meta">${esc(tags)}</span>` : ""}</span></li>`;
+    return `<li class="${esc(n.status)}">${n.slide ? slideChip(n.slide) : timeChip(n.at_seconds)}<span class="note-text"><span class="note-body">${esc(n.body)}</span>${tags ? `<span class="note-meta">${esc(tags)}</span>` : ""}</span></li>`;
   }).join("")}</ul>`;
 }
 
@@ -1537,6 +1546,173 @@ function resolveBody(d) {
   return resolveHTML(d).replace(/^<div class="box"><h3>Open in DaVinci Resolve<\/h3>/, "<div>");
 }
 const RESOLVE_PEEK = { none: "", building: "Building…", ready: "Ready to download", failed: "Didn't work" };
+
+// ── Carousel drafts: the slides to swipe, Studio's read, notes that can name a slide ──
+
+const CAROUSEL_SCORES = [["cover", "Cover"], ["legibility", "Easy to read"], ["spelling", "Spelling"], ["claims", "Claims"], ["ask", "The ask"]];
+
+// Slides side by side, one at a time in view: swipe on a phone, arrows (or the arrow keys) on a computer.
+function swiperHTML(d, where) {
+  const slides = (d.slides || []).filter((x) => x.image);
+  if (!slides.length) return `<div class="placeholder">${d.status === "failed" ? "No slides" : "Laying out the slides…"}</div>`;
+  return `<div class="cs-swipe" data-swipe="${esc(where)}">
+    <div class="cs-track" tabindex="0" role="group" aria-label="Slides, ${slides.length} of them: swipe sideways">
+      ${slides.map((x) => `<figure class="cs-slide" data-slide-n="${esc(x.n)}"><img src="${esc(safeSrc(x.image))}" alt="Slide ${esc(x.n)}: ${esc(x.heading)}${x.body ? `. ${esc(x.body)}` : ""}" loading="${x.n <= 2 ? "eager" : "lazy"}"></figure>`).join("")}
+    </div>
+    <div class="cs-nav"><button class="cs-step" data-swipe-step="-1" aria-label="Previous slide">‹</button>
+      <span class="cs-count" aria-live="polite">${esc(state.slideInView || 1)} / ${slides.length}</span>
+      <button class="cs-step" data-swipe-step="1" aria-label="Next slide">›</button></div>
+  </div>`;
+}
+
+function renderCarouselTile(d) {
+  const frame = $("#player-frame");
+  frame.classList.add("carousel");
+  if (phone()) {
+    const cover = d.slides?.[0]?.image;
+    frame.innerHTML = cover ? `<button class="cs-cover-btn" data-goto-slides aria-label="Show the slides"><img class="cs-cover" src="${esc(safeSrc(cover))}" alt=""></button>` : `<div class="placeholder"></div>`;
+  } else frame.innerHTML = swiperHTML(d, "tile");
+  wireSwipers();
+}
+
+// Which slide is in view (the note composer pins notes to it).
+function wireSwipers() {
+  for (const track of document.querySelectorAll(".cs-track")) {
+    if (track.dataset.wired) continue;
+    track.dataset.wired = "1";
+    const box = track.closest(".cs-swipe");
+    const count = box.querySelector(".cs-count");
+    const total = track.children.length;
+    const show = () => {
+      const n = Math.min(total, Math.max(1, Math.round(track.scrollLeft / Math.max(1, track.clientWidth)) + 1));
+      count.textContent = `${n} / ${total}`;
+      if (state.slideInView !== n) {
+        state.slideInView = n;
+        const pick = $("#note-slide");
+        if (pick && !pick.dataset.touched) pick.value = String(n);
+      }
+    };
+    track.addEventListener("scroll", () => requestAnimationFrame(show), { passive: true });
+    track.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); e.stopPropagation(); stepSlide(box, e.key === "ArrowRight" ? 1 : -1); }
+    });
+    if (state.slideInView > 1) track.scrollLeft = (state.slideInView - 1) * track.clientWidth;
+  }
+}
+function stepSlide(box, delta) {
+  const track = box.querySelector(".cs-track");
+  track.scrollBy({ left: delta * track.clientWidth, behavior: "smooth" });
+}
+function gotoSlide(n) {
+  state.slideInView = n;
+  const pick = $("#note-slide");
+  if (pick) pick.value = String(n);
+  for (const track of document.querySelectorAll(".cs-track")) track.scrollTo({ left: (n - 1) * track.clientWidth, behavior: "smooth" });
+  const sec = $("#slides-sec");
+  if (sec && phone()) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+document.addEventListener("click", (e) => {
+  const step = e.target.closest("[data-swipe-step]");
+  if (step) { stepSlide(step.closest(".cs-swipe"), Number(step.dataset.swipeStep)); return; }
+  const to = e.target.closest("[data-goto-slide]");
+  if (to) { gotoSlide(Number(to.dataset.gotoSlide)); return; }
+  if (e.target.closest("[data-goto-slides]")) $("#slides-sec")?.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+function slideChip(n, label = "Slide ") {
+  if (!n) return "";
+  return `<button class="time-chip slide-chip" data-goto-slide="${Number(n)}" aria-label="Show slide ${Number(n)}">${label}${Number(n)}</button>`;
+}
+
+function carouselReadHTML(d) {
+  const r = d.review;
+  if (!r) return readHTML(d);
+  const toFix = (r.fixes || []).length;
+  const tone = /^needs work/i.test(r.verdict) ? "needs" : toFix ? "nearly" : "ready";
+  const scores = CAROUSEL_SCORES.filter(([k]) => r.scores?.[k]).map(([k, label]) => {
+    const good = r.scores[k] === "good";
+    return `<span class="score ${good ? "good" : "fix"}" title="${esc(label)}: ${good ? "good" : "needs a fix"}">
+      <span class="score-dot" aria-hidden="true">${good ? "✓" : "!"}</span>${esc(label)}<span class="sr-only">: ${good ? "good" : "fix"}</span></span>`;
+  }).join("");
+  return `<section class="read-card ${tone}">
+    <div class="read-head"><span class="eyebrow">Studio's read</span><span class="read-verdict">${esc(r.verdict)}</span></div>
+    ${scores ? `<div class="scores">${scores}</div>` : ""}
+  </section>`;
+}
+
+function carouselFixesHTML(d) {
+  const r = d.review;
+  if (!r) return "";
+  const fixes = r.fixes || [];
+  if (!fixes.length) return `<section class="d-sec"><h2>Fix before posting</h2><p class="muted">Nothing. Studio found nothing to change.</p></section>`;
+  const added = new Set(d.notes.filter((n) => n.version === d.version).map((n) => n.body.trim()));
+  const ready = d.status === "ready";
+  return `<section class="d-sec"><h2>Fix before posting</h2>
+    ${fixes.map((f, i) => {
+      const action = added.has(String(f.what).trim()) ? `<span class="done-chip">✓ Added</span>`
+        : ready ? `<button class="btn fix-btn" data-fix-note="${i}">Add as note</button>` : "";
+      return `<article class="fix-card"><span class="fix-n" aria-hidden="true">${i + 1}</span>
+        <div class="fix-text"><div class="fix-what">${esc(f.what)}</div><div class="fix-why">${esc(f.why)}</div></div>
+        <div class="fix-actions">${slideChip(f.slide)}${action}</div></article>`;
+    }).join("")}
+  </section>`;
+}
+
+function carouselComposerHTML(d) {
+  const n = (d.slides || []).length;
+  const at = Math.min(Math.max(state.slideInView || 1, 1), Math.max(n, 1));
+  return `<div class="composer">
+      <label class="note-slide-pick"><span class="sr-only">About</span><select id="note-slide" aria-label="Which slide the note is about">
+        <option value="">Whole post</option>${(d.slides || []).map((x) => `<option value="${esc(x.n)}" ${x.n === at ? "selected" : ""}>Slide ${esc(x.n)}</option>`).join("")}</select></label>
+      <label class="grow"><span class="sr-only">Add a note</span>
+        <input id="note-body" maxlength="2000" autocomplete="off" placeholder="What should change? e.g. &quot;Shorter heading&quot;"></label>
+      <button class="btn" id="note-add">Add note</button>
+    </div>`;
+}
+
+function carouselPageHTML(d) {
+  const owner = isOwner();
+  const canDecide = d.status === "ready";
+  const settled = d.status === "approved" || d.status === "rejected";
+  const working = ["revising", "producing", "planned"].includes(d.status);
+  const n = (d.slides || []).length;
+  const failedBox = d.status === "failed" ? `<div class="box state-box bad"><p><strong>Laying out the slides failed:</strong> ${esc(d.error)}</p>
+    ${owner ? `<div class="row"><button class="btn primary" id="retry-edit">Try again</button></div>` : `<p class="muted small">Bryan can try again.</p>`}</div>` : "";
+  const statusBox = canDecide || d.status === "failed" ? "" : `<div class="box state-box"><p>${working
+    ? "Studio is working on the slides. It comes back to To review when the new version is laid out."
+    : `${esc(STATUS[d.status] || d.status)}.${d.status === "approved" ? " The slides and caption are in OneDrive, Studio Ready to post (on the server), and in the download below." : ""}`}</p>
+    ${owner && settled ? `<div class="row"><button class="btn" id="reopen" title="Move it back to To review so you can decide again">Back to review</button></div>` : ""}</div>`;
+  const sub = [d.version ? `v${d.version}` : "", n ? `${n} slides` : "", "carousel"].filter(Boolean).join(" · ");
+  const notesNow = d.notes.filter((x) => x.status === "open").length;
+  const words = (d.slides || []).map((x) => `<li><strong>${esc(x.n)}. ${esc(x.heading)}</strong>${x.body ? ` ${esc(x.body)}` : ""}
+    <span class="muted small"> · ${esc(x.picture)}${x.missing ? ` (couldn't get it: ${esc(x.missing)})` : ""}</span></li>`).join("");
+  const download = d.download ? `<a class="btn" href="${esc(d.download)}" download>Download (.zip)</a>` : "";
+  const folds = [
+    foldHTML("production", "caption", "Post caption", captionPeek(d.caption),
+      `<textarea id="caption" placeholder="The caption you'll post. You have the final say.">${esc(d.caption)}</textarea>
+       <p class="muted small">Keep place names (estates, streets, clients) out of it.</p>
+       <div class="row"><button class="btn" id="caption-save">Save caption</button>${download}</div>`),
+    d.edit_summary ? foldHTML("production", "editor", "What Studio did", "", bullets(sentences(d.edit_summary).map(esc))) : "",
+    n ? foldHTML("production", "words", "The words on each slide", `${n} slides`, `<ol class="slide-words">${words}</ol>`) : "",
+    d.sources?.length ? foldHTML("production", "brief", "Stills taken from", plural(d.sources.length, "clip"),
+      `<ul class="link-list">${d.sources.map((x) => `<li><button class="link" data-open-clip="${esc(x.id)}">${esc(x.title)}</button></li>`).join("")}</ul>`) : "",
+    d.cost && owner ? foldHTML("production", "cost", "Cost", money(d.cost), `<p class="muted small">Claude so far for this carousel: ${esc(money(d.cost))}.</p>`) : "",
+    phone() && canDecide && owner ? foldHTML("production", "more", "More", "", `<div class="more-part"><button class="btn ghost danger" id="decide-reject">Reject this draft</button></div>`) : "",
+  ].join("");
+  return `${titleHTML(d, sub)}
+    ${failedBox}${statusBox}
+    ${n && d.version ? carouselReadHTML(d) : ""}
+    ${carouselFixesHTML(d)}
+    ${phone() && n ? `<section class="d-sec" id="slides-sec"><h2>Slides</h2>${swiperHTML(d, "page")}
+      ${download ? `<div class="row">${download}</div>` : ""}</section>` : ""}
+    ${worksHTML(d)}
+    <section class="d-sec"><h2>Your notes${notesNow ? ` <span class="count-pill">${notesNow}</span>` : ""}</h2>
+      ${noteListHTML(d.notes, d.version, true)}
+      ${carouselComposerHTML(d)}
+      <p class="muted small">A note can be about one slide or the whole post. Send back, and Studio rewrites the slides from your notes and lays them out again.</p>
+    </section>
+    <section class="folds">${folds}</section>`;
+}
 
 function productionPageHTML(d) {
   const owner = isOwner();
@@ -1734,6 +1910,11 @@ function renderTileMeta(d) {
   const el = $("#tile-meta");
   if (!detailMode() || !d) { el.innerHTML = ""; return; }
   let line;
+  if (isCarousel(d)) {
+    line = [d.version ? `v${d.version}` : "", "Carousel", d.slides?.length ? `${d.slides.length} slides` : ""].filter(Boolean).join(" · ");
+    el.innerHTML = `<p>${esc(line)}</p>${d.download ? `<a class="link" href="${esc(d.download)}" download>Download (.zip)</a>` : ""}`;
+    return;
+  }
   if (d.kind === "production") {
     const langs = (d.languages || []).map((l) => LANGUAGE[l] || l).join(" + ");
     line = [d.version ? `v${d.version}` : "", FORMAT[d.format] || d.format, langs].filter(Boolean).join(" · ");
@@ -1902,7 +2083,7 @@ async function detailClick(e) {
       // One of Studio's fixes becomes a note for the editor, pinned to its moment.
       const f = d.review.fixes[Number(fixNote.dataset.fixNote)];
       fixNote.disabled = true;
-      await api(`/api/production/${d.id}/notes`, { body: f.what, at_seconds: f.start });
+      await api(`/api/production/${d.id}/notes`, isCarousel(d) ? { body: f.what, slide: f.slide ?? null } : { body: f.what, at_seconds: f.start });
       await loadDetail();
       sync();
       toast("Added as a note for the editor.");
@@ -1983,6 +2164,7 @@ async function detailClick(e) {
 
 $("#panel").addEventListener("change", async (e) => {
   if (state.current?.kind === "plan") { await planPanelChange(e); return; }
+  if (e.target.id === "note-slide") { e.target.dataset.touched = "1"; return; }
   if (e.target.id === "adopt-project") fillAdoptArcs().catch(() => {});
 });
 
@@ -1991,8 +2173,9 @@ async function addNote() {
   if (!body) { $("#note-body").focus(); return; }
   const video = player();
   const at = video && ($("#note-pin")?.checked ?? true) ? video.currentTime : null;
+  const slide = $("#note-slide") ? Number($("#note-slide").value) || null : undefined;
   await api(`/api/${state.current.kind}/${state.current.id}/notes`, {
-    body, at_seconds: at, remember: !!$("#note-remember")?.checked,
+    body, at_seconds: at, remember: !!$("#note-remember")?.checked, ...(slide !== undefined ? { slide } : {}),
   });
   $("#note-body").value = "";
   await loadDetail();

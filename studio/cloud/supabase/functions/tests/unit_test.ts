@@ -15,11 +15,16 @@ import {
   contentPlanText,
   DEVELOP_SCHEMA,
   DEVELOP_SYSTEM,
+  MAX_SLIDES,
   ORGANISE_NO_SHOTS_SCHEMA,
   ORGANISE_SCHEMA,
   ORGANISE_SYSTEM,
   renderSystem,
+  RULES,
+  SLIDES_SCHEMA,
+  SLIDES_SYSTEM,
 } from "../_shared/prompts.ts";
+import { cleanImage, planSlides, slidesPrompt, storedSlides } from "../_shared/slides.ts";
 
 Deno.test("CORS preflight and errors carry CORS headers", async () => {
   const h = wrap(["POST"], () => {
@@ -218,4 +223,130 @@ Deno.test("ideas carry a kind of post; unknown kinds are dropped", () => {
     "",
   );
   assert(p.includes("kind: knowhow"));
+});
+
+// ── Carousels ────────────────────────────────────────────────────────────────
+
+Deno.test("carousel: format allowed for new ideas, slides schema and system carry the rules", () => {
+  // deno-lint-ignore no-explicit-any
+  const idea = (ORGANISE_NO_SHOTS_SCHEMA as any).properties.ideas.items;
+  assert(idea.properties.format.enum.includes("carousel"));
+  assertEquals(ideaFields({ format: "carousel" }, { brand: "urban_makers" }).format, "carousel");
+  // deno-lint-ignore no-explicit-any
+  const slide = (SLIDES_SCHEMA as any).properties.slides.items;
+  assertEquals(slide.properties.role.enum, ["cover", "point", "ask"]);
+  for (const k of ["keep_image", "clip_id", "at", "image_idea"]) assert(slide.required.includes(k), k);
+  const filled = renderSystem(
+    SLIDES_SYSTEM,
+    "BRANDS-TEXT",
+    "PLAYBOOK-TEXT",
+    contentPlanText({ offers: [{ name: "Site visit", ask: "Book a site visit" }] }),
+  );
+  assert(filled.includes("BRANDS-TEXT") && filled.includes("PLAYBOOK-TEXT"));
+  assert(filled.includes("Bryan's voice") && filled.includes("4 to 8 point slides"));
+  assert(filled.includes("uses ONLY") && filled.includes('- Site visit (ask: "Book a site visit")'));
+  assert(filled.includes("never anyone else's images") && filled.includes("Never name a place"));
+  assert(filled.includes("Ideas (to get found)") || filled.includes("ideas (Ideas"));
+  assert(RULES.includes("carousel for a"));
+});
+
+Deno.test("carousel: planSlides keeps one cover first, the ask last, only real pictures", () => {
+  const current = storedSlides([
+    { key: "a", role: "cover", heading: "Old cover", image: { source: "text" } },
+    {
+      key: "b",
+      role: "point",
+      heading: "Old point",
+      image: { source: "photo", photo_id: "0123456789abcdef0123456789abcdef", thumb_path: "photos/x.jpg" },
+    },
+  ]);
+  const clips = [{ id: 12, title: "Window seat", duration: 20, thumb_path: "clips/12.jpg" }];
+  let n = 0;
+  const plan = planSlides(
+    {
+      title: "  Quiet corner  ",
+      post_type: "ideas",
+      purpose: "p",
+      caption: "c #reno",
+      changes: "Wrote 5",
+      slides: [
+        { role: "point", heading: "Point A", body: "a", keep_image: 2, clip_id: 0, at: 0, image_idea: "" },
+        { role: "ask", heading: "First ask", body: "", keep_image: 0, clip_id: 0, at: 0, image_idea: "" },
+        { role: "cover", heading: "The hook", body: "", keep_image: 0, clip_id: 12, at: 99, image_idea: "seat" },
+        { role: "point", heading: "", body: "", keep_image: 0, clip_id: 0, at: 0, image_idea: "" },
+        { role: "point", heading: "Point B", body: "b", keep_image: 9, clip_id: 555, at: 3, image_idea: "lamp" },
+        {
+          role: "ask",
+          heading: "Planning a reno?",
+          body: "Send us your floor plan.",
+          keep_image: 1,
+          clip_id: 0,
+          at: 0,
+          image_idea: "",
+        },
+      ],
+    },
+    current,
+    clips,
+    "Fallback",
+    () => `k${++n}`,
+  );
+  assertEquals(plan.slides.map((s) => s.role), ["cover", "point", "point", "point", "ask"]);
+  assertEquals(plan.slides.map((s) => s.heading), ["The hook", "Point A", "First ask", "Point B", "Planning a reno?"]);
+  assertEquals(plan.slides[0].image, { source: "clip", clip_id: 12, at: 20, thumb_path: "clips/12.jpg", note: "seat" });
+  assertEquals(plan.slides[1].image.source, "photo"); // kept the picture someone picked
+  assertEquals(plan.slides[1].image.photo_id, "0123456789abcdef0123456789abcdef");
+  assertEquals(plan.slides[3].image, { source: "text", note: "lamp" }); // unknown clip, bad keep: text only
+  assertEquals(plan.slides[4].image, { source: "text" }); // keep_image of a text slide: nothing to keep
+  assertEquals(plan.idea.title, "Quiet corner");
+  assertEquals(plan.idea.hook, "The hook");
+  assertEquals(plan.idea.cta, "Planning a reno? Send us your floor plan.");
+  assertEquals(plan.idea.post_type, "ideas");
+  assertEquals(planSlides({ post_type: "promo", slides: [] }, [], [], "F").idea.post_type, null);
+  // At most 12, the ask kept.
+  const many = planSlides(
+    {
+      slides: Array.from({ length: 20 }, (_, i) => ({ role: i === 19 ? "ask" : "point", heading: `S${i}`, body: "" })),
+    },
+    [],
+    [],
+    "F",
+  );
+  assertEquals(many.slides.length, MAX_SLIDES);
+  assertEquals(many.slides[0].role, "cover");
+  assertEquals(many.slides[MAX_SLIDES - 1].heading, "S19");
+});
+
+Deno.test("carousel: stored slides and pictures are cleaned like valid_slides()", () => {
+  assertEquals(cleanImage({ source: "clip", clip_id: 3, at: 2.345 }), { source: "clip", clip_id: 3, at: 2.3 });
+  assertEquals(cleanImage({ source: "clip" }), { source: "text" });
+  assertEquals(cleanImage({ source: "photo", photo_id: "../x" }), { source: "text" });
+  assertEquals(cleanImage({ source: "nope" }), { source: "text" });
+  assertEquals(cleanImage({ source: "text", thumb_path: "../../etc/passwd" }), { source: "text" });
+  assertEquals(cleanImage({ source: "concept", note: "a sketch" }), { source: "concept", note: "a sketch" });
+  const s = storedSlides([{ role: "bogus", heading: 5, image: null }, "x"]);
+  assertEquals(s[0].role, "point");
+  assertEquals(s[0].heading, "");
+  assertEquals(s[1].image, { source: "text" });
+});
+
+Deno.test("carousel: the prompt lists slides, pictures, clips and the request", () => {
+  const p = slidesPrompt(
+    { name: "Topics", brief: "know-how", standing: "topics" },
+    { title: "Quiet corner", post_type: "ideas", purpose: "", caption: "" },
+    storedSlides([{ role: "cover", heading: "Hook", image: { source: "clip", clip_id: 7, at: 4 } }]),
+    [{ id: 7, title: "Lamp corner", duration: 65, thumb_path: null, project_id: 2 }],
+    [{ author_name: "Wei", body: "More on lighting" }],
+    "Make it shorter",
+    1,
+  );
+  assert(p.includes("(not one client's renovation)"));
+  assert(p.includes('1. [cover] Hook | picture: a still from clip 7 ("Lamp corner") at 4s'));
+  assert(p.includes('clip 7: "Lamp corner", 1:05 (another project)'));
+  assert(p.includes("kind: ideas") && p.includes("Wei: More on lighting") && p.includes("request: Make it shorter"));
+  assert(
+    slidesPrompt(null, { title: "T", purpose: "", caption: "", hook: "H" }, [], [], [], "").includes(
+      "(none yet: use text-only slides)",
+    ),
+  );
 });

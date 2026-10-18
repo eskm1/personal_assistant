@@ -29,8 +29,14 @@ export const BRAND = { personal: "Personal", urban_makers: "Urban Makers" };
 // (with STUDIO_BRANDS=urban_makers,personal on the Studio machine).
 export const ACCOUNTS = ["urban_makers"];
 export const oneBrand = ACCOUNTS.length < 2;
-export const FORMAT = { talking_head: "Talking head", day_in_the_life: "Day in the life", compilation: "Compilation" };
-export const PLAN_FORMATS = ["talking_head", "day_in_the_life", "compilation"];
+export const FORMAT = { talking_head: "Talking head", day_in_the_life: "Day in the life", compilation: "Compilation", carousel: "Carousel" };
+// Reels the team films, and carousels (slides; no filming).
+export const PLAN_FORMATS = ["talking_head", "day_in_the_life", "compilation", "carousel"];
+export const REEL_FORMATS = ["talking_head", "day_in_the_life", "compilation"];
+export const isCarousel = (i) => i?.format === "carousel";
+// A carousel's slides (ideas.slides): their roles and where each slide's picture comes from.
+export const SLIDE_ROLE = { cover: "Cover", point: "Point", ask: "Ask" };
+export const PICTURE = { text: "Text only", clip: "Still from footage", photo: "Photo", concept: "AI concept image" };
 export const FRAMING = { wide: "Wide", medium: "Medium", close: "Close-up", detail: "Detail", pov: "POV", overhead: "Overhead" };
 export const KIND = { talking: "Talking to camera", broll: "B-roll", detail: "Detail", before_after: "Before / after", reaction: "Reaction", screen: "Screen" };
 export const CAMERA = { iphone: "iPhone", zfc: "Z fc", gopro: "GoPro", any: "Any camera" };
@@ -57,14 +63,18 @@ export const kindDot = (k) => (isKind(k) ? `<span class="kdot ${k}" aria-hidden=
 export const kindChip = (k) => (isKind(k) ? `<span class="chip kind ${k}">${kindDot(k)}${esc(POST_TYPE[k])}</span>` : "");
 // ideas.post_type and the content plan come with a database update; until then the planner
 // asks for ideas without it (see withKinds).
-export const schema = { kinds: true };
-export const withKinds = (cols) => (schema.kinds ? `${cols},post_type` : cols);
-// Run a query that names post_type; if the column isn't there yet, again without it.
+// ideas.slides (carousels) comes with a later one, the same way.
+export const schema = { kinds: true, slides: true };
+export const withKinds = (cols) => `${cols}${schema.kinds ? ",post_type" : ""}${schema.slides ? ",slides" : ""}`;
+// Run a query that names post_type (and slides); if a column isn't there yet, again without it.
 export async function kindsQuery(run) {
-  try { return await run(); } catch (err) {
-    if (!schema.kinds || !missingTable(err)) throw err;
-    schema.kinds = false;
-    return run();
+  for (;;) {
+    try { return await run(); } catch (err) {
+      if (!missingTable(err)) throw err;
+      if (schema.slides && /slides/.test(err?.message || "")) schema.slides = false;
+      else if (schema.kinds) schema.kinds = false;
+      else throw err;
+    }
   }
 }
 export const VERDICT = { good: "Good", check: "Check", retake: "Retake" };

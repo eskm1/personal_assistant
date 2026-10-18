@@ -14,7 +14,7 @@ STUDIO_CLOUD_SYNC_SECONDS (30 s) it:
   4. pushes a summary and a still of each library clip, and the takes the
      tagger matched (with a still near each take's start);
   5. runs the jobs only the laptop can do (music shortlists with the Epidemic
-     key, "Make this", "Ideas from footage"), and keeps each made idea's
+     key, "Make this" for Reels and carousels, "Ideas from footage"), and keeps each made idea's
      production status current; moves Review's library ideas to the planner
      once, suggests ideas from new footage once uploads go quiet
      (footage_ideas.py), and gives older ideas their kind of post, a batch at
@@ -383,7 +383,9 @@ def pull(api: Client, conn) -> dict:
                     "est_seconds": r["est_seconds"], "music_plan": json.dumps(r["music"] or {}),
                     "decision": r["decision"], "status": status_, "position": r["position"],
                     "updated_at": r["updated_at"], "folder": r.get("folder") or "",
-                    "post_type": r.get("post_type")}
+                    "post_type": r.get("post_type"),
+                    # a carousel's slides (migration 20261021000000), as the planner has them
+                    "slides": json.dumps(r["slides"]) if r.get("slides") is not None else None}
         ideas, *stats["ideas"] = _mirror_table(
             conn, "ideas", remote["ideas"], idea_values,
             extra={"batch": "plan", "origin": "plan", "angle": "", "beats": "[]", "segments": "[]",
@@ -600,6 +602,17 @@ def run_jobs(api: Client, conn, idea_map: dict[int, int]) -> list[str]:
                 music_plan = plan.shortlist_music(conn, local_id)
                 api.update("ideas", {"id": f"eq.{job['idea_id']}"}, {"music": music_plan})
                 _finish(api, job, music_plan)
+            elif job["kind"] == "carousel":  # lay out a carousel (carousel.py), from the slides as they are now
+                import carousel
+                rows = api.select("ideas", {"id": f"eq.{job['idea_id']}", "select": "id,format,slides,caption"})
+                if not rows or rows[0].get("format") != "carousel":
+                    raise RuntimeError("this idea isn't a carousel")
+                caption = (job.get("payload") or {}).get("caption")
+                production_id = carousel.make(conn, local_id, rows[0].get("slides"),
+                                              caption if isinstance(caption, str) else rows[0].get("caption"))
+                api.update("ideas", {"id": f"eq.{job['idea_id']}"},
+                           {"status": "made", "production": _production(conn, production_id)})
+                _finish(api, job, {"production_id": production_id})
             elif job["kind"] == "make":
                 caption = (job.get("payload") or {}).get("caption")
                 production_id = plan.make(conn, local_id, caption if isinstance(caption, str) else None)
@@ -637,6 +650,17 @@ def push_productions(api: Client, conn, remote_ideas: list[dict]) -> int:
             values["production"] = prod
         if remote["status"] == "new":
             values["status"] = "made"
+        if "slides" in remote and prod["version"]:
+            # A carousel revised from Bryan's notes: the planner shows the draft's slides.
+            row = conn.execute("SELECT format, slides, plan, caption FROM productions WHERE id = ?",
+                               (idea["production_id"],)).fetchone()
+            if row["format"] == "carousel" and row["slides"]:
+                import carousel
+                slides = carousel.current(row)["slides"]
+                if slides and remote.get("slides") != slides:
+                    values["slides"] = slides
+                if (row["caption"] or "") and remote.get("caption") != row["caption"]:
+                    values["caption"] = row["caption"]
         if values:
             api.update("ideas", {"id": f"eq.{idea['remote_id']}"}, values)
             n += 1
@@ -709,6 +733,26 @@ def check_content_plan(api: Client) -> bool:
     return _content_plan_online
 
 
+_carousels_online = False     # migration 20261021000000 (ideas.slides, the carousel job) is online
+_carousels_checked = 0.0
+
+
+def check_carousels(api: Client) -> bool:
+    """Is the carousels migration online? Asked again every 10 minutes while it isn't."""
+    global _carousels_online, _carousels_checked
+    if _carousels_online or time.time() - _carousels_checked < SCHEMA_RECHECK_SECONDS:
+        return _carousels_online
+    _carousels_checked = time.time()
+    try:
+        api.request("GET", "/rest/v1/ideas", params={"select": "slides", "limit": 1})
+        _carousels_online = True
+    except CloudError as e:
+        if "HTTP 400" not in str(e) and not _missing_table(e):
+            raise
+        log.warning("%s (carousels wait for it)", NEEDS_UPDATE)
+    return _carousels_online
+
+
 def _post_folder_name(title: str, taken: set[str]) -> str:
     """A folder name for a post: its title, made safe, at most 60 characters, not
     used by another post of the project ("(2)" when it is)."""
@@ -737,6 +781,8 @@ def post_folders(api: Client, conn, remote: dict) -> list[str]:
         p = projects.get(i["project_id"])
         if not p or p["status"] != "active" or i["decision"] != "go" or i["status"] == "dismissed":
             continue
+        if i.get("format") == "carousel":
+            continue  # nothing to film
         project_folder = _safe_folder(p["folder"]) or _safe_folder(p["name"])
         folder = _safe_folder(i.get("folder") or "")
         if not project_folder:
@@ -1202,6 +1248,7 @@ def sync_once(conn, api: Client | None = None) -> dict:
     shoot_plan = check_shoot_plan(api)
     footage = check_footage_ideas(api)
     content = check_content_plan(api)
+    carousels = check_carousels(api)
     counts["pulled"] = pulled["stats"]
     counts["clips_pushed"] = push_clips(api, conn)
     new_takes = push_takes(api, conn)
@@ -1261,7 +1308,7 @@ def sync_once(conn, api: Client | None = None) -> dict:
             log.warning("Cloud sync, references failed (will retry): %s", message)
         status["ref_problems"] = [message]
         refs = {}
-    if not shoot_plan or not footage or not content:
+    if not shoot_plan or not footage or not content or not carousels:
         status["note"] = NEEDS_UPDATE
     jobs += refs.pop("lines", [])
     counts["refs"] = {k: v for k, v in refs.items() if k != "skipped"}
