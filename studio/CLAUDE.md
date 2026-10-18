@@ -41,11 +41,19 @@ Local Supabase stack via the Supabase CLI + Docker (`cloud/supabase`), Playwrigh
 stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "import worker, dashboard, ..."`
 (`updater._MODULES`) before pushing.
 
-## Open items (as of 2026-10-17)
+## Open items (as of 2026-10-18)
 
 - Bryan to run once on the laptop: `git pull` then `.\venv\Scripts\python cloud_setup.py --update`
-  (shoot-plan tables, the team function's domain rule, and migration 20261019000000_footage_ideas:
-  the `ideas` job kind, `clips.usable`/`clips.flagged`). Re-run after any new migration.
+  (shoot-plan tables, the team function's domain rule, migration 20261019000000_footage_ideas: the `ideas`
+  job kind, `clips.usable`/`clips.flagged`; and migration 20261020000000_content_plan with the updated
+  plan-organise / plan-develop functions). Re-run after any new migration. Until then the planner hides the
+  "This month" strip and the server sends no `post_type`.
+- Content plan (Bryan approved the proposal 2026-10-18: https://claude.ai/artifact/UyGPCh6YJv3y334g6531Ke), built in
+  four steps. Step 1 done: kinds of post (`ideas.post_type`, `content_plan.py`), the month's mix
+  (`content_plan` table, `content_month()`), the "This month" strip and Content plan page, the standing
+  Topics project. Next: 2 carousels (format `carousel` and job kind `carousel` already allowed), 3 Gemini
+  concept images (`GEMINI_API_KEY`, always marked "Concept", never in Finished homes), 4 weekly suggested
+  topics (job kind `topics`). Offers: only the ones in the planner; never invent prices or promotions.
 - Ideas live only in the planner (footage_ideas.py proposes ideas from new footage into each project's
   "From your footage" arc after uploads go quiet; "Everyday posts" project for loose clips).
   Usable clips are never flagged on cards; only retakes.

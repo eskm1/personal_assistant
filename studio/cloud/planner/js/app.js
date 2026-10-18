@@ -12,6 +12,7 @@ import { check, openChecklist, hideChecklist, loadChecklist, checklistOpen } fro
 import { showTeam, hideTeam } from "./team.js";
 import { refsRoute, showRefs, hideRefs, resetRefs, refsOpen, loadRefs } from "./refs.js";
 import { shoot, onShootRefresh } from "./shoot.js";
+import { month, monthRoute, showMonth, hideMonth, monthOpen, loadMonthPage } from "./month.js";
 import { onUploadRow, renderTray } from "./upload.js";
 
 const SET_PASSWORD = "studio.setPassword";
@@ -130,12 +131,15 @@ function stop() {
   if (session.channel) sb.removeChannel(session.channel);
   if (session.refChannel) sb.removeChannel(session.refChannel);
   if (session.shootChannel) sb.removeChannel(session.shootChannel);
-  session.channel = session.refChannel = session.shootChannel = null;
+  if (session.planChannel) sb.removeChannel(session.planChannel);
+  session.channel = session.refChannel = session.shootChannel = session.planChannel = null;
   session.started = false;
   hideViewer();
   hideChecklist();
   closeModal();
   resetRefs();
+  hideMonth();
+  Object.assign(month, { data: null, plan: null, loaded: false });
   $("#app").hidden = true;
   state.me = null;
   plan.projects = [];
@@ -301,6 +305,18 @@ async function doRoute() {
   nav.last = h;
   let m;
   const refRoute = refsRoute(h);
+  const planRoute = monthRoute(h);
+  if (planRoute) {
+    hideViewer();
+    hideChecklist();
+    hideTeam();
+    hideRefs();
+    $("#planner").hidden = true;
+    setSection(planRoute.page === "plan" ? "content" : "plan");
+    await showMonth(planRoute);
+    return;
+  }
+  hideMonth();
   if (refRoute) {
     hideViewer();
     hideChecklist();
@@ -381,6 +397,7 @@ const TABLES = ["projects", "arcs", "ideas", "shots", "clips", "takes", "votes",
   "reference_videos", "reference_analysis", "style_guides"];
 const REF_TABLES = new Set(["reference_videos", "reference_analysis", "style_guides"]);
 const SHOOT_TABLES = ["phases", "site_days", "shot_uploads"];
+const PLAN_TABLES = ["content_plan"];
 let refreshTimer = null;
 let refreshing = false;
 let again = false;
@@ -410,6 +427,13 @@ function startRealtime() {
   }
   shootChannel.subscribe();
   session.shootChannel = shootChannel;
+  // The content plan (targets and offers), on its own channel for the same reason.
+  const planChannel = sb.channel("studio-content-plan");
+  for (const table of PLAN_TABLES) {
+    planChannel.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => onChange(table, payload));
+  }
+  planChannel.subscribe();
+  session.planChannel = planChannel;
 }
 
 function onChange(table, payload) {
@@ -439,6 +463,7 @@ async function refreshNow() {
     if (checklistOpen() && !check.busy) tasks.push(loadChecklist());
     if (!$("#planner").hidden || viewerOpen()) tasks.push(refreshBoard());
     if (refsOpen()) tasks.push(loadRefs());
+    if (monthOpen()) tasks.push(loadMonthPage());
     await Promise.all(tasks.map((t) => t.catch(() => {})));
   } finally {
     refreshing = false;

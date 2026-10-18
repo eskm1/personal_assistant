@@ -29,6 +29,7 @@ from pathlib import Path
 import anthropic
 
 import catalog
+import content_plan
 import playbook
 import settings
 
@@ -90,12 +91,14 @@ def _schema() -> dict:
                 "type": "object",
                 "properties": {
                     "title": {"type": "string"}, "brand": {"type": "string", "enum": list(settings.BRANDS)},
+                    "post_type": {"type": "string", "enum": list(content_plan.KINDS)},
                     "format": {"type": "string", "enum": ["talking_head", "day_in_the_life", "compilation"]},
                     "hook": {"type": "string"}, "purpose": {"type": "string"}, "cta": {"type": "string"},
                     "caption": {"type": "string"}, "est_seconds": {"type": "number"},
                     "shots": {"type": "array", "items": shot},
                 },
-                "required": ["title", "brand", "format", "hook", "purpose", "cta", "caption", "est_seconds", "shots"],
+                "required": ["title", "brand", "post_type", "format", "hook", "purpose", "cta", "caption", "est_seconds",
+                             "shots"],
                 "additionalProperties": False}},
             "notes": {"type": "string"},
         },
@@ -131,11 +134,16 @@ starts and ends on whole phrases); a shot still to film has clip_id 0, start 0 a
 exactly what to film. kind: talking, broll, detail, before_after, reaction, screen. framing: wide, \
 medium, close, detail, pov, overhead. camera: {cameras}. Return no new ideas when the footage \
 doesn't support a strong post: fewer, stronger posts beat stretching thin footage.
+- post_type: the kind of post, by the job it does (the content plan, with the message, lists the \
+five). The footage decides what a post can be; among the posts it supports, prefer the kinds that \
+are short this month.
 - hook: the opening line or visual of the first 3 seconds, quoted from the transcript when possible. \
-purpose: who it's for and what they should think, feel or do. cta: the call to action at the end. \
+purpose: who it's for and what they should think, feel or do. cta: the call to action at the end, \
+fitting the kind's ask; an offer only from the listed offers, worded as listed. \
 caption: a ready-to-edit Instagram caption in Bryan's voice with 3 to 6 hashtags.
-- Never invent facts, prices, results, timelines or client details: use only what the footage \
-shows and Bryan says. Write [placeholder] where the team must fill something in.
+- Never invent facts, prices, results, timelines, promotions, offers or client details: use only \
+what the footage shows, what Bryan says and the listed offers. Write [placeholder] where the team \
+must fill something in.
 - Never name a place (estate, street, condo, block, town, a client's address) in a hook, caption \
 or on-screen text: where clients live stays private.
 - Clips marked "retake" have a quality problem: prefer other footage, and use them only when \
@@ -168,7 +176,14 @@ def _ask(user: str, ref: str, client=None) -> dict:
 # ── Where the ideas go: the online planner, or this machine's plan ───────────
 
 def _is_everyday(p: dict) -> bool:
-    return EVERYDAY.lower() in ((p.get("name") or "").strip().lower(), (p.get("folder") or "").strip().lower())
+    return p.get("standing") == "everyday" or EVERYDAY.lower() in (
+        (p.get("name") or "").strip().lower(), (p.get("folder") or "").strip().lower())
+
+
+def _plan_online() -> bool:
+    """The content-plan migration is online (ideas.post_type, projects.standing)."""
+    import cloud_sync
+    return cloud_sync._content_plan_online
 
 
 class _Cloud:
@@ -181,15 +196,17 @@ class _Cloud:
 
     def projects(self) -> list[dict]:
         if self._projects is None:
-            self._projects = self.api.select("projects", {"select": "id,name,folder,brief,status"})
+            self._projects = self.api.select("projects", {
+                "select": "id,name,folder,brief,status" + (",standing" if _plan_online() else "")})
         return self._projects
 
     def everyday(self) -> dict:
         mine = [p for p in self.projects() if _is_everyday(p)]
         if mine:
-            return sorted(mine, key=lambda p: (p["status"] != "active", p["id"]))[0]
+            return sorted(mine, key=lambda p: (p.get("standing") != "everyday", p["status"] != "active", p["id"]))[0]
         row = self.api.insert("projects", {"name": EVERYDAY, "folder": EVERYDAY, "brief": EVERYDAY_BRIEF,
-                                           "brand": settings.SINGLE_BRAND or "urban_makers"})[0]
+                                           "brand": settings.SINGLE_BRAND or "urban_makers",
+                                           **({"standing": "everyday"} if _plan_online() else {})})[0]
         log.info("Made the standing project \"%s\" in the planner", EVERYDAY)
         self.projects().append(row)
         return row
@@ -209,7 +226,7 @@ class _Cloud:
     def open_ideas(self, ref) -> list[dict]:
         rows = self.api.select("ideas", {
             "project_id": f"eq.{ref}", "status": "eq.new", "decision": "in.(proposed,go)",
-            "select": "id,title,hook,purpose,format,decision,"
+            "select": "id,title,hook,purpose,format,decision," + ("post_type," if _plan_online() else "") +
                       "shots(id,position,kind,description,line,filmed_at,takes(clip_id,start,end))"})
         for r in rows:
             r["shots"] = sorted(r.get("shots") or [], key=lambda s: (s["position"], s["id"]))
@@ -230,6 +247,7 @@ class _Cloud:
             "project_id": ref, "arc_id": arc_id, "title": f["title"], "brand": f["brand"], "format": f["format"],
             "hook": f["hook"], "purpose": f["purpose"], "cta": f["cta"], "caption": f["caption"],
             "est_seconds": f["est_seconds"], "decision": "proposed", "status": "new",
+            **({"post_type": f["post_type"]} if f.get("post_type") and _plan_online() else {}),
             "position": max((i["position"] for i in taken), default=0) + 1})[0]["id"]
 
     def add_shots(self, idea_id, shots: list[dict]) -> list[int]:
@@ -295,7 +313,7 @@ class _Local:
     def open_ideas(self, ref) -> list[dict]:
         import plan
         rows = [dict(r) for r in self.conn.execute(
-            """SELECT id, title, hook, purpose, format, COALESCE(decision, 'proposed') AS decision FROM ideas
+            """SELECT id, title, hook, purpose, format, post_type, COALESCE(decision, 'proposed') AS decision FROM ideas
                WHERE project_id = ? AND origin = 'plan' AND status = 'new'
                AND COALESCE(decision, 'proposed') IN ('proposed', 'go') ORDER BY id""", (ref,))]
         shots = plan.shots_for(self.conn, [r["id"] for r in rows])
@@ -388,7 +406,9 @@ def _ideas_text(ideas: list[dict]) -> str:
         return "(none planned yet)"
     out = []
     for i in ideas:
-        out.append(f"Post {i['id']} \"{i['title']}\" ({i['decision']}, {i['format'] or 'talking_head'}): "
+        kind = content_plan.KINDS.get(i.get("post_type"), {}).get("label")
+        out.append(f"Post {i['id']} \"{i['title']}\" ({i['decision']}, {i['format'] or 'talking_head'}"
+                   + (f", {kind}" if kind else "") + "): "
                    f"hook: {i['hook'] or '-'}; purpose: {i['purpose'] or '-'}")
         for s in i["shots"]:
             takes = s.get("takes") or []
@@ -399,8 +419,10 @@ def _ideas_text(ideas: list[dict]) -> str:
     return "\n".join(out)
 
 
-def _prompt(project: dict, ideas: list[dict], new: list, older: list) -> str:
+def _prompt(project: dict, ideas: list[dict], new: list, older: list, plan_text: str = "") -> str:
+    """plan_text: the content plan (content_plan.context_text): the kinds, this month's gaps, the offers."""
     return (f"Project: {project['name']}\nBrief: {project.get('brief') or '(none yet)'}\n\n"
+            f"The content plan:\n<content_plan>\n{plan_text or content_plan.prompt_text()}\n</content_plan>\n\n"
             f"Posts already planned (open):\n{_ideas_text(ideas)}\n\n"
             f"NEW footage ({len(new)} clips):\n\n" + "\n\n".join(clip_text(r) for r in new) + "\n\n"
             + ("Earlier footage of this project (may be used in new posts; no transcripts):\n\n"
@@ -492,6 +514,7 @@ def _apply(store, ref, project: dict, ideas: list[dict], answer: dict, new_ids: 
         fields = {
             "title": (idea.get("title") or "Untitled idea").strip()[:300],
             "brand": settings.SINGLE_BRAND or (idea.get("brand") if idea.get("brand") in settings.BRANDS else "urban_makers"),
+            "post_type": content_plan.clean_type(idea.get("post_type")),
             "format": idea.get("format") if idea.get("format") in ("talking_head", "day_in_the_life", "compilation")
             else "talking_head",
             "hook": _private(idea.get("hook") or "", names), "purpose": idea.get("purpose") or "",
@@ -554,7 +577,8 @@ def _run_project(conn, store, ref, project: dict, clips: list, trigger: str, cli
         ideas = ideas[:OPEN_IDEAS_MAX]
         older = _older(conn, store.local_projects(ref), _is_everyday(project), set(ids))
         durations = {r["id"]: r["duration"] or 0 for r in [*clips, *older]}
-        answer = _ask(_prompt(project, ideas, clips, older), f"ideas:footage:{run_id}", client)
+        plan_text = content_plan.context_text(store.api if store.place == "cloud" and _plan_online() else None)
+        answer = _ask(_prompt(project, ideas, clips, older, plan_text), f"ideas:footage:{run_id}", client)
         result = _apply(store, ref, project, ideas, answer, set(ids), durations)
         result["clips"] = len(ids)
         conn.execute("UPDATE idea_runs SET state = 'done', result = ?, finished_at = ? WHERE id = ?",

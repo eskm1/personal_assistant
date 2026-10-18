@@ -1010,3 +1010,117 @@ body.has-tray .toast { bottom: auto; top: 76px; }
   .find-ideas .btn { flex: 1 1 100%; justify-content: center; }
   #find-ideas-status { max-width: none; }
 }
+
+/* ── Content plan: kinds of post, the "This month" strip, its pages ─────────── */
+/* The colours Bryan approved in the proposal (its dark-theme values). */
+:root { --k-knowhow: #6f9ee0; --k-ideas: #b18ade; --k-onsite: #d18f52; --k-finished: #4fae9e; --k-offer: #e2707b; }
+.kdot { flex: none; display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.kdot.knowhow, .pbar i.k.knowhow { background: var(--k-knowhow); }
+.kdot.ideas, .pbar i.k.ideas { background: var(--k-ideas); }
+.kdot.onsite, .pbar i.k.onsite { background: var(--k-onsite); }
+.kdot.finished, .pbar i.k.finished { background: var(--k-finished); }
+.kdot.offer, .pbar i.k.offer { background: var(--k-offer); }
+.chip.kind { gap: 5px; color: #e4e4ea; }
+.chip.kind .kdot { width: 7px; height: 7px; }
+.gap { color: var(--k-offer); font-weight: 700; }
+
+.month { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin: 0 0 12px; display: flex; flex-direction: column; gap: 10px; }
+.month-head { display: flex; align-items: baseline; gap: 6px 12px; flex-wrap: wrap; }
+.month-head h2 { margin: 0; font-size: 17px; }
+.month-toggle { background: none; border: 0; padding: 0; font-weight: 800; font-size: inherit; display: inline-flex; align-items: center; gap: 6px; }
+.month-toggle::before { content: "▾"; color: var(--muted); font-size: 12px; }
+.month.closed .month-toggle::before { content: "▸"; }
+.month-sum { color: var(--muted); font-variant-numeric: tabular-nums; }
+.month-link { margin-left: auto; font-size: 13px; font-weight: 600; }
+.meters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.meter {
+  display: flex; flex-direction: column; gap: 6px; padding: 9px 11px; border-radius: 10px; min-width: 0;
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--text); text-decoration: none; font-size: 13px;
+}
+.meter:hover { border-color: #3c3c46; }
+.meter.short { border-color: rgba(226, 112, 123, .45); }
+.meter-name { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 14px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meter-bar.pbar { width: 100%; height: 6px; }
+.meter-num { color: var(--muted); font-variant-numeric: tabular-nums; }
+.month-note { margin: 0; }
+@media (max-width: 1000px) { .meters { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 720px) {
+  .month { padding: 10px 12px; gap: 8px; }
+  .month-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0 12px; }
+  .month-head h2 { font-size: 16px; }
+  .month-toggle { min-height: 40px; }
+  .month-sum { grid-column: 1 / -1; grid-row: 2; margin-top: -6px; }
+  .month-link { min-height: 40px; display: inline-flex; align-items: center; margin-left: 0; }
+  .meters { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .meter:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .meter { padding: 8px 10px; min-height: 64px; gap: 5px; }
+  .meter-name { font-size: 13px; }
+  .meter-num { font-size: 12px; }
+}
+
+/* The pages: one kind this month (#/month/<kind>) and the Content plan (#/content-plan) */
+.month-wrap { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.month-wrap h1 { margin: 4px 0 0; font-size: 22px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.month-wrap h1:focus { outline: none; }
+.month-wrap h1 .kdot { width: 14px; height: 14px; }
+.month-wrap h1 .muted { font-weight: 600; }
+.month-wrap h2 { display: flex; align-items: center; gap: 8px; margin: 6px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.month-wrap h2 .count { padding: 1px 7px; border-radius: 999px; background: var(--line); font-size: 12px; letter-spacing: 0; }
+.month-wrap p { margin: 0; line-height: 1.5; }
+.kind-tabs { position: relative; display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.kind-tab {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; min-height: 36px;
+  background: var(--surface); border: 1px solid var(--line); color: var(--muted); text-decoration: none; font-weight: 600; font-size: 13px;
+}
+.kind-tab.on { background: var(--surface-2); color: var(--text); border-color: #4a4a55; }
+.kind-job .stage { font-size: 12px; font-weight: 700; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; margin-right: 4px; white-space: nowrap; }
+.kind-count { display: flex; flex-direction: column; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.kind-count .pbar { width: 100%; height: 8px; }
+.kind-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.kind-row {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; min-height: 44px;
+  background: var(--surface); border: 1px solid var(--line); color: var(--text); text-decoration: none;
+}
+.kind-row:hover { border-color: #3c3c46; }
+.kind-row-title { font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.kind-row-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cp-sec { display: flex; flex-direction: column; gap: 8px; }
+.mix-list, .offer-list, .kinds-ref { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.mix-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name num" "now num"; gap: 2px 12px; align-items: center;
+  padding: 10px 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line);
+}
+.mix-name { grid-area: name; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mix-name .kdot { width: 11px; height: 11px; }
+.mix-now { grid-area: now; padding-left: 19px; }
+.mix-num { grid-area: num; }
+.mix-num input { width: 76px; text-align: center; font-size: 16px; font-weight: 700; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.mix-num strong { font-size: 18px; padding: 0 10px; }
+.mix-total { padding: 2px 4px; }
+.offer-row { display: flex; gap: 8px; align-items: flex-start; padding: 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+.offer-row.read { flex-direction: column; gap: 4px; }
+.offer-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.offer-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.offer-fields input { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; color: var(--text); }
+.offer-fields textarea { min-height: 56px; color: var(--text); }
+.cp-save {
+  position: sticky; bottom: 12px; z-index: 4; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end;
+  padding: 10px 12px; border-radius: 12px; background: rgba(32, 32, 38, .97); border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+}
+.cp-save .error-text { flex: 1 1 100%; margin: 0; }
+.cp-save #cp-state { margin-right: auto; }
+.kinds-ref li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+.kinds-ref .kdot { margin-top: 5px; width: 11px; height: 11px; }
+.kinds-ref p { margin-top: 2px; }
+@media (max-width: 720px) {
+  .month-wrap h1 { font-size: 20px; }
+  .kind-tab { min-height: 44px; }
+  .cp-save { bottom: calc(var(--shell-bottom, 0px) + 8px); }
+  .cp-save .btn { flex: 1; }
+  .cp-save #cp-state { flex: 1 1 100%; }
+}
+
+/* The idea's kind picker */
+.kind-select { display: flex; align-items: center; gap: 8px; }
+.kind-select select { flex: 1; min-width: 0; }
+.meta-grid .kind-hint { grid-column: 1 / -1; margin: -2px 0 0; line-height: 1.45; }

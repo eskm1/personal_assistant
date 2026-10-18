@@ -69,7 +69,12 @@ async function organise(project: Project, dump: string, caller: Caller, deadline
 
   const board = boardText(arcs, ideas.filter((i) => i.status !== "dismissed"));
   const { result, usage } = await ask({
-    system: renderSystem(ORGANISE_SYSTEM + ORGANISE_NO_SHOTS_NOTE, context.brands, context.playbook),
+    system: renderSystem(
+      ORGANISE_SYSTEM + ORGANISE_NO_SHOTS_NOTE,
+      context.brands,
+      context.playbook,
+      context.contentPlan,
+    ),
     user: organisePrompt(project, board, dump),
     schema: ORGANISE_NO_SHOTS_SCHEMA,
     effort: "medium",

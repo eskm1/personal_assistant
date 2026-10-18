@@ -4,9 +4,10 @@ import {
   $, $$, BRAND, ACCOUNTS, oneBrand, esc, sb, must, invoke, toast, options, store, recall, plural, typingIn, keepDrafts,
   pbarHTML, prepShots, progress, signPaths, stillUrl, takePaths, jobView, jobActive, kickDevelop,
   openModal, closeModal, formError, nameOf, PRODUCTION, state, fbarHTML, isFilmed, folderLineHTML, httpsUrl,
-  laptopWait, ago, dayOf, todayISO, parseDay, dayLabel,
+  laptopWait, ago, dayOf, todayISO, parseDay, dayLabel, withKinds, kindsQuery, kindChip, schema, POST_TYPES, POST_TYPE,
 } from "./core.js";
 import { shoot, loadShoot, renderShoot } from "./shoot.js";
+import { loadMonth, renderStrip } from "./month.js";
 
 export const plan = {
   projects: [], pid: null, board: null, sig: "", topSig: "", shellFor: null, order: [],
@@ -55,12 +56,15 @@ export async function loadBoard() {
   const stale = () => pid !== plan.pid || seq !== plan.seq;
   // The shoot plan's tables come with a database update: if they're missing, the board still works.
   const shootLoad = loadShoot(pid).catch((err) => { shoot.error = err.message; return null; });
+  // This month's mix (the strip above the plan) comes with a database update too.
+  const monthLoad = loadMonth().catch(() => null);
   const [arcs, ideas, folders] = await Promise.all([
     sb.from("arcs").select("*").eq("project_id", pid).order("position").order("id").then(must),
-    sb.from("ideas").select(IDEA_COLS).eq("project_id", pid).neq("status", "dismissed").order("position").order("id").then(must),
+    kindsQuery(() => sb.from("ideas").select(withKinds(IDEA_COLS)).eq("project_id", pid).neq("status", "dismissed")
+      .order("position").order("id").then(must)),
     sb.from("ideas").select("id,folder").eq("project_id", pid).eq("decision", "go").neq("folder", "").then(must).catch(() => []),
   ]);
-  await shootLoad;
+  await Promise.all([shootLoad, monthLoad]);
   const ids = ideas.map((i) => i.id);
   const jobs = must(await sb.from("jobs").select(JOB_COLS).in("kind", ["organise", "develop", "ideas"])
     .or(ids.length ? `project_id.eq.${pid},idea_id.in.(${ids.join(",")})` : `project_id.eq.${pid}`)
@@ -101,7 +105,7 @@ export function renderPlanner(force = false) {
   const root = $("#planner");
   if (!plan.projects.length) {
     plan.shellFor = null;
-    root.innerHTML = `<div class="plan-empty"><h2>Start a plan</h2>
+    root.innerHTML = `<div id="month-strip"></div><div class="plan-empty"><h2>Start a plan</h2>
       <p class="muted">A project is one job, like Kensington. Throw post ideas at it, let Claude sort them into series with a shot list for each, then tick shots off on site.</p>
       <button class="btn primary" id="plan-new">New project</button></div>`;
     return;
@@ -126,6 +130,7 @@ export function renderPlanner(force = false) {
     if (mode === "shoot") $("#shoot-view").innerHTML = `<p class="muted"><span class="spin"></span> Loading the shoot plan…</p>`;
     return;
   }
+  renderStrip(force || rebuilt);
   renderPlanTop();
   if (mode === "shoot") renderShoot(force || rebuilt);
   else renderPlanBoard(force || rebuilt, rebuilt);
@@ -152,6 +157,7 @@ function plannerShellHTML() {
         <button data-plan-mode="ideas" aria-pressed="false">Ideas</button>
       </div>
     </div>
+    <div id="month-strip"></div>
     <details class="plan-details" id="plan-details">
       <summary><strong>Brief</strong> <span class="muted" id="brief-preview">${briefPreview(p)}</span></summary>
       <div class="plan-details-body">
@@ -463,7 +469,7 @@ function cardHTML(i, footage = false) {
   ].filter(Boolean).join("");
   const decision = { go: "Go", parked: "Parked", proposed: "Idea" }[i.decision] || "Idea";
   const fresh = footage && plan.footageFresh?.has(i.id);
-  const label = [i.title, decision, footage ? "found in your footage" : "", fresh ? "new" : "", p.total ? `${filmed} of ${p.total} shots filmed` : "No shots yet", ups ? `${ups} keen` : ""].filter(Boolean).join(", ");
+  const label = [i.title, decision, POST_TYPE[i.post_type] || "", footage ? "found in your footage" : "", fresh ? "new" : "", p.total ? `${filmed} of ${p.total} shots filmed` : "No shots yet", ups ? `${ups} keen` : ""].filter(Boolean).join(", ");
   const folder = plan.folders?.get(i.id);
   const card = `<button class="card ${esc(i.decision)}" data-plan-idea="${esc(i.id)}" draggable="true" aria-label="${esc(label)}">
     ${thumb ? `<img class="card-thumb" src="${esc(thumb)}" alt="" loading="lazy">` : ""}
@@ -471,6 +477,7 @@ function cardHTML(i, footage = false) {
       <span class="card-title">${esc(i.title)}</span>
       <span class="card-chips">
         <span class="chip ${esc(i.decision)}">${decision}</span>
+        ${kindChip(i.post_type)}
         ${footage ? `<span class="chip footage">${fresh ? "New · " : ""}From footage</span>` : ""}
         ${oneBrand ? "" : `<span class="chip ${esc(i.brand)}">${esc(BRAND[i.brand] || i.brand)}</span>`}
         ${i.status === "made" || prod ? `<span class="chip producing">${esc(prod ? PRODUCTION[prod] || prod : "In edit")}</span>` : ""}
@@ -627,6 +634,7 @@ export function openQuickAdd() {
       <label>Idea<textarea id="qa-text" rows="4" maxlength="300" placeholder="e.g. Why we flood-test every bathroom for 24 hours" required></textarea></label>
       <label>Link <span class="muted">(optional, e.g. a reel that inspired it)</span><input id="qa-link" type="url" inputmode="url" maxlength="500" placeholder="https://"></label>
       <label>Series<select id="qa-arc"><option value="">Unsorted</option>${arcs.map((a) => `<option value="${esc(a.id)}">${esc(a.title)}</option>`).join("")}</select></label>
+      ${schema.kinds ? `<label>Kind of post<select id="qa-kind">${options(POST_TYPES, POST_TYPE, "", "Let Studio decide")}</select></label>` : ""}
       <p class="error-text" id="modal-error" role="alert" hidden></p>
       <div class="row end"><button type="button" class="btn" data-modal-close>Cancel</button><button type="submit" class="btn primary" id="qa-add">Add</button></div>
     </form>`, async (e) => {
@@ -641,7 +649,8 @@ export function openQuickAdd() {
     const pos = Math.max(0, ...(plan.board?.ideas || []).map((i) => i.position || 0)) + 1;
     let row;
     try {
-      row = must(await sb.from("ideas").insert({ project_id: plan.pid, title, brand: p?.brand || "urban_makers", arc_id: $("#qa-arc").value ? Number($("#qa-arc").value) : null, position: pos }).select("id").single());
+      const kind = $("#qa-kind")?.value || null;
+      row = must(await sb.from("ideas").insert({ project_id: plan.pid, title, brand: p?.brand || "urban_makers", arc_id: $("#qa-arc").value ? Number($("#qa-arc").value) : null, position: pos, ...(kind ? { post_type: kind } : {}) }).select("id").single());
       if (link) must(await sb.from("comments").insert({ idea_id: row.id, body: `Link: ${link}` }));
     } catch (err) { e.target.disabled = false; return formError(err.message); }
     closeModal();

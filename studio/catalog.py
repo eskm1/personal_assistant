@@ -257,6 +257,7 @@ _ADDED_COLUMNS = {
         "updated_at": "TEXT",
         "remote_id": "INTEGER",  # its row in the online planner (cloud_sync.py)
         "folder": "TEXT",        # its post folder in the inbox (Inbox/<project>/<folder>/), if it has one
+        "post_type": "TEXT",     # knowhow | ideas | onsite | finished | offer: the job the post does (content_plan.py)
     },
     "feedback": {"author": "TEXT"},
     "shots": {"camera": "TEXT",  # iphone | zfc | gopro | any: which of the team's cameras films it

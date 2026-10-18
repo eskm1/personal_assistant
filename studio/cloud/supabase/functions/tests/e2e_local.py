@@ -185,7 +185,17 @@ try:
        "shots" not in b["output_config"]["format"]["schema"]["properties"]["ideas"]["items"]["properties"],
        f"organise request: model/betas/fallbacks/effort medium/no thinking/no shots ({req['beta']})")
     ok("{brands}" not in b["system"] and "{playbook}" not in b["system"] and "{cameras}" not in b["system"] and
-       "iphone = iPhone 16 Pro" in b["system"], "placeholders filled")
+       "{content_plan}" not in b["system"] and "iphone = iPhone 16 Pro" in b["system"], "placeholders filled")
+    month = svc("POST", "rpc/content_month", {})
+    offers = svc("GET", "content_plan?id=eq.1")[0]["offers"]
+    ok("<content_plan>" in b["system"] and "- finished (Finished homes" in b["system"]
+       and f"{month['planned']} of {month['target']} posts planned" in b["system"]
+       and all(o["name"] in b["system"] for o in offers) and "Never invent a price" in b["system"],
+       "organise prompt carries the kinds, this month's numbers and the offers")
+    ok("post_type" in b["output_config"]["format"]["schema"]["properties"]["ideas"]["items"]["required"],
+       "organise schema asks for the kind")
+    ok([i["post_type"] for i in ideas] == ["knowhow", None, "onsite"], f"ideas keep Claude's kind, unknown -> null "
+       f"{[i['post_type'] for i in ideas]}")
 
     print("develop (queued jobs kicked by the planner)")
     with ThreadPoolExecutor(4) as pool:
@@ -203,6 +213,9 @@ try:
     a = svc("GET", f"ideas?id=eq.{ideas[0]['id']}")[0]
     ok(a["title"].endswith("(developed)") and a["est_seconds"] == 40 and a["music"]["mood"] == "upbeat",
        "idea fields updated by develop")
+    kinds = {i["id"]: svc("GET", f"ideas?id=eq.{i['id']}&select=post_type")[0]["post_type"] for i in ideas}
+    ok(kinds == {ideas[0]["id"]: "knowhow", ideas[1]["id"]: "offer", ideas[2]["id"]: "onsite"},
+       f"develop fills an empty kind, never changes one that's set {kinds}")
     dreq = [r for r in mock_requests()
             if "idea" in r["body"].get("output_config", {}).get("format", {}).get("schema", {}).get("properties", {})][-1]
     ok(dreq["body"]["output_config"]["effort"] == "high" and dreq["body"]["max_tokens"] == 32000 and

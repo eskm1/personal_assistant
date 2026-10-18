@@ -1,10 +1,11 @@
 // The board logic of studio/plan.py (organise / develop), as pure functions over rows,
 // so it's testable without a database. Model output is never trusted: everything is
 // clamped to the schema's enums and sensible lengths here.
-import { BRANDS, CAMERAS, FORMATS, FRAMINGS, SHOT_KINDS } from "./prompts.ts";
+import { BRANDS, CAMERAS, FORMATS, FRAMINGS, KINDS, POST_TYPES, SHOT_KINDS } from "./prompts.ts";
 
 export type Brand = typeof BRANDS[number];
 export type Format = typeof FORMATS[number];
+export type PostType = typeof POST_TYPES[number];
 
 export interface MusicPlan {
   mood?: string;
@@ -15,6 +16,7 @@ export interface MusicPlan {
 export interface IdeaFields {
   title: string;
   brand: Brand;
+  post_type: PostType | null;
   format: Format;
   hook: string;
   purpose: string;
@@ -72,6 +74,7 @@ export function ideaFields(v: unknown, defaults: { brand: string; format?: strin
   return {
     title: text(i.title, 300) || defaults.title || "Untitled idea",
     brand: oneOf(i.brand, BRANDS) ?? oneOf(defaults.brand, BRANDS) ?? "urban_makers",
+    post_type: oneOf(i.post_type, POST_TYPES),
     format: oneOf(i.format, FORMATS) ?? oneOf(defaults.format, FORMATS) ?? "talking_head",
     hook: text(i.hook, 1000),
     purpose: text(i.purpose, 2000),
@@ -177,6 +180,7 @@ export interface DevelopIdea {
   title: string;
   brand: string;
   format: string;
+  post_type?: string | null;
   est_seconds: number | null;
   hook: string;
   purpose: string;
@@ -199,9 +203,9 @@ export function developPrompt(
   );
   return `Project: ${project?.name ?? "-"}. Brief: ${project ? project.brief || "-" : "-"}\n\n` +
     `The idea now (arc key: arc:${idea.arc_id || 0}):\n` +
-    `  title: ${idea.title}\n  account: ${idea.brand}, format: ${idea.format}, ~${
-      Math.round(idea.est_seconds || 30)
-    }s\n` +
+    `  title: ${idea.title}\n  account: ${idea.brand}, kind: ${
+      idea.post_type && KINDS[idea.post_type] ? idea.post_type : "(none yet)"
+    }, format: ${idea.format}, ~${Math.round(idea.est_seconds || 30)}s\n` +
     `  hook: ${idea.hook || "-"}\n  purpose: ${idea.purpose || "-"}\n  cta: ${idea.cta || "-"}\n` +
     `  caption: ${idea.caption || "-"}\n  music: ${music.mood || "-"}\n` +
     "  shots:\n" + (shotLines.join("\n") || "  (none yet)") + "\n\n" +

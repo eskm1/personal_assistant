@@ -5,7 +5,7 @@
 // <div id="shell" class="shell" data-half="plan|review"> is filled in when this script
 // runs, before the page's own script. The page then fills the status pill (#laptop-*)
 // and the account menu (#account-menu), and tells the shell where it is:
-//   StudioShell.setCurrent("plan" | "today" | "review" | "refs" | "style" | "library" | "")
+//   StudioShell.setCurrent("plan" | "today" | "review" | "refs" | "style" | "content" | "library" | "")
 //   StudioShell.setLinks({ today: "#/today/3", ... })   ("" hides that item)
 //   StudioShell.setBadge(2)                              (drafts waiting for review)
 "use strict";
@@ -31,6 +31,7 @@ window.StudioShell = (() => {
     review: dash && `${dash}#/tab/review`,
     refs: `${planner}#/references`,
     style: `${planner}#/style`,
+    content: `${planner}#/content-plan`,
     library: dash && `${dash}#/tab/library`,
   };
   if (half === "review") links.plan = "/plan/";
@@ -43,6 +44,7 @@ window.StudioShell = (() => {
     more: '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
     refs: '<path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"/>',
     style: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+    content: '<rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M8 16v-3M12 16V9M16 16v-5"/>',
     library: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M6 4h12M10 11l4 2.5-4 2.5z"/>',
   };
   const icon = (name) => `<svg class="shell-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[name]}</svg>`;
@@ -80,6 +82,7 @@ window.StudioShell = (() => {
         <nav class="shell-sheet-links" aria-label="More sections">
           <a data-sec="refs" href="#">${icon("refs")}<span>References</span></a>
           <a data-sec="style" href="#">${icon("style")}<span>Style guide</span></a>
+          <a data-sec="content" href="#">${icon("content")}<span>Content plan</span></a>
           <a data-sec="library" href="#">${icon("library")}<span>Library</span></a>
         </nav>
         <div class="shell-sheet-account" id="shell-sheet-account"></div>
@@ -99,15 +102,16 @@ window.StudioShell = (() => {
     Object.assign(links, next || {});
     paintLinks();
   }
-  // The highlighted section. On the top bar Today counts as Plan and Library as Review;
-  // on the phone bar References, Style guide and Library live under More.
+  // The highlighted section. On the top bar Today and the Content plan count as Plan and
+  // Library as Review; on the phone bar References, Style guide, Content plan and Library
+  // live under More.
   function setCurrent(sec) {
     current = sec || "";
-    const top = { today: "plan", library: "review" }[current] || current;
+    const top = { today: "plan", content: "plan", library: "review" }[current] || current;
     for (const a of $$(".shell-nav a")) mark(a, a.dataset.sec === top);
     for (const a of $$(".shell-tabbar a")) mark(a, a.dataset.sec === current);
     for (const a of $$(".shell-sheet-links a")) mark(a, a.dataset.sec === current);
-    $("#shell-more").classList.toggle("on", ["refs", "style", "library"].includes(current));
+    $("#shell-more").classList.toggle("on", ["refs", "style", "content", "library"].includes(current));
   }
   function mark(a, on) {
     if (on) a.setAttribute("aria-current", "page");
@@ -140,7 +144,7 @@ window.StudioShell = (() => {
   });
 
   // ── More (phones) ──────────────────────────────────────────────────────────
-  // References, Style guide, Library and the account menu's items, as a sheet.
+  // References, Style guide, Content plan, Library and the account menu's items, as a sheet.
   const sheet = $("#shell-sheet");
   let sheetReturn = null;
   function openSheet() {

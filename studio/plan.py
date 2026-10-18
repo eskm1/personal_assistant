@@ -22,6 +22,7 @@ import logging
 import anthropic
 
 import catalog
+import content_plan
 import playbook
 import settings
 from settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
@@ -62,6 +63,7 @@ _IDEA = {
         "arc": {"type": "string"},
         "title": {"type": "string"},
         "brand": {"type": "string", "enum": list(settings.BRANDS)},
+        "post_type": {"type": "string", "enum": list(content_plan.KINDS)},
         "format": {"type": "string", "enum": ["talking_head", "day_in_the_life", "compilation"]},
         "hook": {"type": "string"},
         "purpose": {"type": "string"},
@@ -77,7 +79,7 @@ _IDEA = {
         },
         "shots": {"type": "array", "items": _SHOT},
     },
-    "required": ["arc", "title", "brand", "format", "hook", "purpose", "cta", "caption", "est_seconds",
+    "required": ["arc", "title", "brand", "post_type", "format", "hook", "purpose", "cta", "caption", "est_seconds",
                  "music", "shots"],
     "additionalProperties": False,
 }
@@ -113,7 +115,9 @@ _RULES = """How to plan a post:
 - One clear point per post, 15 to 60 seconds. The hook (first 3 seconds) states the tension or \
 payoff; spoken hooks should sound like Bryan talking, not an ad.
 - purpose: who it's for and what they should think, feel or do after watching (one or two sentences).
-- cta: the call to action at the end ("Save this for your reno", "DM us KENSINGTON", ...).
+- post_type: the kind of post, by the job it does (the content plan below lists the five).
+- cta: the call to action at the end, fitting the kind's ask ("Save this for your reno", "Follow \
+this project", ...). An offer only from the listed offers, worded as listed.
 - caption: a ready-to-edit Instagram caption in Bryan's voice with 3 to 6 hashtags.
 - shots: the storyboard, one entry per shot, in playback order, each something the team can \
 actually film on site. kind: talking (to camera), broll (work happening), detail (close-up of a \
@@ -126,8 +130,8 @@ screen ("" if none). seconds: rough length in the final cut. why: what this shot
 Plan B-roll and detail shots to cover talking, as the playbook says. Usually 4 to 10 shots.
 - music: the mood, tempo and a short search phrase for the music bed. For personal posts this \
 becomes a note on what to pick from Instagram's library.
-- Never invent facts, prices, timelines or client details. Write [placeholder] where the team \
-must fill something in.
+- Never invent facts, prices, timelines, promotions, offers or client details. Write \
+[placeholder] where the team must fill something in.
 - keep_id: 0 for a new shot."""
 
 _ORGANISE_SYSTEM = """You are the content producer for Bryan's Instagram accounts. The team is \
@@ -141,6 +145,12 @@ Bryan's playbook (his editing and story rules; plan shots and structure that let
 {playbook}
 </playbook>
 
+The content plan (the kinds of post, this month's mix and the offers):
+
+<content_plan>
+{content_plan}
+</content_plan>
+
 """ + _RULES + """
 
 How to organise:
@@ -148,7 +158,9 @@ How to organise:
 recurring format). Reuse an existing arc by giving its key exactly ("arc:12"); make a new one \
 with a short key of your own ("new:waterproofing") and list it in arcs. Don't list existing arcs.
 - Keep every idea the team wrote (merge only true duplicates), sharpen it, and add a few strong \
-ones the project obviously supports if the team asked for more. Don't repeat existing ideas.
+ones the project obviously supports if the team asked for more. Don't repeat existing ideas. \
+Give each the kind that fits it; when a new idea could go either way, prefer a kind that's \
+short this month.
 - notes: anything the team should know (merged duplicates, ideas that need a fact checked, gaps \
 in the series)."""
 
@@ -163,6 +175,12 @@ Bryan's playbook:
 {playbook}
 </playbook>
 
+The content plan (the kinds of post, this month's mix and the offers):
+
+<content_plan>
+{content_plan}
+</content_plan>
+
 """ + _RULES + """
 
 Refining:
@@ -171,7 +189,8 @@ a clear structure, B-roll covering the talking, a strong end.
 - Shots that are already filmed or have footage are marked; keep those (keep_id = their id) \
 unless the request says otherwise, and plan around them. Reusing an unfilmed shot keeps its \
 comments and history, so give its id in keep_id too; new shots get keep_id 0.
-- arc: return the idea's current arc key unchanged.
+- arc: return the idea's current arc key unchanged. post_type: its current kind when it has \
+one (the team changes kinds themselves); otherwise the kind that fits it.
 - changes: one or two sentences on what you changed, for the team."""
 
 
@@ -187,6 +206,7 @@ def _ask(system: str, user: str, schema: dict, ref: str, client=None, effort: st
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
         output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
         system=system.replace("{brands}", _brands()).replace("{playbook}", playbook.text())
+                     .replace("{content_plan}", content_plan.prompt_text())
                      .replace("{cameras}", "; ".join(f"{k} = {v}" for k, v in CAMERAS.items())),
         messages=[{"role": "user", "content": user}],
     )
@@ -385,11 +405,12 @@ def add_idea(conn, project_id: int, arc_id: int | None, fields: dict, user_id: i
     music_plan = fields.get("music_plan") or (
         {k: fields["music"][k] for k in ("mood", "tempo_bpm", "search")} if fields.get("music") else {})
     cur = conn.execute(
-        """INSERT INTO ideas (batch, status, origin, project_id, arc_id, brand, format, title, hook, angle,
+        """INSERT INTO ideas (batch, status, origin, project_id, arc_id, brand, post_type, format, title, hook, angle,
                purpose, cta, beats, segments, caption, est_seconds, wishlist, music_plan, decision, position,
                created_by, created_at, updated_at)
-           VALUES ('plan', 'new', 'plan', ?, ?, ?, ?, ?, ?, '', ?, ?, '[]', '[]', ?, ?, '[]', ?, 'proposed', ?, ?, ?, ?)""",
+           VALUES ('plan', 'new', 'plan', ?, ?, ?, ?, ?, ?, ?, '', ?, ?, '[]', '[]', ?, ?, '[]', ?, 'proposed', ?, ?, ?, ?)""",
         (project_id, arc_id, fields.get("brand") or (project["brand"] if project else None) or "urban_makers",
+         content_plan.clean_type(fields.get("post_type")),
          fields.get("format") or "talking_head", (fields.get("title") or "Untitled idea").strip()[:300],
          fields.get("hook", ""), fields.get("purpose", ""), fields.get("cta", ""), fields.get("caption", ""),
          fields.get("est_seconds") or 30, json.dumps(music_plan),
@@ -477,9 +498,11 @@ def develop(conn, idea_id: int, request: str = "", client=None) -> str:
                   f"{s['description']}"
                   + (f" | says: {s['line']}" if s["line"] else "") + (f" | on screen: {s['on_screen']}" if s["on_screen"] else "")
                   for s in shots]
+    kind = idea.get("post_type") or "(none yet)"
     user = (f"Project: {project['name'] if project else '-'}. Brief: {project['brief'] if project else '-'}\n\n"
             f"The idea now (arc key: arc:{idea['arc_id'] or 0}):\n"
-            f"  title: {idea['title']}\n  account: {idea['brand']}, format: {idea['format']}, ~{idea['est_seconds'] or 30:.0f}s\n"
+            f"  title: {idea['title']}\n  account: {idea['brand']}, kind: {kind}, format: {idea['format']}, "
+            f"~{idea['est_seconds'] or 30:.0f}s\n"
             f"  hook: {idea['hook'] or '-'}\n  purpose: {idea['purpose'] or '-'}\n  cta: {idea['cta'] or '-'}\n"
             f"  caption: {idea['caption'] or '-'}\n  music: {music_plan.get('mood', '-')}\n"
             "  shots:\n" + ("\n".join(shot_lines) or "  (none yet)") + "\n\n"
@@ -489,10 +512,12 @@ def develop(conn, idea_id: int, request: str = "", client=None) -> str:
     result = _ask(_DEVELOP_SYSTEM, user, DEVELOP_SCHEMA, f"idea:{idea_id}", client)
     new = result["idea"]
     music_plan.update({k: new["music"][k] for k in ("mood", "tempo_bpm", "search")})
+    # The kind is filled in when it's empty; one already set stays (it may be someone's choice).
     conn.execute("""UPDATE ideas SET title = ?, brand = ?, format = ?, hook = ?, purpose = ?, cta = ?, caption = ?,
-                        est_seconds = ?, music_plan = ?, updated_at = ? WHERE id = ?""",
+                        est_seconds = ?, music_plan = ?, post_type = COALESCE(post_type, ?), updated_at = ? WHERE id = ?""",
                  (new["title"], new["brand"], new["format"], new["hook"], new["purpose"], new["cta"],
-                  new["caption"], new["est_seconds"], json.dumps(music_plan), catalog.now(), idea_id))
+                  new["caption"], new["est_seconds"], json.dumps(music_plan), content_plan.clean_type(new.get("post_type")),
+                  catalog.now(), idea_id))
     by_id = {s["id"]: s for s in shots}
     kept, position = set(), 0
     for s in new["shots"]:

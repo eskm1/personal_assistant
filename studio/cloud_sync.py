@@ -16,8 +16,9 @@ STUDIO_CLOUD_SYNC_SECONDS (30 s) it:
   5. runs the jobs only the laptop can do (music shortlists with the Epidemic
      key, "Make this", "Ideas from footage"), and keeps each made idea's
      production status current; moves Review's library ideas to the planner
-     once, and suggests ideas from new footage once uploads go quiet
-     (footage_ideas.py);
+     once, suggests ideas from new footage once uploads go quiet
+     (footage_ideas.py), and gives older ideas their kind of post, a batch at
+     a time (content_plan.py);
   6. reference reels (CONTRACT.md, "Reference guides"): registers videos dropped
      in Studio Inbox\\References\\Ours / \\Inspiration, analyses new references
      (two per tick at most), drafts a new style guide when a brand's set of
@@ -381,7 +382,8 @@ def pull(api: Client, conn) -> dict:
                     "purpose": r["purpose"], "cta": r["cta"], "caption": r["caption"],
                     "est_seconds": r["est_seconds"], "music_plan": json.dumps(r["music"] or {}),
                     "decision": r["decision"], "status": status_, "position": r["position"],
-                    "updated_at": r["updated_at"], "folder": r.get("folder") or ""}
+                    "updated_at": r["updated_at"], "folder": r.get("folder") or "",
+                    "post_type": r.get("post_type")}
         ideas, *stats["ideas"] = _mirror_table(
             conn, "ideas", remote["ideas"], idea_values,
             extra={"batch": "plan", "origin": "plan", "angle": "", "beats": "[]", "segments": "[]",
@@ -685,6 +687,26 @@ def check_footage_ideas(api: Client) -> bool:
             raise
         log.warning("%s (clips.flagged and the planner's \"ideas from footage\" button wait for it)", NEEDS_UPDATE)
     return _footage_online
+
+
+_content_plan_online = False  # migration 20261020000000 (ideas.post_type, content_plan) is online
+_content_plan_checked = 0.0
+
+
+def check_content_plan(api: Client) -> bool:
+    """Is the content-plan migration online? Asked again every 10 minutes while it isn't."""
+    global _content_plan_online, _content_plan_checked
+    if _content_plan_online or time.time() - _content_plan_checked < SCHEMA_RECHECK_SECONDS:
+        return _content_plan_online
+    _content_plan_checked = time.time()
+    try:
+        api.request("GET", "/rest/v1/content_plan", params={"select": "id", "limit": 1})
+        _content_plan_online = True
+    except CloudError as e:
+        if not _missing_table(e):
+            raise
+        log.warning("%s (kinds of post and the month's mix wait for it)", NEEDS_UPDATE)
+    return _content_plan_online
 
 
 def _post_folder_name(title: str, taken: set[str]) -> str:
@@ -1179,6 +1201,7 @@ def sync_once(conn, api: Client | None = None) -> dict:
     remote, maps = pulled["remote"], pulled["remote"]["maps"]
     shoot_plan = check_shoot_plan(api)
     footage = check_footage_ideas(api)
+    content = check_content_plan(api)
     counts["pulled"] = pulled["stats"]
     counts["clips_pushed"] = push_clips(api, conn)
     new_takes = push_takes(api, conn)
@@ -1203,9 +1226,14 @@ def sync_once(conn, api: Client | None = None) -> dict:
     counts["jobs"] = len(jobs)
     # Ideas live in the planner: library ideas move there once; then ideas from new
     # footage, after the clips are pushed (takes point at them). Never stops the sync.
+    import content_plan
     import footage_ideas
-    for name, fn in (("library ideas", lambda: footage_ideas.migrate_library(api, conn)),
-                     ("ideas from footage", lambda: footage_ideas.run_due(conn, api))):
+    steps = [("library ideas", lambda: footage_ideas.migrate_library(api, conn)),
+             ("ideas from footage", lambda: footage_ideas.run_due(conn, api))]
+    if content:  # older ideas get their kind of post, a batch at a time (content_plan.py)
+        steps.append(("kinds of post", lambda: content_plan.backfill(api, remote["ideas"], remote["projects"],
+                                                                     remote["arcs"])))
+    for name, fn in steps:
         try:
             value = fn()
             if value:
@@ -1233,7 +1261,7 @@ def sync_once(conn, api: Client | None = None) -> dict:
             log.warning("Cloud sync, references failed (will retry): %s", message)
         status["ref_problems"] = [message]
         refs = {}
-    if not shoot_plan or not footage:
+    if not shoot_plan or not footage or not content:
         status["note"] = NEEDS_UPDATE
     jobs += refs.pop("lines", [])
     counts["refs"] = {k: v for k, v in refs.items() if k != "skipped"}

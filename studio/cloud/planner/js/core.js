@@ -39,6 +39,34 @@ export const CAMERA_LONG = { iphone: "iPhone 16 Pro", zfc: "Nikon Z fc", gopro: 
 export const CAMERA_ORDER = ["iphone", "zfc", "gopro", "any"];
 export const SHOT_STATE = { needed: "Needed", filmed: "Filmed: waiting for upload", got: "Got it", retake: "Retake" };
 export const DECISION = { go: "Go", parked: "Parked", proposed: "Not decided" };
+// The five kinds of post (ideas.post_type): the job each post does (studio/content_plan.py).
+export const POST_TYPES = ["knowhow", "ideas", "onsite", "finished", "offer"];
+export const POST_TYPE = { knowhow: "Know-how", ideas: "Ideas", onsite: "On site", finished: "Finished homes", offer: "Work with us" };
+export const KIND_INFO = {
+  knowhow: { stage: "Get found", job: "Teach something practical people save and share", ask: "Save this / follow for more" },
+  ideas: { stage: "Get found", job: "Design thinking: layouts, zoning, light, colour", ask: "Save this / which would you pick?" },
+  onsite: { stage: "Build trust", job: "Show the craft and care while the work happens", ask: "Follow this project" },
+  finished: { stage: "Build trust", job: "Proof: the portfolio, before and after, the owners' reaction", ask: "See the whole project / talk to us about yours" },
+  offer: { stage: "Get enquiries", job: "Turn followers into enquiries", ask: "One of your offers" },
+};
+export const isKind = (k) => POST_TYPES.includes(k);
+// "Save this / which would you pick?" stays as it is; anything else gets a full stop.
+export const sentence = (s) => (/[.?!]$/.test(String(s)) ? String(s) : `${s}.`);
+// A small coloured dot (and the name) for a post's kind.
+export const kindDot = (k) => (isKind(k) ? `<span class="kdot ${k}" aria-hidden="true"></span>` : "");
+export const kindChip = (k) => (isKind(k) ? `<span class="chip kind ${k}">${kindDot(k)}${esc(POST_TYPE[k])}</span>` : "");
+// ideas.post_type and the content plan come with a database update; until then the planner
+// asks for ideas without it (see withKinds).
+export const schema = { kinds: true };
+export const withKinds = (cols) => (schema.kinds ? `${cols},post_type` : cols);
+// Run a query that names post_type; if the column isn't there yet, again without it.
+export async function kindsQuery(run) {
+  try { return await run(); } catch (err) {
+    if (!schema.kinds || !missingTable(err)) throw err;
+    schema.kinds = false;
+    return run();
+  }
+}
 export const VERDICT = { good: "Good", check: "Check", retake: "Retake" };
 // The laptop's production status, written into ideas.production.
 export const PRODUCTION = {

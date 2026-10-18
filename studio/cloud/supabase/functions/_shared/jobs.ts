@@ -1,6 +1,7 @@
 // Cloud job bookkeeping in the jobs table, and the context the prompts need.
 import { check, db } from "./db.ts";
 import { ClaudeError, type Usage } from "./claude.ts";
+import { contentPlanText, type MonthCounts, type Offer } from "./prompts.ts";
 
 /** A failure whose message is meant for the team (shown on the job as is). */
 export class JobError extends Error {}
@@ -60,12 +61,18 @@ export async function runJob(id: number, work: () => Promise<Record<string, unkn
   }
 }
 
-/** brands.md and the playbook, pushed by the laptop ("" when missing). */
-export async function loadContext(): Promise<{ brands: string; playbook: string }> {
-  const rows = check(await db().from("context").select("key, value"), "read context") as {
-    key: string;
-    value: string;
-  }[];
+/** brands.md and the playbook, pushed by the laptop ("" when missing), and the content plan
+ * section: the kinds of post, this month's gaps and the offers (the defaults when the
+ * content_plan table or content_month() isn't there yet). */
+export async function loadContext(): Promise<{ brands: string; playbook: string; contentPlan: string }> {
+  const [ctx, plan, month] = await Promise.all([
+    db().from("context").select("key, value"),
+    db().from("content_plan").select("posts_per_week, offers").eq("id", 1).maybeSingle(),
+    db().rpc("content_month"),
+  ]);
+  const rows = check(ctx, "read context") as { key: string; value: string }[];
   const get = (k: string) => rows.find((r) => r.key === k)?.value ?? "";
-  return { brands: get("brands"), playbook: get("playbook") };
+  const planRow = plan.error ? null : plan.data as { posts_per_week?: number; offers?: Offer[] } | null;
+  const counts = month.error ? null : month.data as MonthCounts | null;
+  return { brands: get("brands"), playbook: get("playbook"), contentPlan: contentPlanText(planRow, counts) };
 }

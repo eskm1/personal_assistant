@@ -461,6 +461,20 @@ planning, the library ideas still waiting on Review's Ideas tab move to the plan
 **From your footage** (their footage as shots with takes, their wish list as shots to film), and
 Review no longer has an Ideas tab.
 
+**Kinds of post and the month's mix.** Every post has a job, its kind: **Know-how** and **Ideas** (to
+get found), **On site** and **Finished homes** (to build trust) and **Work with us** (to get enquiries). At
+the top of Plan, **This month** shows how the month is going against your targets ("8 of 13 planned · 4
+ready", one bar per kind, "2 short" in red); tap a kind to see its posts and the ones waiting for your Go.
+A post counts once it's Go (until it's approved), or when it's approved that month; Studio never posts, so
+"ready" means approved. **Targets and offers** (on the strip, or More on a phone) is where you set how many
+of each kind you want a month (it shows the total and about how many a week) and the offers people can take
+you up on (name, what's included, how a post words the ask). Michelle sees them but can't change them.
+Claude gives every idea it writes a kind, leans toward the kinds that are short this month, and uses only
+your offers: it never makes up a price, discount or promotion. You can change any idea's kind on the idea
+(or pick one in New idea); ideas without one are sorted by Studio a few at a time (a cent or two each
+batch). Posts that aren't about one client's renovation go in the standing **Topics** project, like
+**Everyday posts** for loose footage. After this update, run `cloud_setup.py --update` once (below).
+
 ### Planning online
 
 Planning can live on the online planner instead (a website on Netlify with its data in Supabase),

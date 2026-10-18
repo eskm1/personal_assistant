@@ -5,7 +5,7 @@ import {
   esc, sb, must, invoke, toast, options, ago, mmss, shortDate, plural, typingIn, keepDrafts, isOwner, ownerName,
   nameOf, state, pbarHTML, prepShots, progress, bestTake, takeRetake, takeFlags, retakeBadge, signPaths, stillUrl,
   takePaths, jobView, jobActive, kickDevelop, laptopWait, httpUrl, httpsUrl, openModal, closeModal, syncInert,
-  missingTable, dayLabel, folderLineHTML, pageMode, PHONE,
+  missingTable, dayLabel, folderLineHTML, pageMode, PHONE, POST_TYPES, POST_TYPE, KIND_INFO, kindDot, sentence,
 } from "./core.js";
 import { plan } from "./board.js";
 import { uploadButtonsHTML, rememberShot } from "./upload.js";
@@ -424,8 +424,10 @@ function renderPanel() {
       <div class="meta-grid" data-saved-scope>
         <label>Arc<select data-idea-field="arc_id">${`<option value="">Unsorted</option>` + d.arcs.map((a) => `<option value="${esc(a.id)}" ${a.id === d.arc_id ? "selected" : ""}>${esc(a.title)}</option>`).join("")}</select></label>
         ${oneBrand ? "" : `<label>Account<select data-idea-field="brand">${options(ACCOUNTS, BRAND, d.brand)}</select></label>`}
+        ${"post_type" in d ? `<label class="kind-pick">Kind of post<span class="kind-select">${kindDot(d.post_type)}<select data-idea-field="post_type" aria-describedby="kind-hint">${options(POST_TYPES, POST_TYPE, d.post_type || "", "Not set: Studio picks one")}</select></span></label>` : ""}
         <label>Format<select data-idea-field="format">${options(PLAN_FORMATS, FORMAT, d.format)}</select></label>
         <label>Length<span class="num-field"><input type="number" min="3" max="180" step="1" data-idea-field="est_seconds" value="${esc(Math.round(d.est_seconds || 30))}" data-orig="${esc(Math.round(d.est_seconds || 30))}"> s</span></label>
+        ${"post_type" in d ? `<p class="kind-hint muted small" id="kind-hint">${kindHint(d.post_type)}</p>` : ""}
         <span class="saved" aria-live="polite"></span>
       </div>
       <div class="box"><h3>${owner ? "Your call" : `${esc(ownerName())}'s call`}</h3>${decision}
@@ -451,6 +453,13 @@ function renderPanel() {
   panel().scrollTop = scroll;
 }
 
+// What a kind of post is for, under the picker.
+function kindHint(k) {
+  const info = KIND_INFO[k];
+  if (!info) return "Every post has a job. Pick its kind, or leave it and Studio picks one from the plan.";
+  return `<strong>${esc(POST_TYPE[k])}</strong> (${esc(info.stage.toLowerCase())}): ${esc(info.job)}. Ask: ${esc(sentence(info.ask))}`;
+}
+
 function flashSaved(el) {
   const s = el.closest("[data-saved-scope]")?.querySelector(".saved");
   if (!s) return;
@@ -467,6 +476,7 @@ async function saveIdeaField(el) {
   const key = el.dataset.ideaField;
   let value = el.value;
   if (key === "arc_id") value = value ? Number(value) : null;
+  else if (key === "post_type") value = value || null;
   else if (key === "est_seconds") {
     value = Number(value);
     if (!(value >= 3 && value <= 180)) { toast("Length must be between 3 and 180 seconds."); el.value = el.dataset.orig; return; }

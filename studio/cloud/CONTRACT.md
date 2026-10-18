@@ -266,3 +266,67 @@ the planner's locally (`origin 'plan'`, `remote_id`).
 (boolean, written by the Studio machine) and `clips.flagged` (generated: `verdict = 'retake'` or
 `usable = false`). Cards and thumbnails warn only when `flagged`; `check` and the tips belong in the
 detail view. The dashboard's board items carry the same `flagged`.
+
+## Content plan: kinds of post and the month's mix (migration 20261020000000_content_plan.sql)
+
+Every post has a job, its **kind** (`ideas.post_type`), and the month has a mix Bryan sets (how many of each
+kind). Studio never posts, so the month tracks what's planned and what's approved ("ready").
+
+| value | label | stage | job | ask |
+|---|---|---|---|---|
+| `knowhow` | Know-how | Get found | teach something practical people save and share | save this / follow for more |
+| `ideas` | Ideas | Get found | design thinking: layouts, zoning, light, colour | save this / which would you pick? |
+| `onsite` | On site | Build trust | the craft and care while the work happens | follow this project |
+| `finished` | Finished homes | Build trust | proof: portfolio, before/after, the owners | see the whole project / talk to us |
+| `offer` | Work with us | Get enquiries | turn followers into enquiries | one of the offers |
+
+The list lives in three places, kept in step: `studio/content_plan.py`, `functions/_shared/prompts.ts`,
+`planner/js/core.js`.
+
+**Schema.**
+- `ideas.post_type` text null, one of the five. Not an owner-only field: anyone who can edit ideas sets it.
+- `ideas.format` also allows `carousel` (carousels are built in a later step).
+- `jobs.kind` also allows `carousel` and `topics` (later steps); there are no insert policies for them yet.
+- `projects.standing` text null unique: `everyday` (the Everyday posts project, footage_ideas.py) or `topics`
+  (the standing **Topics** project for posts not tied to a client's renovation; the migration makes it, and
+  marks an existing Everyday posts project).
+- `content_plan`, one row (`id = 1`): `posts_per_week` (default 3), `mix` jsonb `{kind: monthly target}`
+  (default `{"knowhow":4,"ideas":2,"onsite":3,"finished":2,"offer":2}`, integers 0..60, known kinds only),
+  `offers` jsonb `[{name, details, ask}]` (at most 10; default Free consultation, Site visit, Floor plan
+  review), `updated_by`, `updated_at` (stamped by trigger). RLS: members read; only the owner updates; nobody
+  inserts or deletes. In the realtime publication.
+- `content_month(as_of timestamptz default now()) -> jsonb` (members and the service role; runs with the
+  caller's rights): `{month: "2026-10", starts_on, ends_on, posts_per_week, target, planned, ready, untyped,
+  kinds: {<kind>: {target, planned, ready, short, ids}}}`. Months are Singapore time. A post counts for the
+  month when it's **on its way** (decision Go, or made / in the edit, and not dismissed, not rejected, not
+  approved yet, in an active project) or was **approved (or posted) this month** (`ideas.production.status`
+  and `production.updated_at`, which the Studio machine writes). `ready` = approved this month. `untyped` =
+  counted posts with no kind yet. The planner, the Edge Functions and the Studio machine all use this one
+  function.
+
+**Who writes the kind.**
+- Claude: `plan-organise` (every new idea), `plan-develop` (only when the idea has none; a kind already set
+  is kept), footage_ideas.py (new ideas from footage), plan.py (planning on the Studio machine). An unknown
+  value is dropped (null).
+- People: the planner's kind picker on the idea page and in New idea (optional).
+- The Studio machine fills in the rest (`content_plan.backfill`, inside the sync): ideas with no kind, not
+  dismissed, at least 10 minutes old, 20 per Claude call (effort low), one call per tick, written with
+  `post_type=is.null` so a kind someone picked meanwhile is never overwritten. An idea Claude answers for
+  without sorting is tried twice, then left for a person (`cloud_state.json` `post_type_tried`); a failed call
+  waits an hour.
+
+**What Claude is told.** Every planning prompt gets a content-plan section (`{content_plan}` in the
+organise/develop systems; the user message in footage ideas): the five kinds with their job and ask, this
+month's numbers per kind and which are short ("lean toward these; never force a post into a kind it isn't"),
+and the offers: the ONLY things a Work with us post or any call to action may offer, never an invented
+price, discount or promotion. Without the table (before the update) the defaults are used and no month.
+
+**The local mirror** keeps `post_type` (catalog `ideas.post_type`). Before the migration is online the Studio
+machine sends no `post_type` and doesn't backfill (`cloud_sync.check_content_plan`, rechecked every 10 min).
+
+**Planner.** A "This month" strip at the top of Plan (month, "N of target planned · M ready", a meter per
+kind, "2 short" in red), each meter opening `#/month/<kind>` (the posts counting this month and the ones
+waiting for a decision). `#/content-plan` (More on phones, "Targets and offers" on the strip): the targets
+per kind with the total and per-week equivalent, the offers, and the five kinds explained; the owner edits,
+the team reads. Cards show a coloured kind chip. Until the database update the strip stays away and ideas
+load without `post_type`.

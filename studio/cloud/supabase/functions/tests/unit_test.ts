@@ -12,10 +12,12 @@ import {
   shotState,
 } from "../_shared/plan.ts";
 import {
+  contentPlanText,
   DEVELOP_SCHEMA,
   DEVELOP_SYSTEM,
   ORGANISE_NO_SHOTS_SCHEMA,
   ORGANISE_SCHEMA,
+  ORGANISE_SYSTEM,
   renderSystem,
 } from "../_shared/prompts.ts";
 
@@ -152,4 +154,68 @@ Deno.test("cost: Opus 5.5 rates, cache tokens, fallback iterations", () => {
     ],
   }, "claude-opus-5");
   assertEquals([f.cost_usd, f.input_tokens, f.model], [9, 2_000_000, "claude-opus-5"]);
+});
+
+Deno.test("content plan: kinds, this month's gaps and only the listed offers reach the prompts", () => {
+  const text = contentPlanText(
+    { posts_per_week: 3, offers: [{ name: "Free consultation", details: "30 min", ask: "Book one" }, { name: " " }] },
+    {
+      month: "2026-10",
+      target: 13,
+      planned: 8,
+      kinds: {
+        knowhow: { target: 4, planned: 2 },
+        ideas: { target: 2, planned: 0 },
+        onsite: { target: 3, planned: 4 },
+      },
+    },
+  );
+  for (const k of ["knowhow (Know-how", "ideas (Ideas", "onsite (On site", "finished (Finished homes", "offer (Work"]) {
+    assert(text.includes(k), k);
+  }
+  assert(text.includes("October 2026: 8 of 13 posts planned (3 a week)."));
+  assert(text.includes("Know-how 2 of 4 (2 short); Ideas 0 of 2 (2 short); On site 4 of 3; Finished homes 0 of 0"));
+  assert(text.includes("Short this month: Know-how, Ideas."));
+  assert(text.includes('- Free consultation: 30 min (ask: "Book one")'));
+  assert(!text.includes("Site visit") && text.includes("Never invent a price"));
+  // No plan row yet: the default offers; no counts: no month line.
+  const plain = contentPlanText();
+  assert(plain.includes("- Site visit") && plain.includes("- Floor plan review") && !plain.includes("short"));
+  assert(contentPlanText({ offers: [] }).includes("(none listed yet"));
+  // The placeholder is filled in both systems, with the defaults when nothing was loaded.
+  for (const t of [ORGANISE_SYSTEM, DEVELOP_SYSTEM]) {
+    assert(t.includes("{content_plan}"));
+    const filled = renderSystem(t, "b", "p", text);
+    assert(!filled.includes("{content_plan}") && filled.includes("Short this month"));
+    assert(renderSystem(t, "b", "p").includes("- Free consultation"));
+  }
+});
+
+Deno.test("ideas carry a kind of post; unknown kinds are dropped", () => {
+  // deno-lint-ignore no-explicit-any
+  const idea = (ORGANISE_NO_SHOTS_SCHEMA as any).properties.ideas.items;
+  assert(idea.required.includes("post_type"));
+  assertEquals(idea.properties.post_type.enum, ["knowhow", "ideas", "onsite", "finished", "offer"]);
+  assertEquals(ideaFields({ post_type: "onsite" }, { brand: "urban_makers" }).post_type, "onsite");
+  assertEquals(ideaFields({ post_type: "promo" }, { brand: "urban_makers" }).post_type, null);
+  const p = developPrompt(
+    null,
+    {
+      arc_id: 1,
+      title: "T",
+      brand: "urban_makers",
+      format: "talking_head",
+      post_type: "knowhow",
+      est_seconds: 30,
+      hook: "",
+      purpose: "",
+      cta: "",
+      caption: "",
+      music: null,
+    },
+    [],
+    [],
+    "",
+  );
+  assert(p.includes("kind: knowhow"));
 });

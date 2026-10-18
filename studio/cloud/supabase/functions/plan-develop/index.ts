@@ -106,7 +106,7 @@ async function shotsWithState(ideaId: number): Promise<StatefulShot[]> {
 async function develop(ideaId: number, request: string, deadline: number) {
   const idea = check(
     await db().from("ideas").select(
-      "id, project_id, arc_id, title, brand, format, est_seconds, hook, purpose, cta, caption, music",
+      "id, project_id, arc_id, title, brand, format, post_type, est_seconds, hook, purpose, cta, caption, music",
     ).eq("id", ideaId).maybeSingle(),
     "read idea",
   ) as (DevelopIdea & { id: number; project_id: number }) | null;
@@ -122,7 +122,7 @@ async function develop(ideaId: number, request: string, deadline: number) {
   const comments = check(commentsRes, "read comments") as { author_name: string; body: string }[];
 
   const { result, usage } = await ask<{ idea?: unknown; changes?: unknown }>({
-    system: renderSystem(DEVELOP_SYSTEM, context.brands, context.playbook),
+    system: renderSystem(DEVELOP_SYSTEM, context.brands, context.playbook, context.contentPlan),
     user: developPrompt(project, idea, shots, comments, request),
     schema: DEVELOP_SCHEMA,
     effort: "high",
@@ -132,11 +132,13 @@ async function develop(ideaId: number, request: string, deadline: number) {
   });
 
   const fields = ideaFields(result.idea, { brand: idea.brand, format: idea.format, title: idea.title });
-  const { music: newMusic, ...ideaUpdate } = fields;
+  const { music: newMusic, post_type: newType, ...ideaUpdate } = fields;
+  // The kind is filled in when it's empty; one already set stays (it may be someone's choice).
+  const kind = !idea.post_type && newType ? { post_type: newType } : {};
   // Keep the music shortlist / chosen track; only the plan (mood, tempo, search) changes.
   const music = { ...(idea.music ?? {}), ...newMusic };
   const updated = check(
-    await db().from("ideas").update({ ...ideaUpdate, music }).eq("id", ideaId).select("id"),
+    await db().from("ideas").update({ ...ideaUpdate, ...kind, music }).eq("id", ideaId).select("id"),
     "update idea",
   ) as { id: number }[];
   if (!updated.length) throw new JobError("The idea was deleted");
