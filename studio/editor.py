@@ -13,6 +13,7 @@ The editor (phase 5): turns a planned production into a draft Reel.
      other accounts get a note on what to add in the Instagram app.
   6. Checks: the draft is re-transcribed to confirm every word survived the cuts,
      and its loudness is measured. Then it lands in To review.
+  7. Studio's read (draft_review.py): Claude reviews the finished draft for Bryan.
 """
 import difflib
 import html
@@ -584,6 +585,8 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
     conn.commit()
     log.info("Production %s v%d rendered: %.1fs, words %s, %s LUFS", production_id, version, total,
              qa.get("match"), qa.get("lufs"))
+    import draft_review
+    draft_review.safe_run(conn, production_id)  # Studio's read; a failure leaves the draft as it is
     return final
 
 

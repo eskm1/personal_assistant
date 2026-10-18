@@ -1030,6 +1030,11 @@ $("#planner").addEventListener("drop", async (e) => {
 // ── Viewer ──────────────────────────────────────────────────────────────────
 
 const player = () => $("#player-frame video");
+// Drafts and raw clips open as a page: what to fix first, the video as a small tile.
+const isDetail = (kind) => kind === "production" || kind === "clip";
+const detailMode = () => !$("#viewer").hidden && $("#viewer").classList.contains("detail-mode");
+const PHONE = window.matchMedia("(max-width: 720px)");
+const phone = () => PHONE.matches;
 
 function openAny(item) {
   if (item?.kind === "plan") openPlanIdea(item.id);
@@ -1044,6 +1049,9 @@ async function openItem(item) {
   if (location.hash !== route) history.pushState(null, "", route);
   $("#viewer").hidden = false;
   $("#viewer").classList.remove("plan-mode");
+  $("#viewer").classList.toggle("detail-mode", isDetail(item.kind));
+  $("#viewer").scrollTop = 0;
+  if (!isDetail(item.kind)) { $("#detail-head").innerHTML = ""; $("#tile-meta").innerHTML = ""; renderDecisionBar(); }
   document.body.style.overflow = "hidden";
   renderPlayer(item);
   await loadDetail();
@@ -1058,7 +1066,8 @@ function closeViewer(silent = false) {
   state.detail = null;
   $("#viewer").hidden = true;
   if (wasPlan) $("#player-frame").innerHTML = "";
-  $("#viewer").classList.remove("plan-mode");
+  $("#viewer").classList.remove("plan-mode", "detail-mode");
+  $("#decision-bar").hidden = true;
   document.body.style.overflow = "";
   if (silent) return;
   if (wasPlan) {
@@ -1073,6 +1082,8 @@ function closeViewer(silent = false) {
 function renderPlayer(item) {
   const frame = $("#player-frame");
   const video = safeSrc(item.video), original = safeSrc(item.original), thumb = safeSrc(item.thumb);
+  frame.classList.remove("playing");
+  if (video && isDetail(item.kind)) return renderTile(item, video, original, thumb);
   if (video) {
     const useOriginal = original && recall("studio.original") === "1";
     frame.innerHTML = `<video controls autoplay playsinline src="${esc(useOriginal ? original : video)}" ${thumb ? `poster="${esc(thumb)}"` : ""}></video>
@@ -1092,6 +1103,49 @@ function renderPlayer(item) {
   }
 }
 
+// The small 9:16 tile on a draft's or clip's page: plays in place (full screen on a phone).
+function renderTile(item, video, original, thumb) {
+  const frame = $("#player-frame");
+  const useOriginal = original && recall("studio.original") === "1";
+  const what = item.kind === "production" ? "draft" : "clip";
+  frame.innerHTML = `<video playsinline preload="metadata" src="${esc(useOriginal ? original : video)}" ${thumb ? `poster="${esc(thumb)}"` : ""}></video>
+    <button class="tile-play" id="tile-play" aria-label="Play the ${what}"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg></button>
+    ${item.duration ? `<span class="tile-time">${esc(mmss(item.duration))}</span>` : ""}
+    ${original ? `<button class="quality${useOriginal ? " on" : ""}" id="quality" title="Switch between the 1080p preview and your untouched file">${useOriginal ? "Original" : "1080p"}</button>` : ""}`;
+  const v = player();
+  v.addEventListener("timeupdate", updatePinLabel);
+  v.addEventListener("play", () => { frame.classList.add("playing"); if (!phone()) v.controls = true; });
+  v.addEventListener("ended", () => frame.classList.remove("playing"));
+  v.addEventListener("webkitendfullscreen", () => v.pause());  // iPhone: leaving full screen stops it
+  v.addEventListener("error", () => {
+    if (v.src.endsWith("/original")) {
+      toast("This browser can't play the original (iPhone HEVC). Showing the 1080p preview.");
+      setQuality(item, false);
+    }
+  });
+  $("#quality")?.addEventListener("click", () => setQuality(item, !$("#quality").classList.contains("on")));
+}
+
+// Play from a moment: in the tile on a computer, full screen on a phone.
+function playAt(at) {
+  const v = player();
+  if (!v) return;
+  if (at != null && Number.isFinite(at)) v.currentTime = at;
+  v.play().catch(() => {});
+  if (phone() && detailMode()) playFull(v);
+}
+function playFull(v = player()) {
+  if (!v) return;
+  v.play().catch(() => {});
+  try {
+    const go = v.requestFullscreen ? v.requestFullscreen() : v.webkitEnterFullscreen?.();
+    go?.catch?.(() => {});
+  } catch { /* plays in the tile instead */ }
+}
+document.addEventListener("fullscreenchange", () => {
+  if (!document.fullscreenElement && phone() && detailMode()) player()?.pause();
+});
+
 function setQuality(item, original) {
   const video = player();
   const at = video.currentTime, wasPlaying = !video.paused;
@@ -1103,7 +1157,7 @@ function setQuality(item, original) {
   }, { once: true });
   const btn = $("#quality");
   btn.classList.toggle("on", original);
-  btn.textContent = original ? "Original" : "1080p preview";
+  btn.textContent = original ? "Original" : detailMode() ? "1080p" : "1080p preview";
 }
 
 async function loadDetail() {
@@ -1137,6 +1191,14 @@ async function refreshOpenItem() {
     if (fresh.video !== before.video) renderPlayer(fresh);
     renderPanel();
     if (fresh.status === "ready") toast(`v${fresh.version} is ready to review`);
+    return;
+  }
+  // Studio's read arrived (or failed): show it, but never under someone's typing.
+  const readSig = (d) => JSON.stringify([d.review_state, d.review]);
+  if (readSig(fresh) !== readSig(before) && !typingIn($("#panel"))) {
+    state.detail = fresh;
+    renderPanel();
+    if (fresh.review_state === "ready" && before.review_state === "running") toast("Studio's read is ready");
   }
 }
 
@@ -1157,27 +1219,8 @@ function resolveHTML(d) {
   return `<div class="box"><h3>Open in DaVinci Resolve</h3>${body}</div>`;
 }
 
-function notesHTML(notes, currentVersion, isProduction) {
-  if (!notes.length) return `<p class="muted">No notes yet.</p>`;
-  return `<ul class="notes">${notes.map((n) => {
-    const stamp = n.at_seconds == null ? "" : `<button class="stamp" data-seek="${Number(n.at_seconds) || 0}">${mmss(n.at_seconds)}</button>`;
-    const tags = [
-      isProduction && n.version !== currentVersion ? `v${n.version}` : "",
-      n.status === "addressed" ? "addressed" : "",
-      n.remember ? "in playbook" : "",
-    ].filter(Boolean).join(" · ");
-    return `<li class="${esc(n.status)}">${n.author ? `<span class="author">${esc(n.author)}</span>` : ""}${stamp}<span class="note-body">${esc(n.body)}</span>${tags ? `<span class="tag">${esc(tags)}</span>` : ""}</li>`;
-  }).join("")}</ul>`;
-}
-
 function money(usd) {
   return usd < 0.01 ? "under 1¢" : `$${usd.toFixed(2)}`;
-}
-
-function shotsHTML(heading, shots) {
-  if (!shots || !shots.length) return "";
-  return `<div><h3>${esc(heading)}</h3><ul class="shots">${shots.map((s) =>
-    `<li><strong>${esc(s.shot)}</strong><span>${esc(s.why)}</span></li>`).join("")}</ul></div>`;
 }
 
 function musicHTML(m) {
@@ -1189,64 +1232,11 @@ function musicHTML(m) {
   return `<div><h3>Music</h3><p>${text}</p></div>`;
 }
 
-function qaHTML(qa) {
-  if (!qa) return "";
-  const parts = [];
-  if (qa.match != null) parts.push(`${Math.round(qa.match * 100)}% of words intact`);
-  if (qa.lufs != null) parts.push(`${qa.lufs.toFixed(1)} LUFS`);
-  if (qa.true_peak != null) parts.push(`peak ${qa.true_peak.toFixed(1)} dB`);
-  const warn = qa.match != null && qa.match < 0.95 && qa.missing?.length
-    ? `<p class="muted">Possibly clipped or misheard: ${qa.missing.map(esc).join(", ")}</p>` : "";
-  return parts.length ? `<div><h3>Checks</h3><p>${parts.join(" · ")}</p>${warn}</div>` : "";
-}
-
-// A clip's quality check: the verdict, what's wrong and what to do next time.
-function qualityHTML(q) {
-  if (!q) return `<div class="qcheck"><h3>Quality</h3><p class="muted">Not checked: this clip came in before quality checks.</p></div>`;
-  const num = (v, digits = 0) => (typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : null);
-  const pct = (v, digits = 0) => (typeof v === "number" && Number.isFinite(v) ? `${(v * 100).toFixed(digits)}%` : null);
-  const a = q.audio || {}, p = q.picture || {};
-  const rows = [
-    ["Voice level", num(a.voice_db, 1) && `${num(a.voice_db, 1)} dB`],
-    ["Background noise", num(a.background_db, 1) && `${num(a.background_db, 1)} dB`],
-    ["Voice above background", num(a.snr_db, 1) && `${num(a.snr_db, 1)} dB (18+ is clean)`],
-    ["Distorted samples", pct(a.clipped_fraction, 2)],
-    ["Speech clarity", num(a.speech_confidence, 2) && `${num(a.speech_confidence, 2)} (closer to 0 is clearer)`],
-    ["Brightness", pct(p.brightness)],
-    ["Blown highlights", pct(p.blown_fraction) && `${pct(p.blown_fraction)} of the frame`],
-    ["Contrast", pct(p.contrast)],
-    ["Frames checked", num(p.frames_checked)],
-  ].filter(([, v]) => v);
-  const flags = q.flags || [];
-  return `<div class="qcheck v-${esc(q.verdict)}">
-    <h3>Quality</h3>
-    <p class="verdict-line"><span class="dot"></span>${esc(VERDICT[q.verdict] || q.verdict)}</p>
-    ${flags.length ? `<ul class="flags">${flags.map((f) => `<li class="${esc(f.level)}">
-      <strong>${esc(f.text)}</strong>${f.tip ? `<span>Next time: ${esc(f.tip)}</span>` : ""}</li>`).join("")}</ul>` : ""}
-    <details><summary>Measurements</summary>
-      ${rows.length ? `<dl class="measures">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : `<p>No measurements.</p>`}
-      <p class="muted small">${q.judged ? "Focus, stability, framing and lighting were also checked by Claude." : "Focus, stability and framing weren't checked (tagged without Claude)."}</p>
-    </details>
-  </div>`;
-}
-
 function usedInPlanHTML(shots) {
   if (!shots?.length) return "";
   return `<div><h3>Used in the plan</h3><ul class="moments">${shots.map((s) => `<li><button data-open-plan-idea="${esc(s.idea_id)}">
     <strong>${esc(s.idea_title)}</strong> ${esc(s.description)}
     <span class="muted small">${mmss(s.start)}–${s.end != null ? mmss(s.end) : "end"} · ${s.source === "auto" ? "matched automatically" : "added by hand"}</span></button></li>`).join("")}</ul></div>`;
-}
-
-function composerHTML(placeholder) {
-  return `<div>
-    <h3>Add a note</h3>
-    <textarea id="note-body" placeholder="${esc(placeholder)}"></textarea>
-    <div class="row" style="margin-top:8px">
-      <label class="check"><input type="checkbox" id="note-pin" checked> <span id="pin-label">Pin to this moment</span></label>
-      ${isOwner() ? `<label class="check" title="Adds it to the playbook the editor follows on every future edit"><input type="checkbox" id="note-remember"> Remember for future edits</label>` : ""}
-      <button class="btn" id="note-add" style="margin-left:auto">Add note</button>
-    </div>
-  </div>`;
 }
 
 const bryanDecides = (text) => `<div class="box bryan"><p><strong>Bryan decides.</strong> ${esc(text)}</p></div>`;
@@ -1292,7 +1282,8 @@ function renderPanel() {
       ${d.beats.length ? `<div><h3>Structure</h3><ol class="beats">${d.beats.map((b) => `<li>${esc(b)}</li>`).join("")}</ol></div>` : ""}
       <div><h3>Footage (${d.segments.length} segment${d.segments.length > 1 ? "s" : ""})</h3><ul class="moments">${d.segments.map((s, i) =>
         `<li><button data-segment="${i}"><strong>${esc(s.clip_title)} · ${mmss(s.start)}–${mmss(s.end)}</strong> ${esc(s.purpose)}</button></li>`).join("")}</ul></div>
-      ${shotsHTML("Film these to make it stronger", d.wishlist)}
+      ${d.wishlist?.length ? `<section class="folds">${foldHTML("idea", "wishlist", "Film these to make it stronger", plural(d.wishlist.length, "shot"),
+        `<ul class="shots">${d.wishlist.map((w) => `<li><strong>${esc(w.shot)}</strong><span>${esc(w.why)}</span></li>`).join("")}</ul>`)}</section>` : ""}
       <div><h3>Caption</h3><textarea id="caption">${esc(d.caption)}</textarea></div>
       ${d.status === "new" ? adoptHTML() : ""}
       ${d.status !== "new" ? `<div class="box"><p>Already sent to the editor.</p></div>`
@@ -1304,77 +1295,361 @@ function renderPanel() {
     return;
   }
 
-  if (d.kind === "production") {
-    const canDecide = d.status === "ready";
-    const openNow = d.notes.filter((n) => n.status === "open").length;
-    const settled = d.status === "approved" || d.status === "rejected";
-    const statusBox = canDecide || d.status === "failed" ? "" : `<div class="box"><p>${d.status === "revising" || d.status === "producing" || d.status === "planned"
-      ? "The editor is working on this. It comes back to To review when the new version renders."
-      : `${esc(STATUS[d.status] || d.status)}.`}</p>
-      ${owner && settled ? `<div class="row" style="margin-top:10px"><button class="btn" id="reopen" title="Move it back to To review so you can decide again">Back to review</button></div>` : ""}</div>`;
-    panel.innerHTML = `${head}
-      ${d.status === "failed" ? `<div class="box"><p><strong>The edit failed:</strong> ${esc(d.error)}</p>
-        ${owner ? `<div class="row" style="margin-top:10px"><button class="btn primary" id="retry-edit">Retry edit</button></div>` : `<p class="muted">Bryan can retry it.</p>`}</div>` : ""}
-      ${d.edit_summary ? `<div><h3>What the editor did</h3><p>${esc(d.edit_summary)}</p></div>` : ""}
-      ${musicHTML(d.music)}
-      ${qaHTML(d.qa)}
-      ${shotsHTML("The editor wished it had", d.missing_shots)}
-      ${d.idea ? `<div><h3>Brief</h3><p>${esc(d.idea)}</p></div>` : ""}
-      ${d.cost ? `<p class="muted">API cost so far: ${money(d.cost)}${d.graphics ? ` · ${d.graphics} graphic${d.graphics > 1 ? "s" : ""}` : ""}</p>` : ""}
-      ${resolveHTML(d)}
-      ${d.sources.length ? `<div><h3>Made from</h3><p class="muted">${d.sources.map((s) => esc(s.title)).join(", ")}</p></div>` : ""}
-      ${statusBox}
-      <div><h3>Notes</h3>${notesHTML(d.notes, d.version, true)}</div>
-      ${composerHTML("What should change? e.g. \"Cut the first two seconds\", \"Music too loud here\"")}
-      <div><h3>Post caption</h3><textarea id="caption" placeholder="The caption you'll post. You have the final say.">${esc(d.caption)}</textarea>
-        <div class="row" style="margin-top:8px">${canDecide && owner ? "" : `<button class="btn" id="caption-save">Save caption</button>`}
-        ${d.video ? `<a class="btn" href="${d.video}&download=1" download>Download video</a>` : ""}</div></div>
-      ${canDecide ? (owner ? `<div class="decision row">
-        <button class="btn primary" id="decide-changes" ${openNow ? "" : "disabled title=\"Add a note first\""}>Request changes${openNow ? ` (${openNow})` : ""}</button>
-        <button class="btn good" id="decide-approve">Approve</button>
-        <button class="btn" id="decide-reject">Reject</button>
-      </div>` : bryanDecides("He approves, rejects or sends it back. Your notes go to him and the editor.")) : ""}`;
-  } else {
-    const option = (values, labels, current) => values.map((v) => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(labels[v] || v)}</option>`).join("");
-    panel.innerHTML = `${head}
-      ${d.status === "failed" ? `<div class="box"><p><strong>Failed:</strong> ${esc(d.error)}</p><p class="muted">The worker retries it next time it starts.</p></div>` : ""}
-      ${d.status === "tagged" || d.status === "transcribed" ? qualityHTML(d.quality) : ""}
-      ${usedInPlanHTML(d.shots)}
-      ${d.summary ? `<div><h3>Summary</h3><p>${esc(d.summary)}</p></div>` : ""}
-      ${d.brand_reason ? `<div><h3>Why this account</h3><p>${esc(d.brand_reason)}</p></div>` : ""}
-      ${d.suggested_hook ? `<div><h3>Suggested hook</h3><p>"${esc(d.suggested_hook)}"</p></div>` : ""}
-      ${d.moments.length ? `<div><h3>Best moments</h3><ul class="moments">${d.moments.map((m) =>
-        `<li><button data-seek="${Number(m.start) || 0}"><strong>${mmss(m.start)}–${mmss(m.end)}</strong> ${esc(m.description)}</button></li>`).join("")}</ul></div>` : ""}
-      ${d.status === "tagged" || d.status === "transcribed" ? `<div class="box"><h3>Check the tags</h3>
-        <div class="row">
-          ${d.brands.length > 1 ? `<select id="tag-brand">${option(d.brands, BRAND, d.brand)}</select>` : ""}
-          <select id="tag-format">${option(d.formats, FORMAT, d.format)}</select>
-          <label class="check"><input type="checkbox" id="tag-usable" ${d.usable === 0 ? "" : "checked"}> Usable</label>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <button class="btn" id="tags-save">Save</button>
-          <button class="btn primary" id="tags-next">Save &amp; next</button>
-        </div></div>` : ""}
-      <div><h3>Notes</h3>${notesHTML(d.notes, 0, false)}</div>
-      ${composerHTML("How should this clip be used? e.g. \"Great hook for the kitchen reveal\"")}
-      ${d.topics.length ? `<p class="muted">${d.topics.map((t) => `#${esc(t)}`).join(" ")}</p>` : ""}
-      ${d.quality_notes ? `<p class="muted">Claude's quality notes: ${esc(d.quality_notes)}</p>` : ""}
-      ${d.cost ? `<p class="muted">Tagging cost: ${money(d.cost)}</p>` : ""}
-      ${d.transcript ? `<details><summary>Transcript</summary><p>${esc(d.transcript)}</p></details>` : ""}`;
-  }
+  keepDrafts(["note-body", "caption"], () => {
+    panel.innerHTML = d.kind === "production" ? productionPageHTML(d) : clipPageHTML(d);
+  });
+  renderTileMeta(d);
+  renderHead();
+  renderDecisionBar();
   updatePinLabel();
 }
 
+// ── Draft and clip pages ────────────────────────────────────────────────────
+
+const SCORES = [["hook", "Hook"], ["pace", "Pace"], ["sound", "Sound"], ["captions", "Captions"], ["picture", "Picture"]];
+const LANGUAGE = { en: "English", zh: "中文" };
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+// "First sentence. Second one." -> bullets.
+const sentences = (text) => String(text || "").split(/(?<=[.!?])\s+(?=[A-Z0-9"“(])/).map((t) => t.trim()).filter(Boolean);
+const bullets = (items) => (items.length ? `<ul class="bullets">${items.map((t) => `<li>${t}</li>`).join("")}</ul>` : "");
+
+// A folded row: one line with a grey preview; open or shut is remembered on this device.
+function foldHTML(kind, key, title, peek, body) {
+  const open = recall(`studio.fold.${kind}.${key}`) === "1";
+  return `<details class="fold" data-fold="${esc(kind)}.${esc(key)}"${open ? " open" : ""}>
+    <summary><svg class="fold-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+      <span class="fold-title">${esc(title)}</span>${peek ? `<span class="fold-peek">${esc(peek)}</span>` : ""}</summary>
+    <div class="fold-body">${body}</div></details>`;
+}
+
+function titleHTML(d, sub) {
+  return `<div class="d-title"><h1>${esc(d.title)}</h1>${sub ? `<p class="d-sub">${esc(sub)}</p>` : ""}</div>`;
+}
+
+function timeChip(at, label = "") {
+  if (at == null || !Number.isFinite(Number(at))) return "";
+  return `<button class="time-chip" data-seek="${Number(at)}" aria-label="Play from ${mmss(at)}">${label}${mmss(at)}</button>`;
+}
+
+function readHTML(d) {
+  const r = d.review;
+  if (!r) {
+    const running = d.review_state === "running";
+    const failed = d.review_state === "failed";
+    const canAsk = isOwner() && !running && d.video;
+    return `<section class="read-card pending" aria-live="polite">
+      <div class="read-head"><span class="eyebrow">Studio's read</span>
+        <span class="read-verdict">${running ? `<span class="spin"></span> Reading this draft…` : "Studio's read isn't ready yet"}</span></div>
+      <p class="muted small">${running ? "About a minute. This page updates by itself."
+        : failed ? `The last try didn't work${d.review_error ? ` (${esc(d.review_error)})` : ""}.`
+        : "It arrives a minute or two after a draft renders."}</p>
+      ${canAsk ? `<div><button class="btn" id="review-get">${failed ? "Try again" : "Get Studio's read"}</button></div>` : ""}
+    </section>`;
+  }
+  const toFix = (r.fixes || []).filter((f) => f.when === "this_draft").length;
+  const tone = /^needs work/i.test(r.verdict) ? "needs" : toFix ? "nearly" : "ready";
+  const scores = SCORES.filter(([k]) => r.scores?.[k]).map(([k, label]) => {
+    const good = r.scores[k] === "good";
+    return `<span class="score ${good ? "good" : "fix"}" title="${esc(label)}: ${good ? "good" : "needs a fix"}">
+      <span class="score-dot" aria-hidden="true">${good ? "✓" : "!"}</span>${esc(label)}<span class="sr-only">: ${good ? "good" : "fix"}</span></span>`;
+  }).join("");
+  return `<section class="read-card ${tone}">
+    <div class="read-head"><span class="eyebrow">Studio's read</span><span class="read-verdict">${esc(r.verdict)}</span></div>
+    ${scores ? `<div class="scores">${scores}</div>` : ""}
+  </section>`;
+}
+
+function fixesHTML(d) {
+  const r = d.review;
+  if (!r) return "";
+  const fixes = r.fixes || [];
+  if (!fixes.length) return `<section class="d-sec"><h2>Fix before posting</h2><p class="muted">Nothing. Studio found nothing to change.</p></section>`;
+  // A fix already sent to the editor shows as added (a note on this version with its words).
+  const added = new Set(d.notes.filter((n) => n.version === d.version).map((n) => n.body.trim()));
+  const ready = d.status === "ready";
+  return `<section class="d-sec"><h2>Fix before posting</h2>
+    ${fixes.map((f, i) => {
+      const next = f.when === "next_shoot";
+      let action = "";
+      if (next) {
+        action = !d.shot_list ? "" : f.shot_added ? `<span class="done-chip">✓ On the shot list</span>`
+          : `<button class="btn fix-btn" data-fix-shot="${i}">Add to shot list</button>`;
+      } else if (added.has(String(f.what).trim())) action = `<span class="done-chip">✓ Added</span>`;
+      else if (ready) action = `<button class="btn fix-btn" data-fix-note="${i}">Add as note</button>`;
+      return `<article class="fix-card${next ? " next" : ""}">
+        <span class="fix-n" aria-hidden="true">${i + 1}</span>
+        <div class="fix-text">
+          <div class="fix-what">${next ? `<span class="fix-tag">Next shoot</span> ` : ""}${esc(f.what)}</div>
+          <div class="fix-why">${esc(f.why)}${next ? " Not needed for this draft." : ""}</div>
+        </div>
+        <div class="fix-actions">${timeChip(f.start, phone() ? "Play " : "")}${action}</div>
+      </article>`;
+    }).join("")}
+  </section>`;
+}
+
+function worksHTML(d) {
+  const works = d.review?.works || [];
+  return works.length ? `<section class="d-sec"><h2>What works</h2>${bullets(works.map(esc))}</section>` : "";
+}
+
+function noteListHTML(notes, currentVersion, isProduction) {
+  if (!notes.length) return `<p class="muted small">No notes yet.</p>`;
+  return `<ul class="note-list">${notes.map((n) => {
+    const tags = [
+      n.author,
+      isProduction && n.version !== currentVersion ? `v${n.version}` : "",
+      n.status === "addressed" ? "done by the editor" : "",
+      n.remember ? "in playbook" : "",
+    ].filter(Boolean).join(" · ");
+    return `<li class="${esc(n.status)}">${timeChip(n.at_seconds)}<span class="note-text"><span class="note-body">${esc(n.body)}</span>${tags ? `<span class="note-meta">${esc(tags)}</span>` : ""}</span></li>`;
+  }).join("")}</ul>`;
+}
+
+function composerRowHTML(placeholder) {
+  return `<div class="composer">
+      <label class="grow"><span class="sr-only">Add a note</span>
+        <input id="note-body" maxlength="2000" autocomplete="off" placeholder="${esc(placeholder)}"></label>
+      <button class="btn" id="note-add">Add note</button>
+    </div>
+    ${isOwner() ? `<label class="check small" title="Adds it to the playbook the editor follows on every future edit"><input type="checkbox" id="note-remember"> Remember for future edits</label>` : ""}`;
+}
+
+function captionPeek(caption) {
+  const c = String(caption || "").trim();
+  if (!c) return "Missing";
+  const tags = (c.match(/#[\p{L}\p{N}_]+/gu) || []).length;
+  return tags ? `Ready · ${plural(tags, "hashtag")}` : "Ready";
+}
+
+function musicPeek(m) {
+  if (!m) return "";
+  if (m.source === "epidemic") return `${m.title}, Epidemic Sound`;
+  if (m.source === "instagram") return "Add it in Instagram";
+  return "None this time";
+}
+
+function checksBody(d) {
+  const qa = d.qa || {};
+  const items = [];
+  if (qa.lufs != null) items.push(`Loudness: <strong>${esc(qa.lufs.toFixed(1))} LUFS</strong> (Instagram's level is -14)`);
+  if (qa.true_peak != null) items.push(`Loudest peak: ${esc(qa.true_peak.toFixed(1))} dB`);
+  if (qa.match != null) items.push(`Words intact after the cuts: <strong>${Math.round(qa.match * 100)}%</strong>`);
+  if (qa.missing?.length) items.push(`Possibly clipped or misheard: ${qa.missing.map(esc).join(", ")}`);
+  if (d.graphics) items.push(`Graphics: ${esc(d.graphics)}`);
+  if (d.cost) items.push(`API cost so far: ${esc(money(d.cost))}`);
+  return bullets(items) || `<p class="muted small">No checks ran on this draft.</p>`;
+}
+
+function checksPeek(qa) {
+  if (!qa) return "";
+  return [qa.lufs != null && `${qa.lufs.toFixed(0)} LUFS`, qa.match != null && `${Math.round(qa.match * 100)}% words intact`].filter(Boolean).join(" · ");
+}
+
+function briefBody(d) {
+  return `${d.idea ? bullets(String(d.idea).split(/\n+/).map((t) => t.trim()).filter(Boolean).map(esc)) : `<p class="muted small">No brief.</p>`}
+    ${d.sources.length ? `<h3>Made from</h3><ul class="link-list">${d.sources.map((s) => `<li><button class="link" data-open-clip="${esc(s.id)}">${esc(s.title)}</button></li>`).join("")}</ul>` : ""}`;
+}
+
+function resolveBody(d) {
+  return resolveHTML(d).replace(/^<div class="box"><h3>Open in DaVinci Resolve<\/h3>/, "<div>");
+}
+const RESOLVE_PEEK = { none: "", building: "Building…", ready: "Ready to download", failed: "Didn't work" };
+
+function productionPageHTML(d) {
+  const owner = isOwner();
+  const canDecide = d.status === "ready";
+  const settled = d.status === "approved" || d.status === "rejected";
+  const working = ["revising", "producing", "planned"].includes(d.status);
+  const failedBox = d.status === "failed" ? `<div class="box state-box bad"><p><strong>The edit failed:</strong> ${esc(d.error)}</p>
+    ${owner ? `<div class="row"><button class="btn primary" id="retry-edit">Retry edit</button></div>` : `<p class="muted small">Bryan can retry it.</p>`}</div>` : "";
+  const statusBox = canDecide || d.status === "failed" ? "" : `<div class="box state-box"><p>${working
+    ? "The editor is working on this. It comes back to To review when the new version renders."
+    : `${esc(STATUS[d.status] || d.status)}.`}</p>
+    ${owner && settled ? `<div class="row"><button class="btn" id="reopen" title="Move it back to To review so you can decide again">Back to review</button></div>` : ""}</div>`;
+  const sub = [d.version ? `v${d.version}` : "", d.duration ? mmss(d.duration) : "", d.video ? "tap to play" : ""].filter(Boolean).join(" · ");
+  const notesNow = d.notes.filter((n) => n.status === "open").length;
+
+  const edit = d.edit || {};
+  const editItems = [...sentences(d.edit_summary).map(esc)];
+  if (edit.hook_text) editItems.push(`Hook text: “${esc(edit.hook_text)}”`);
+  const rows = {
+    caption: () => foldHTML("production", "caption", "Post caption", captionPeek(d.caption),
+      `<textarea id="caption" placeholder="The caption you'll post. You have the final say.">${esc(d.caption)}</textarea>
+       <p class="muted small">Keep place names (estates, streets, clients) out of it.</p>
+       <div class="row"><button class="btn" id="caption-save">Save caption</button>
+       ${d.video ? `<a class="btn" href="${esc(d.video)}&download=1" download>Download video</a>` : ""}</div>`),
+    editor: () => d.edit_summary || edit.cuts ? foldHTML("production", "editor", "What the editor did",
+      edit.cuts ? `${plural(edit.cuts, "cut")} from ${plural(edit.clips, "clip")}` : "", bullets(editItems) || `<p class="muted small">No summary.</p>`) : "",
+    music: () => d.music ? foldHTML("production", "music", "Music", musicPeek(d.music), musicHTML(d.music).replace(/^<div><h3>Music<\/h3>/, "<div>")) : "",
+    transcript: () => d.transcript ? foldHTML("production", "transcript", "Transcript", plural(d.words, "word"), `<p class="transcript">${esc(d.transcript)}</p>`) : "",
+    checks: () => d.qa ? foldHTML("production", "checks", "Checks and measurements", checksPeek(d.qa), checksBody(d)) : "",
+    brief: () => foldHTML("production", "brief", "Brief and source clips", d.sources.length ? plural(d.sources.length, "clip") : "", briefBody(d)),
+    resolve: () => d.resolve && owner ? foldHTML("production", "resolve", "Open in DaVinci Resolve", RESOLVE_PEEK[d.resolve.state] || "", resolveBody(d)) : "",
+    missing: () => d.missing_shots?.length ? foldHTML("production", "missing", "Missing shots", plural(d.missing_shots.length, "shot"),
+      `<ul class="shots">${d.missing_shots.map((s) => `<li><strong>${esc(s.shot)}</strong><span>${esc(s.why)}</span></li>`).join("")}</ul>`) : "",
+  };
+  let folds;
+  if (phone()) {
+    // On a phone: the three rows people open, and everything else under More details.
+    const more = [["Music", rows.music() && musicHTML(d.music).replace(/^<div><h3>Music<\/h3>/, "<div>")],
+      ["Checks and measurements", d.qa && checksBody(d)], ["Brief and source clips", briefBody(d)],
+      ["Open in DaVinci Resolve", d.resolve && owner && resolveBody(d)],
+      ["Missing shots", d.missing_shots?.length && `<ul class="shots">${d.missing_shots.map((s) => `<li><strong>${esc(s.shot)}</strong><span>${esc(s.why)}</span></li>`).join("")}</ul>`]]
+      .filter(([, body]) => body).map(([h, body]) => `<div class="more-part"><h3>${esc(h)}</h3>${body}</div>`).join("");
+    const reject = canDecide && owner ? `<div class="more-part"><button class="btn ghost danger" id="decide-reject">Reject this draft</button></div>` : "";
+    folds = rows.caption() + rows.editor() + rows.transcript() + foldHTML("production", "more", "More details", "", more + reject);
+  } else {
+    folds = Object.values(rows).map((f) => f()).join("");
+  }
+  return `${titleHTML(d, sub)}
+    ${failedBox}${statusBox}
+    ${d.video ? readHTML(d) : ""}
+    ${fixesHTML(d)}
+    ${worksHTML(d)}
+    <section class="d-sec"><h2>Your notes for the editor${notesNow ? ` <span class="count-pill">${notesNow}</span>` : ""}</h2>
+      ${noteListHTML(d.notes, d.version, true)}
+      ${composerRowHTML("What should change? e.g. \"Cut the first two seconds\"")}
+    </section>
+    <section class="folds">${folds}</section>`;
+}
+
+function clipVerdictHTML(d) {
+  if (d.status === "failed") return `<div class="box state-box bad"><p><strong>Failed:</strong> ${esc(d.error)}</p><p class="muted small">The worker retries it next time it starts.</p></div>`;
+  if (d.status !== "tagged" && d.status !== "transcribed") return `<div class="box state-box"><p>Still being processed. The checks show here when it's done.</p></div>`;
+  const q = d.quality;
+  if (!q) return `<section class="verdict-card v-none"><div class="vc-head"><span class="dot"></span><span>Not checked</span></div>
+    <p class="muted small">This clip came in before quality checks.</p></section>`;
+  const flags = q.flags || [];
+  const label = q.verdict === "good" ? "Good to use" : q.verdict === "retake" ? "Retake"
+    : flags.length ? `Usable, with ${plural(flags.length, "problem")}` : "Usable, with issues";
+  return `<section class="verdict-card v-${esc(q.verdict)}">
+    <div class="vc-head"><span class="dot" aria-hidden="true"></span><span>${esc(label)}</span></div>
+    ${flags.length ? `<ul class="vc-flags">${flags.map((f) => `<li><strong>${esc(f.text)}</strong>${f.tip ? `<span class="tip">Next time: ${esc(f.tip)}</span>` : ""}</li>`).join("")}</ul>` : ""}
+    ${d.usable === 0 ? `<p class="small">Marked unusable in the tags.</p>` : ""}
+  </section>`;
+}
+
+function measureRows(q) {
+  if (!q) return [];
+  const num = (v, digits = 0) => (typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : null);
+  const pct = (v, digits = 0) => (typeof v === "number" && Number.isFinite(v) ? `${(v * 100).toFixed(digits)}%` : null);
+  const a = q.audio || {}, p = q.picture || {};
+  return [
+    ["Voice level", num(a.voice_db, 1) && `${num(a.voice_db, 1)} dB`],
+    ["Background noise", num(a.background_db, 1) && `${num(a.background_db, 1)} dB`],
+    ["Voice above background", num(a.snr_db, 1) && `${num(a.snr_db, 1)} dB (18+ is clean)`],
+    ["Distorted samples", pct(a.clipped_fraction, 2)],
+    ["Speech clarity", num(a.speech_confidence, 2) && `${num(a.speech_confidence, 2)} (closer to 0 is clearer)`],
+    ["Brightness", pct(p.brightness)],
+    ["Blown highlights", pct(p.blown_fraction) && `${pct(p.blown_fraction)} of the frame`],
+    ["Contrast", pct(p.contrast)],
+    ["Frames checked", num(p.frames_checked)],
+  ].filter(([, v]) => v);
+}
+
+function clipPageHTML(d) {
+  const tagged = d.status === "tagged" || d.status === "transcribed";
+  const option = (values, labels, current) => values.map((v) => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(labels[v] || v)}</option>`).join("");
+  const moments = d.moments || [];
+  const words = String(d.transcript || "").trim().split(/\s+/).filter(Boolean).length;
+  const q = d.quality;
+  const snr = q?.audio?.snr_db;
+  const rows = measureRows(q);
+  const tagPeek = [d.brands.length > 1 && (BRAND[d.brand] || d.brand), FORMAT[d.format] || d.format,
+    d.usable === 0 ? "unusable" : "usable", d.reviewed ? "checked" : ""].filter(Boolean).join(" · ");
+  const openNotes = d.notes.filter((n) => n.status === "open").length;
+  const folds = [
+    d.suggested_hook || d.summary ? foldHTML("clip", "post", "Suggested post", "Hook and summary",
+      `${d.suggested_hook ? `<h3>Hook</h3><p>“${esc(d.suggested_hook)}”</p>` : ""}${d.summary ? `<h3>Summary</h3>${bullets(sentences(d.summary).map(esc))}` : ""}`) : "",
+    tagged ? foldHTML("clip", "tags", "Tags", tagPeek, `<div class="tag-controls">
+        <div class="row">
+          ${d.brands.length > 1 ? `<label class="field-label">Account<select id="tag-brand">${option(d.brands, BRAND, d.brand)}</select></label>` : ""}
+          <label class="field-label">Format<select id="tag-format">${option(d.formats, FORMAT, d.format)}</select></label>
+          <label class="check"><input type="checkbox" id="tag-usable" ${d.usable === 0 ? "" : "checked"}> Usable</label>
+        </div>
+        <div class="row"><button class="btn" id="tags-save">Save</button><button class="btn primary" id="tags-next">Save &amp; next</button></div>
+        ${d.brand_reason && d.brands.length > 1 ? `<p class="muted small">Why this account: ${esc(d.brand_reason)}</p>` : ""}
+        ${d.topics.length ? `<p class="muted small">${d.topics.map((t) => `#${esc(t)}`).join(" ")}</p>` : ""}
+      </div>`) : "",
+    d.transcript ? foldHTML("clip", "transcript", "Transcript", plural(words, "word"), `<p class="transcript">${esc(d.transcript)}</p>`) : "",
+    d.shots?.length ? foldHTML("clip", "plan", "Used in the plan", plural(d.shots.length, "shot"), usedInPlanHTML(d.shots).replace(/^<div><h3>Used in the plan<\/h3>/, "<div>")) : "",
+    tagged ? foldHTML("clip", "measure", "Measurements", snr != null ? `Voice ${Math.round(snr)} dB above noise` : "",
+      `${rows.length ? `<dl class="measures">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : `<p class="muted small">No measurements.</p>`}
+       ${q ? `<p class="muted small">${q.judged ? "Focus, stability, framing and lighting were also checked by Claude." : "Focus, stability and framing weren't checked (tagged without Claude)."}</p>` : ""}
+       ${d.quality_notes ? `<p class="muted small">Claude's notes: ${esc(d.quality_notes)}</p>` : ""}
+       ${d.cost ? `<p class="muted small">Tagging cost: ${esc(money(d.cost))}</p>` : ""}`) : "",
+    foldHTML("clip", "notes", "Notes", d.notes.length ? `${plural(d.notes.length, "note")}${openNotes ? ` · ${openNotes} open` : ""}` : "None yet",
+      `${noteListHTML(d.notes, 0, false)}${composerRowHTML("How should this clip be used? e.g. \"Great hook for the kitchen reveal\"")}`),
+  ].join("");
+  return `${titleHTML(d, [d.duration ? mmss(d.duration) : "", d.video ? "tap to play" : ""].filter(Boolean).join(" · "))}
+    ${clipVerdictHTML(d)}
+    ${moments.length ? `<section class="d-sec"><h2>Good for</h2><div class="moment-chips">${moments.map((m) =>
+      `<button class="moment-chip" data-seek="${Number(m.start) || 0}"><strong>${mmss(m.start)}</strong> ${esc(m.description)}</button>`).join("")}</div></section>` : ""}
+    <section class="folds">${folds}</section>`;
+}
+
+// Under the tile: version, type and languages (a draft), when it was filmed (a clip).
+function renderTileMeta(d) {
+  const el = $("#tile-meta");
+  if (!detailMode() || !d) { el.innerHTML = ""; return; }
+  let line;
+  if (d.kind === "production") {
+    const langs = (d.languages || []).map((l) => LANGUAGE[l] || l).join(" + ");
+    line = [d.version ? `v${d.version}` : "", FORMAT[d.format] || d.format, langs].filter(Boolean).join(" · ");
+  } else {
+    const t = Date.parse(d.recorded_at || "");
+    const when = t ? new Date(t).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "";
+    line = [when && `Filmed ${when}`, FORMAT[d.format] || ""].filter(Boolean).join(" · ");
+  }
+  el.innerHTML = `${line ? `<p>${esc(line)}</p>` : ""}${d.video ? `<button class="link" id="play-full">Play full screen</button>` : ""}`;
+}
+
+// The page's top line: back to the list, where this one is in it, and the next one.
+function renderHead() {
+  const head = $("#detail-head");
+  if (!detailMode() || !state.current) { head.innerHTML = ""; return; }
+  const stage = STAGES.find((s) => s.key === state.stage) || STAGES[0];
+  const count = visible(stage.key).length;
+  const i = indexOfCurrent();
+  const draft = state.current.kind === "production";
+  const pos = i >= 0 ? `${i + 1} of ${state.list.length}` : "";
+  const last = i < 0 || i >= state.list.length - 1;
+  head.innerHTML = `<button class="head-link" data-back title="Back (Esc)">‹&nbsp;${esc(stage.label)}<span class="hide-phone">&nbsp;(${count})</span></button>
+    ${pos ? `<span class="head-pos">${draft ? `<span class="hide-phone">Draft </span>` : ""}${esc(pos)}</span>` : ""}
+    <button class="head-link head-next" id="head-next" ${last ? "disabled" : ""} title="Next (J)" aria-label="Next ${draft ? "draft" : "clip"}"><span class="hide-phone">Next ${draft ? "draft" : "clip"}&nbsp;</span>›</button>`;
+}
+
+// Approve / send back / reject, always in reach at the bottom of a draft waiting for review.
+function renderDecisionBar() {
+  const bar = $("#decision-bar");
+  const d = state.detail;
+  const show = detailMode() && d?.kind === "production" && d.status === "ready";
+  bar.hidden = !show;
+  if (!show) { bar.innerHTML = ""; return; }
+  if (!isOwner()) {
+    bar.innerHTML = `<p class="bar-note"><strong>Bryan decides.</strong> He approves, rejects or sends it back. Your notes go to him and the editor.</p>`;
+    return;
+  }
+  const n = d.notes.filter((x) => x.status === "open").length;
+  const send = !n ? "Add a note first" : phone() ? `Send back (${n})` : `Send back with ${plural(n, "fix", "fixes")}`;
+  bar.innerHTML = `${phone() ? "" : `<button class="btn bar-btn ghost" id="decide-reject">Reject</button>`}
+    <button class="btn bar-btn" id="decide-changes" ${n ? "" : `disabled title="Add a note first: the editor works from your notes"`}>${esc(send)}</button>
+    <button class="btn bar-btn good" id="decide-approve">Approve</button>`;
+}
+
+// Notes are pinned to where the video is: the button says when.
 function updatePinLabel() {
-  const label = $("#pin-label");
+  const btn = $("#note-add");
   const video = player();
-  if (label) label.textContent = video && video.currentTime > 0 ? `Pin to ${mmss(video.currentTime)}` : "Pin to this moment";
+  if (btn) btn.textContent = video ? `Add at ${mmss(video.currentTime)}` : "Add note";
 }
 
 function updateArrows() {
   const i = indexOfCurrent();
   $("#prev").disabled = i <= 0;
   $("#next").disabled = i < 0 || i >= state.list.length - 1;
+  renderHead();
 }
 function indexOfCurrent() {
   if (!state.current) return -1;
@@ -1414,9 +1689,41 @@ function openProduction(id) {
   if (item) { state.stage = item.stage; render(); openItem(item); } else goToTab("producing");
 }
 
-// Panel actions (event delegation, so re-rendering the panel keeps them working).
+// Panel actions (event delegation, so re-rendering the panel keeps them working). A draft's
+// or clip's page also has buttons in its top line, under the tile and in the decision bar.
 $("#panel").addEventListener("click", async (e) => {
   if (state.current?.kind === "plan") { await planPanelClick(e); return; }
+  await detailClick(e);
+});
+for (const id of ["#detail-head", "#tile-meta", "#decision-bar"]) {
+  $(id).addEventListener("click", (e) => { if (state.current && state.current.kind !== "plan") detailClick(e); });
+}
+$("#player-frame").addEventListener("click", (e) => {
+  if (!detailMode()) return;
+  const v = player();
+  if (!v) return;
+  if (e.target.closest("#tile-play") || (e.target === v && !v.controls)) {
+    if (phone()) playFull(v); else v.play().catch(() => {});
+  }
+});
+// Folded rows remember whether they're open, per device.
+$("#panel").addEventListener("toggle", (e) => {
+  const key = e.target.dataset?.fold;
+  if (key) store(`studio.fold.${key}`, e.target.open ? "1" : "0");
+}, true);
+// Phone or computer layout: the draft page is laid out differently, so draw it again.
+PHONE.addEventListener("change", () => { if (detailMode() && state.detail) renderPanel(); });
+
+async function detailClick(e) {
+  if (e.target.closest("[data-back]")) { closeViewer(); return; }
+  if (e.target.closest("#head-next")) { step(1); return; }
+  if (e.target.closest("#play-full")) { playFull(); return; }
+  const openClip = e.target.closest("[data-open-clip]");
+  if (openClip) {
+    const item = state.items.find((i) => i.kind === "clip" && String(i.id) === openClip.dataset.openClip);
+    if (item) { state.stage = item.stage; render(); openItem(item); }
+    return;
+  }
   const segment = e.target.closest("[data-segment]");
   if (segment && state.detail?.segments) {
     // Play just that segment: the #t=start,end media fragment stops at the end.
@@ -1427,16 +1734,36 @@ $("#panel").addEventListener("click", async (e) => {
   }
   const seek = e.target.closest("[data-seek]");
   if (seek && player()) {
-    player().currentTime = Number(seek.dataset.seek);
-    player().play().catch(() => {});
+    if (detailMode()) playAt(Number(seek.dataset.seek));
+    else {
+      player().currentTime = Number(seek.dataset.seek);
+      player().play().catch(() => {});
+    }
     return;
   }
   const planLink = e.target.closest("[data-open-plan-idea]");
   if (planLink) { openPlanIdea(Number(planLink.dataset.openPlanIdea)); return; }
   const id = e.target.closest("button")?.id || e.target.id;
   const d = state.detail;
+  const fixNote = e.target.closest("[data-fix-note]"), fixShot = e.target.closest("[data-fix-shot]");
   try {
-    if (id === "note-add") await addNote();
+    if (fixNote) {
+      // One of Studio's fixes becomes a note for the editor, pinned to its moment.
+      const f = d.review.fixes[Number(fixNote.dataset.fixNote)];
+      fixNote.disabled = true;
+      await api(`/api/production/${d.id}/notes`, { body: f.what, at_seconds: f.start });
+      await loadDetail();
+      sync();
+      toast("Added as a note for the editor.");
+    } else if (fixShot) {
+      fixShot.disabled = true;
+      await api(`/api/production/${d.id}/review/shot`, { fix: Number(fixShot.dataset.fixShot) });
+      await loadDetail();
+      toast("Added to the idea's shot list.");
+    } else if (id === "review-get") {
+      await api(`/api/production/${d.id}/review`, {});
+      await loadDetail();
+    } else if (id === "note-add") await addNote();
     else if (id === "idea-make") {
       await api(`/api/idea/${d.id}/decision`, { decision: "make", caption: $("#caption").value });
       toast("Sent to the editor. It's in Being edited.");
@@ -1499,8 +1826,9 @@ $("#panel").addEventListener("click", async (e) => {
     }
   } catch (err) {
     toast(`Couldn't save: ${err.message}`);
+    if (fixNote || fixShot) renderPanel();
   }
-});
+}
 
 $("#panel").addEventListener("change", async (e) => {
   if (state.current?.kind === "plan") { await planPanelChange(e); return; }
@@ -1511,10 +1839,11 @@ async function addNote() {
   const body = $("#note-body").value.trim();
   if (!body) { $("#note-body").focus(); return; }
   const video = player();
-  const at = $("#note-pin").checked && video ? video.currentTime : null;
+  const at = video && ($("#note-pin")?.checked ?? true) ? video.currentTime : null;
   await api(`/api/${state.current.kind}/${state.current.id}/notes`, {
     body, at_seconds: at, remember: !!$("#note-remember")?.checked,
   });
+  $("#note-body").value = "";
   await loadDetail();
   sync();
   toast("Note added.");
@@ -1523,7 +1852,7 @@ async function addNote() {
 
 $("#panel").addEventListener("keydown", (e) => {
   const ctrlEnter = e.key === "Enter" && (e.ctrlKey || e.metaKey);
-  if (e.target.id === "note-body" && ctrlEnter) {
+  if (e.target.id === "note-body" && (ctrlEnter || (e.key === "Enter" && e.target.tagName === "INPUT"))) {
     e.preventDefault();
     addNote().catch((err) => toast(`Couldn't save: ${err.message}`));
   } else if (e.target.id === "comment-body" && ctrlEnter) {
@@ -1551,7 +1880,11 @@ async function openPlanIdea(id) {
   const route = `#/plan-idea/${id}`;
   if (location.hash !== route) history.pushState(null, "", route);
   $("#viewer").hidden = false;
+  $("#viewer").classList.remove("detail-mode");
   $("#viewer").classList.add("plan-mode");
+  $("#detail-head").innerHTML = "";
+  $("#tile-meta").innerHTML = "";
+  $("#decision-bar").hidden = true;
   document.body.style.overflow = "hidden";
   $("#player-frame").innerHTML = `<div class="placeholder">Loading the storyboard…</div>`;
   $("#panel").innerHTML = "";
@@ -2229,6 +2562,7 @@ setInterval(async () => {
   try {
     const d = state.detail;
     if (state.current?.kind === "plan" && d?.jobs && ["develop", "music"].some((k) => d.jobs[k]?.state === "running")) await loadPlanIdea();
+    if (state.current?.kind === "production" && d?.review_state === "running") await refreshOpenItem();
     if (state.stage === "plan" && plan.board?.jobs?.organise?.state === "running" && $("#viewer").hidden) await loadPlan();
   } catch { /* the next tick tries again */ }
 }, JOB_POLL_MS);

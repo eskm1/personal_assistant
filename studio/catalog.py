@@ -222,6 +222,8 @@ _ADDED_COLUMNS = {
         "qa": "TEXT",     # JSON: checks on the latest draft (words kept, loudness)
         "music": "TEXT",  # JSON: the Epidemic track used, or the note for Instagram music
         "error": "TEXT",  # why the last edit failed, if it did
+        "review": "TEXT",          # JSON: Studio's read of a draft (draft_review.py)
+        "review_version": "INTEGER",  # the draft version that read describes
     },
     "ideas": {
         "wishlist": "TEXT",     # JSON: shots Bryan could film to make the idea stronger

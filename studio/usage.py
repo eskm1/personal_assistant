@@ -23,7 +23,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage (
     id            INTEGER PRIMARY KEY,
     at            TEXT NOT NULL,
-    kind          TEXT NOT NULL,     -- tag | ideas | edit | music
+    kind          TEXT NOT NULL,     -- tag | ideas | edit | music | review | ...
     ref           TEXT,              -- clip:12, production:3, ideas:<batch>
     model         TEXT,
     input_tokens  INTEGER,

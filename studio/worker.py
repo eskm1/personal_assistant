@@ -662,6 +662,9 @@ def main() -> int:
             threading.Thread(target=dashboard.run, name="dashboard", daemon=True).start()
         if not args.no_editor:
             threading.Thread(target=run_editor, name="editor", daemon=True).start()
+        if use_claude:  # drafts from before Studio's read get theirs (a few minutes, a few cents each)
+            import draft_review
+            threading.Thread(target=draft_review.backfill, name="review-backfill", daemon=True).start()
 
     log.info("Studio worker started; watching %s every %ss", INBOX, POLL_SECONDS)
     if not args.once:

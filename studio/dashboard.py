@@ -237,8 +237,9 @@ def update_now():
 
 def busy() -> bool:
     """Background work started here that a restart would cut short."""
+    import draft_review
     import plan_routes
-    return (_ideas_job["running"] or any(j.get("state") == "building" for j in _resolve_jobs.values())
+    return (_ideas_job["running"] or draft_review.busy() or any(j.get("state") == "building" for j in _resolve_jobs.values())
             or any(j.get("state") == "running" for j in plan_routes._jobs.values()))
 
 
@@ -483,7 +484,7 @@ def clip_detail(clip_id: int):
         "summary": row["summary"], "brand_reason": row["brand_reason"], "setting": row["setting"],
         "topics": json.loads(row["topics"] or "[]"), "moments": json.loads(row["moments"] or "[]"),
         "suggested_hook": row["suggested_hook"], "quality_notes": row["quality_notes"],
-        "transcript": row["transcript"], "source_name": row["source_name"],
+        "transcript": row["transcript"], "source_name": row["source_name"], "recorded_at": row["recorded_at"],
         "notes": _notes("clip", clip_id), "brands": BRANDS, "formats": FORMATS,
         "cost": usage.total_for(db(), f"clip:{clip_id}") if is_owner() else None,
         "quality": json.loads(row["quality"]) if row["quality"] else None,
@@ -508,6 +509,19 @@ def production_detail(production_id: int):
         sources = [{"id": r["id"], "title": r["title"] or r["source_name"]} for r in db().execute(
             f"SELECT id, title, source_name FROM clips WHERE id IN ({marks})", clip_ids)]
     edl = json.loads(row["edl"]) if row["edl"] else None
+    import draft_review
+    words = draft_review.draft_words(db(), dict(row)) if edl else []
+    langs = []
+    if clip_ids:
+        langs = [r[0] for r in db().execute(
+            f"SELECT DISTINCT language FROM clips WHERE id IN ({marks}) AND language IS NOT NULL", clip_ids)]
+    cuts = (edl or {}).get("cuts", [])
+    item.update({"review": draft_review.current(row), "review_state": draft_review.state(row),
+                 "review_error": draft_review.errors.get(production_id) if is_owner() else None,
+                 "shot_list": _shot_list_target(row) is not None,
+                 "edit": {"cuts": len(cuts), "clips": len({c["clip_id"] for c in cuts}),
+                          "hook_text": (edl or {}).get("hook_text", "")} if edl else None,
+                 "transcript": " ".join(w["word"] for w in words), "words": len(words), "languages": langs})
     item.update({"idea": row["idea"], "caption": row["caption"] or "", "sources": sources,
                  "notes": _notes("production", production_id), "error": row["error"],
                  "edit_summary": edl["summary"] if edl else None,
@@ -536,6 +550,19 @@ def idea_detail(idea_id: int):
                  "segments": segments, "caption": row["caption"] or "", "production_id": row["production_id"],
                  "wishlist": json.loads(row["wishlist"] or "[]")})
     return jsonify(item)
+
+
+def _shot_list_target(row) -> tuple[str, int] | None:
+    """Where a next-shoot suggestion goes: the planner idea the draft was made from, online
+    ("cloud", its id there) or on this machine ("local", its id). None for library ideas."""
+    plan_ = json.loads(row["plan"] or "{}")
+    idea = db().execute("SELECT id, origin, remote_id FROM ideas WHERE id = ?",
+                        (plan_.get("idea_id"),)).fetchone() if plan_.get("idea_id") else None
+    if idea is None or idea["origin"] != "plan":
+        return None
+    if cloud_sync.enabled():
+        return ("cloud", idea["remote_id"]) if idea["remote_id"] else None
+    return "local", idea["id"]
 
 
 # ── Actions ───────────────────────────────────────────────────────────────────
@@ -660,6 +687,61 @@ def build_resolve(production_id: int):
         return jsonify({"error": "already building"}), 409
     _resolve_jobs[production_id] = {"state": "building", "version": row["version"]}
     threading.Thread(target=_run_resolve, args=(production_id,), name="resolve", daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/production/<int:production_id>/review")
+@owner_only
+def get_review(production_id: int):
+    """"Get Studio's read": review the current draft again, in the background."""
+    import draft_review
+    row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    if row is None:
+        abort(404)
+    if not row["edl"] or not row["video_path"]:
+        return jsonify({"error": "there's no finished draft to review yet"}), 400
+    if not draft_review.start(production_id):
+        return jsonify({"error": "Studio is already reading this draft"}), 409
+    return jsonify({"ok": True})
+
+
+@app.post("/api/production/<int:production_id>/review/shot")
+def review_shot(production_id: int):
+    """Put a next-shoot suggestion from Studio's read on the idea's shot list."""
+    import draft_review
+    row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    if row is None:
+        abort(404)
+    review = draft_review.current(row)
+    try:
+        index = int(body().get("fix"))
+        fix = review["fixes"][index] if review and index >= 0 else None
+    except (TypeError, ValueError, IndexError):
+        fix = None
+    if not fix or fix.get("when") != "next_shoot":
+        return jsonify({"error": "that suggestion isn't there any more"}), 400
+    if fix.get("shot_added"):
+        return jsonify({"ok": True})
+    target = _shot_list_target(row)
+    if target is None:
+        return jsonify({"error": "this draft wasn't made from a planned idea"}), 400
+    shot = {"kind": fix.get("kind"), "description": fix["what"],
+            "why": f"Suggested by the review: {fix['why']}"}
+    try:
+        if target[0] == "cloud":
+            api = cloud_sync.Client()
+            last = api.select("shots", {"idea_id": f"eq.{int(target[1])}", "select": "position"})
+            position = max((r["position"] or 0 for r in last), default=0) + 1
+            api.insert("shots", {"idea_id": int(target[1]), "position": position, **shot}, returning=False)
+        else:
+            import plan
+            plan.add_shot(db(), target[1], shot)
+    except cloud_sync.CloudError as e:
+        return jsonify({"error": f"the planner couldn't be reached ({e})"}), 502
+    review["fixes"][index]["shot_added"] = True
+    db().execute("UPDATE productions SET review = ? WHERE id = ?", (json.dumps(review, ensure_ascii=False), production_id))
+    db().commit()
+    log.info("Production %s: review suggestion %d added to the shot list (%s)", production_id, index, target[0])
     return jsonify({"ok": True})
 
 

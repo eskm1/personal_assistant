@@ -167,12 +167,27 @@ It's laid out like Reels: a grid of tiles you can filter by account, with tabs f
 | In the cloud | Uploads still in the OneDrive inbox |
 | Done | Approved, posted and rejected edits (**Back to review** undoes an approve or reject) |
 
-Open a tile to watch it. Pause on a moment, type a note, and it's pinned to that time. Tick
-**Remember for future edits** and the note is also added to `Studio\playbook.md`, the rules
-the editor follows on every edit. Then **Request changes**, **Approve** or **Reject**: the next
-draft opens straight away while the editor revises the last one in the background. You also
-write or approve the post caption here. Keyboard: J / K for next and previous, Space to play,
-Esc to close, Ctrl+Enter to add a note.
+Open a draft and **Studio's read** comes first: a one-line verdict ("Ready to post", "Nearly
+ready: 2 things to fix", "Needs work: ..."), a good / fix mark for hook, pace, sound, captions
+and picture, then **Fix before posting**: the few changes that matter most, each with the moment
+it's about (tap it to play from there) and **Add as note**, which turns it into a note for the
+editor. Things that need new footage say "Next shoot" and, for a planned idea, **Add to shot
+list** puts a shot on its storyboard. Below: what works, your notes, and folded rows for the
+caption, what the editor did, music, transcript, checks, brief and DaVinci Resolve (they
+remember whether you left them open). The video is a small tile; the decision bar at the bottom
+has **Reject**, **Send back with N fixes** and **Approve**. Raw clips in the Library open the
+same way: the quality verdict with "Next time" tips, the best moments, then folded rows (the tag
+check is under **Tags**).
+
+Studio's read is one Claude call after each draft renders (a few cents). If it fails, the draft
+is still ready to review and the owner gets a **Get Studio's read** button. When the worker
+starts it writes the read for up to 10 drafts waiting for review that don't have one.
+
+Pause on a moment, type a note, and it's pinned to that time. Tick **Remember for future edits**
+and the note is also added to `Studio\playbook.md`, the rules the editor follows on every edit.
+After a decision the next draft opens straight away while the editor revises the last one in the
+background. You also write or approve the post caption here. Keyboard: J / K for next and
+previous, Space to play, Esc to go back, Enter to add a note.
 
 **Ideas:** on the Ideas tab, press **Suggest posts** (optionally with a focus such as "kitchen
 projects this month"). Claude reads your tagged clips, their timestamped transcripts and best
@@ -252,7 +267,9 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
 5. Music: Urban Makers posts get an Epidemic Sound track that dips under your voice.
    Personal posts get no music, plus a note on what to add in the Instagram app.
 6. The draft is re-transcribed to check no word was clipped, and its loudness is measured
-   (target -14 LUFS). Both show under **Checks** on the review screen.
+   (target -14 LUFS). Both show under **Checks and measurements** on the review screen.
+7. Studio's read (`draft_review.py`): Claude looks at stills of the finished draft, its
+   captions, words, cut list and checks, and writes the verdict and fix list you see first.
 
 Drafts are saved in `Studio\Renders`. If an edit fails, the draft shows the reason and a
 **Retry edit** button. To edit one production by hand: `worker.py --edit <id>`. To run the

@@ -31,15 +31,18 @@
   </main>
 
   <div class="viewer" id="viewer" hidden>
+    <header class="detail-head" id="detail-head"></header>
     <div class="viewer-inner">
       <div class="player-col">
         <button class="nav prev" id="prev" title="Previous (K)" aria-label="Previous">&#8249;</button>
         <div class="player-frame" id="player-frame"></div>
         <button class="nav next" id="next" title="Next (J)" aria-label="Next">&#8250;</button>
+        <div class="tile-meta" id="tile-meta"></div>
       </div>
       <aside class="panel" id="panel"></aside>
       <button class="close" id="close" title="Close (Esc)" aria-label="Close">&times;</button>
     </div>
+    <div class="decision-bar" id="decision-bar" hidden></div>
   </div>
 
   <div class="checklist" id="checklist" hidden></div>
