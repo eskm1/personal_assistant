@@ -27,6 +27,7 @@ from xml.sax.saxutils import quoteattr
 
 import editor
 import extract
+import framing
 import settings
 from settings import ROOT
 
@@ -124,6 +125,25 @@ def _source_in(cut_start: float, info: dict) -> Fraction:
     return info["start"] + Fraction(round(cut_start * rate)) / rate
 
 
+def transform(cut: dict, info: dict) -> str:
+    """The draft's framing of a cut (crop around the face, punch-in) as an FCPXML
+    transform on top of "fill": scale relative to the filled frame, and position
+    in percent of the timeline's height (FCPXML's unit), y pointing up. Empty when
+    the cut is simply the centre of the frame."""
+    sw, sh = int(info.get("width") or 0), int(info.get("height") or 0)
+    if not (sw and sh) or ("crop_x" not in cut and (cut.get("zoom") or 1.0) == 1.0):
+        return ""
+    w, h, x, y = framing.exact_window(cut, sw, sh)
+    fill = max(editor.W / sw, editor.H / sh)
+    total = editor.W / w
+    dx, dy = x + w / 2 - sw / 2, y + h / 2 - sh / 2
+    px, py = -dx * total / editor.H * 100, dy * total / editor.H * 100
+    scale = total / fill
+    if abs(px) < 0.01 and abs(py) < 0.01 and abs(scale - 1) < 0.001:
+        return ""
+    return f'<adjust-transform position="{px:.4f} {py:.4f}" scale="{scale:.4f} {scale:.4f}"/>'
+
+
 def srt(chunks: list[dict]) -> str:
     def stamp(s: float) -> str:
         ms = round(s * 1000)
@@ -173,7 +193,7 @@ def fcpxml(title: str, cuts: list[dict], clips: dict[int, dict], sources: dict[i
         src = sources[c["clip_id"]]
         aid = assets[("clip", c["clip_id"])][0]
         start = _source_in(c["start"], src)
-        inner = ['<adjust-conform type="fill"/>']
+        inner = ['<adjust-conform type="fill"/>' + transform(c, src)]
         if k == 0:
             # Whole-length layers ride on the first clip; their offsets are in that
             # clip's own time, so "the start of the timeline" is the clip's in-point.
@@ -219,6 +239,10 @@ _HOW_TO = """How to open "{title}" in DaVinci Resolve (free version is fine)
 5. Export: Deliver page > preset "H.264 Master" (or YouTube 1080p), set the
    resolution to 1080x1920 if it isn't already, then Render. Instagram is happy
    with anything around -14 LUFS loudness, which is what the Studio draft used.
+
+Framing: each cut carries the draft's framing (horizontal shots cropped around you,
+and the punch-ins) as Zoom and Position in the Inspector's Transform settings. If
+one looks a little off, select the cut and adjust Inspector > Video > Transform.
 
 If a clip shows black bars or looks zoomed oddly: Project Settings (cog, bottom
 right) > Image Scaling > "Mismatched resolution files" > "Scale full frame with crop".

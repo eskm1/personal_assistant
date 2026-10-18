@@ -260,9 +260,15 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
 1. Claude plans the cut from the idea. It sees every word with its timestamp, so it cuts
    between phrases, drops dead air and false starts, and writes the hook text and a music
    brief. On a revision it also gets your notes and the previous cut list.
-2. Cut points are moved out of words into the gaps around them, with a little air.
-3. ffmpeg cuts every piece from your **original** files in one pass and frames it 1080x1920
-   (horizontal footage is centre-cropped for now).
+2. Cut points are moved out of words into the gaps around them, with a little air. Then
+   **jump cuts**: inside what's kept, any pause longer than 0.35 s (silence, a breath, a lone
+   "um"/"uh" or 嗯/呃/啊) is cut down to a short breath. Never inside a word; B-roll is untouched.
+3. **Framing**: horizontal footage (Z fc, GoPro) is cropped around your face instead of down
+   the middle (OpenCV's face finder; if you walk across a long shot, it splits into a few
+   still crops, never a pan). No face = the centre. Vertical footage is as filmed. On talking
+   shots the picture **punches in** to 112% and back every 4 to 7 seconds, at a jump cut or the
+   end of a sentence, so a long shot never sits still (never on B-roll or under the hook).
+   ffmpeg then cuts every piece from your **original** files in one pass at 1080x1920.
 4. HyperFrames renders the captions (1 to 3 words, timed to each word) and the hook as a
    transparent layer over the footage.
 5. Music: Urban Makers posts get an Epidemic Sound track that dips under your voice.
@@ -271,6 +277,12 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    (target -14 LUFS). Both show under **Checks and measurements** on the review screen.
 7. Studio's read (`draft_review.py`): Claude looks at stills of the finished draft, its
    captions, words, cut list and checks, and writes the verdict and fix list you see first.
+
+The jump cuts, reframing and punch-ins are settings in `.env` (all on by default; `0` turns one off, then press
+**Restart Studio**): `STUDIO_EDIT_JUMP_CUTS`, `STUDIO_EDIT_MAX_PAUSE` (seconds, default 0.35),
+`STUDIO_EDIT_REFRAME`, `STUDIO_EDIT_PUNCH_INS`, `STUDIO_EDIT_PUNCH_ZOOM` (default 1.12). A draft
+remembers its pieces and framing, so a re-render (after a subtitle fix, say) and the Resolve
+project match it.
 
 Drafts are saved in `Studio\Renders`. If an edit fails, the draft shows the reason and a
 **Retry edit** button. To edit one production by hand: `worker.py --edit <id>`. To run the

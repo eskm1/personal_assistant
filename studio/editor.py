@@ -5,18 +5,23 @@ The editor (phase 5): turns a planned production into a draft Reel.
      keep, at phrase boundaries (it sees every word with its timestamp), the hook
      text, and the music brief. On a revision it also gets Bryan's notes.
   2. Cut points are snapped to word edges with a little air, so no word is clipped.
-  3. ffmpeg cuts every piece from the ORIGINAL files in one pass (one encode, so
+     Then pauses inside each kept stretch are cut down to a short breath (jump cuts),
+     and lone "um"s go.
+  3. Framing (framing.py): horizontal footage is cropped around the person's face,
+     and talking shots punch in and out every few seconds.
+  4. ffmpeg cuts every piece from the ORIGINAL files in one pass (one encode, so
      lips stay in sync) and frames it 1080x1920.
-  4. HyperFrames renders the captions (1-3 words, timed to each word) and the hook
+  5. HyperFrames renders the captions (1-3 words, timed to each word) and the hook
      as a transparent layer; ffmpeg lays it over the footage.
-  5. Music: Urban Makers posts get an Epidemic Sound track, ducked under the voice;
+  6. Music: Urban Makers posts get an Epidemic Sound track, ducked under the voice;
      other accounts get a note on what to add in the Instagram app.
-  6. Checks: the draft is re-transcribed to confirm every word survived the cuts,
+  7. Checks: the draft is re-transcribed to confirm every word survived the cuts,
      and its loudness is measured. Then it lands in To review.
-  7. Studio's read (draft_review.py): Claude reviews the finished draft for Bryan.
+  8. Studio's read (draft_review.py): Claude reviews the finished draft for Bryan.
 """
 import difflib
 import html
+import itertools
 import json
 import logging
 import re
@@ -28,6 +33,7 @@ import anthropic
 
 import catalog
 import extract
+import framing
 import music
 import playbook
 import render
@@ -41,6 +47,15 @@ W, H, FPS = 1080, 1920, 30
 # Whisper ends a word slightly before the sound dies; keep a little air either side.
 HEAD_PAD, TAIL_PAD = 0.08, 0.15
 MIN_CUT = 0.4
+# Jump cuts: a pause longer than settings.EDIT_MAX_PAUSE is cut down to this much air
+# after the last word and before the next (about a breath), and no piece is left
+# shorter than MIN_PIECE (it stays joined to its neighbour instead).
+BREATH_AFTER, BREATH_BEFORE = 0.07, 0.05
+MIN_PIECE = 0.25
+# Hesitation sounds dropped when Whisper wrote them as a word of their own, with a gap
+# either side (FILLER_GAP seconds at least).
+FILLERS = {"um", "umm", "uh", "uhh", "erm", "uhm", "ah", "嗯", "呃", "啊"}
+FILLER_GAP = 0.06
 
 EDL_SCHEMA = {
     "type": "object",
@@ -124,7 +139,7 @@ tighten, split or drop parts of a segment (dead air, false starts, repeated take
 when the story needs it. Use only the clips listed.
 - Cut between phrases, never inside a word: put cut points in the gaps between the timestamped \
 words, never in the middle of one. Keep the payoff and anything that qualifies a claim.
-- Cuts play in the order you list them. Each is clip_id plus start and end seconds within that clip.
+{pause_rule}- Cuts play in the order you list them. Each is clip_id plus start and end seconds within that clip.
 - hook_text: at most 6 words shown on screen for the first ~2.5 seconds, or "" for none. It \
 should add to the spoken hook, not repeat it word for word.
 - music: describe the bed for this post (mood, a short catalogue search phrase, tempo). \
@@ -176,10 +191,13 @@ def _revision_block(conn, production: dict) -> str:
         return ""
     previous = json.loads(production["edl"])
     offset, placed = 0.0, []
-    for c in previous["cuts"]:
-        placed.append(f"  {offset:.1f}-{offset + c['end'] - c['start']:.1f}s in the draft = clip {c['clip_id']} "
-                      f"{c['start']:.2f}-{c['end']:.2f}s")
-        offset += c["end"] - c["start"]
+    for group in _parts(previous["cuts"]):
+        length = sum(c["end"] - c["start"] for c in group)
+        placed.append(f"  {offset:.1f}-{offset + length:.1f}s in the draft = clip {group[0]['clip_id']} "
+                      f"{group[0]['start']:.2f}-{group[-1]['end']:.2f}s"
+                      + (" (pauses tightened)" if len(group) > 1 and any(
+                          a["end"] < b["start"] - 0.001 for a, b in zip(group, group[1:])) else ""))
+        offset += length
     notes = conn.execute(
         "SELECT * FROM feedback WHERE target = 'production' AND target_id = ? AND status = 'open' ORDER BY id",
         (production["id"],)).fetchall()
@@ -190,6 +208,19 @@ def _revision_block(conn, production: dict) -> str:
             + f"\nPrevious hook text: {previous.get('hook_text') or '(none)'}"
             + f"\nPrevious music volume: {previous.get('music', {}).get('volume_db', 'n/a')} dB"
             + "\n\nBryan's notes on that draft:\n" + ("\n".join(note_lines) or "  (none)"))
+
+
+def _parts(cuts: list[dict]) -> list[list[dict]]:
+    """Cuts grouped back into the stretches Claude planned (jump cuts and framing
+    split one planned cut into several pieces, which share its "part")."""
+    groups = []
+    for c in cuts:
+        if groups and c.get("part") is not None and groups[-1][-1].get("part") == c.get("part") \
+                and groups[-1][-1]["clip_id"] == c["clip_id"]:
+            groups[-1].append(c)
+        else:
+            groups.append([c])
+    return groups
 
 
 def plan_edit(conn, production: dict, clips: dict[int, dict], client=None) -> dict:
@@ -211,13 +242,19 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None) -> di
             + "\n\nFootage:\n\n"
             + "\n\n".join(_clip_block(c, segments) for c in clips.values())
             + _revision_block(conn, production))
+    pause_rule = ("- Pauses are tightened automatically after you plan: silences, breaths and lone \"um\"s "
+                  "inside a cut are cut down to a short breath (jump cuts), and so is silence at the start and "
+                  "end of a cut with speech. So keep whole phrases in one cut rather than splitting a cut just to "
+                  "skip a pause, and give a deliberate silent moment (a reveal, B-roll) a cut of its own.\n"
+                  if settings.EDIT_JUMP_CUTS else "")
     client = client or anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or None)
     import llm
     response = llm.final_message(
         client, model=CLAUDE_MODEL, max_tokens=32000,
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
         output_config={"effort": "high", "format": {"type": "json_schema", "schema": EDL_SCHEMA}},
-        system=_SYSTEM.replace("{playbook}", playbook.text()).replace("{music_rule}", music_rule),
+        system=_SYSTEM.replace("{playbook}", playbook.text()).replace("{music_rule}", music_rule)
+        .replace("{pause_rule}", pause_rule),
         messages=[{"role": "user", "content": user}],
     )
     import usage
@@ -250,6 +287,70 @@ def snap(cut: dict, clip: dict) -> dict | None:
     return {**cut, "start": round(start, 3), "end": round(end, 3)}
 
 
+def _is_filler(word: str) -> bool:
+    return re.sub(r"[\s.,!?;:…，。！？、~\-]+", "", word.lower()) in FILLERS
+
+
+def tighten(cuts: list[dict], clips: dict[int, dict], max_pause: float | None = None) -> list[dict]:
+    """Jump cuts: split each cut into pieces that skip its long pauses.
+
+    Inside a cut, a gap between words longer than max_pause (and a lone "um" or
+    嗯 with gaps around it) is cut down to a breath: a little air after the last
+    word and before the next. Silence longer than max_pause at the start or end of
+    the cut is trimmed to the same air the cut points get. Cuts are only ever made
+    in the gaps between words, a piece is never shorter than MIN_PIECE (it stays
+    joined to its neighbour instead), and a cut with no speech (B-roll) is left as
+    it is. Each piece keeps its cut's "part" (its place in Claude's plan)."""
+    max_pause = settings.EDIT_MAX_PAUSE if max_pause is None else max_pause
+    out = []
+    for n, c in enumerate(cuts):
+        part = c.get("part", n)
+        words = sorted((w for w in _words(clips[c["clip_id"]])
+                        if w["start"] >= c["start"] - 0.01 and w["end"] <= c["end"] + 0.01),
+                       key=lambda w: w["start"])
+        keep, dropped = [], []
+        for i, w in enumerate(words):
+            before = w["start"] - (words[i - 1]["end"] if i else c["start"])
+            after = (words[i + 1]["start"] if i + 1 < len(words) else c["end"]) - w["end"]
+            if _is_filler(w["word"]) and before >= FILLER_GAP and after >= FILLER_GAP:
+                dropped.append(w)
+            else:
+                keep.append(w)
+        if not keep:  # no speech, or nothing but "um": leave it as planned
+            out.append({**c, "part": part})
+            continue
+        start, end = c["start"], c["end"]
+        if keep[0]["start"] - start > max_pause or any(d["end"] <= keep[0]["start"] for d in dropped):
+            start = max(start, keep[0]["start"] - HEAD_PAD,
+                        max((d["end"] for d in dropped if d["end"] <= keep[0]["start"]), default=start))
+        if end - keep[-1]["end"] > max_pause or any(d["start"] >= keep[-1]["end"] for d in dropped):
+            end = min(end, keep[-1]["end"] + TAIL_PAD,
+                      min((d["start"] for d in dropped if d["start"] >= keep[-1]["end"]), default=end))
+        spans = [[start, None]]
+        for a, b in zip(keep, keep[1:]):
+            between = [d for d in dropped if d["start"] >= a["end"] and d["end"] <= b["start"]]
+            if b["start"] - a["end"] <= max_pause and not between:
+                continue
+            cut_from = min(a["end"] + BREATH_AFTER, between[0]["start"] if between else b["start"])
+            cut_to = max(b["start"] - BREATH_BEFORE, between[-1]["end"] if between else a["end"])
+            if cut_to - cut_from < 0.05:
+                continue
+            spans[-1][1] = cut_from
+            spans.append([cut_to, None])
+        spans[-1][1] = end
+        # No piece shorter than MIN_PIECE: join it to the neighbour across the smaller gap.
+        while len(spans) > 1:
+            short = min(range(len(spans)), key=lambda i: spans[i][1] - spans[i][0])
+            if spans[short][1] - spans[short][0] >= MIN_PIECE:
+                break
+            gap_before = spans[short][0] - spans[short - 1][1] if short else float("inf")
+            gap_after = spans[short + 1][0] - spans[short][1] if short + 1 < len(spans) else float("inf")
+            i = short - 1 if gap_before <= gap_after else short
+            spans[i:i + 2] = [[spans[i][0], spans[i + 1][1]]]
+        out += [{**c, "start": round(s, 3), "end": round(e, 3), "part": part} for s, e in spans]
+    return out
+
+
 def timeline(cuts: list[dict], clips: dict[int, dict]) -> list[dict]:
     """Every kept word on the draft's own clock."""
     out, offset = [], 0.0
@@ -273,6 +374,10 @@ def place_graphics(graphics: list[dict], cuts: list[dict], total: float) -> list
     for g in graphics:
         start = next((offset_of[i] + g["at"] - c["start"] for i, c in enumerate(cuts)
                       if c["clip_id"] == g["clip_id"] and c["start"] <= g["at"] < c["end"]), None)
+        if start is None:
+            # Its moment fell in a pause that was cut out: start it as the talking resumes.
+            start = next((offset_of[i] for i, c in enumerate(cuts)
+                          if c["clip_id"] == g["clip_id"] and g["at"] <= c["start"] <= g["at"] + 1.5), None)
         if start is None:
             continue
         start = max(start, 2.5)
@@ -314,21 +419,113 @@ def caption_chunks(words: list[dict], total: float) -> list[dict]:
 
 # ── Rendering ─────────────────────────────────────────────────────────────────
 
+RATE = 48000
+JOIN_FADE = 0.008  # seconds of fade either side of a join in the sound, so it can't click
+GROUP_GAP = 3.0    # pieces of one clip closer than this are read from the file in one go
+
+
+def _stepwise(values: list, edges: list[int]) -> str:
+    """An ffmpeg expression of the frame number n: values[i] from frame edges[i] on."""
+    expr = str(values[-1])
+    for value, edge in reversed(list(zip(values[:-1], edges[1:]))):
+        expr = f"if(lt(n,{edge}),{value},{expr})"
+    return expr
+
+
+def _group_filter(pieces: list[dict], first: list[int], clip: dict, tag: str) -> str:
+    """Frame a run of pieces from one read of a clip at 1080x1920: each piece cropped
+    as its cut says (crop_x, crop_y, zoom; the centre when not set). first[i] is
+    piece i's first frame in the run. A punched-in piece comes from a second, closer
+    crop of the same frames, switched in for just its frames."""
+    sw, sh = int(clip.get("width") or 0), int(clip.get("height") or 0)
+    if not (sw and sh):  # size unknown: fill the frame from the middle, as before
+        return f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}"
+    windows = [framing.window(c, sw, sh) for c in pieces]
+
+    def crop(keep):  # the crop for the pieces of one zoom; the others hold its last position
+        xs, ys, last = [], [], next(win for win, k in zip(windows, keep) if k)
+        for win, k in zip(windows, keep):
+            last = win if k else last
+            xs.append(last[2])
+            ys.append(last[3])
+        return f"crop={last[0]}:{last[1]}:x='{_stepwise(xs, first)}':y='{_stepwise(ys, first)}',scale={W}:{H}"
+    zooms = [(c.get("zoom") or 1.0) > 1.0 for c in pieces]
+    if all(zooms) or not any(zooms):
+        return crop([True] * len(pieces))
+    ends = first[1:] + [None]
+    when = "+".join(f"between(n,{a},{b - 1})" for a, b, z in zip(first, ends, zooms) if z and b is not None)
+    when += "".join(f"+gte(n,{a})" for a, b, z in zip(first, ends, zooms) if z and b is None)
+    return (f"split=2[{tag}w][{tag}c];[{tag}w]{crop([not z for z in zooms])}[{tag}w2];"
+            f"[{tag}c]{crop(zooms)}[{tag}c2];[{tag}w2][{tag}c2]overlay=0:0:enable='{when.lstrip('+')}'")
+
+
 def render_cut(cuts: list[dict], clips: dict[int, dict], out: Path) -> float:
-    """All pieces in one ffmpeg run from the originals: frame-exact, one encode."""
-    args, graph, labels = [settings.FFMPEG, "-y", "-v", "error"], [], []
+    """All pieces in one ffmpeg run from the originals: frame-exact, one encode.
+
+    Each piece is a whole number of frames, rounded from the running total so the
+    picture never drifts from the captions' clock. Pieces of one clip that follow
+    each other closely (a stretch with its pauses cut, punch-ins, reframes) are read
+    from the file once, dropping the frames in between, which keeps the memory a
+    4K clip needs to one read per stretch. Pieces that carry straight on from the
+    one before take their sound in one unbroken piece; elsewhere the sound fades
+    for a few milliseconds either side of the join, so jump cuts don't click."""
+    # Frames per piece, and runs of pieces read together: [first piece, last piece].
+    frames, edge, running = [], 0, 0.0
+    for c in cuts:
+        running += c["end"] - c["start"]
+        frames.append(max(1, round(running * FPS) - edge))
+        edge += frames[-1]
+    groups = []
     for k, c in enumerate(cuts):
-        duration = c["end"] - c["start"]
-        args += ["-ss", f"{c['start']:.3f}", "-t", f"{duration + 0.5:.3f}", "-i", clips[c["clip_id"]]["video_path"]]
-        graph.append(f"[{k}:v]trim=duration={duration:.3f},setpts=PTS-STARTPTS,fps={FPS},"
-                     f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,format=yuv420p[v{k}]")
-        if clips[c["clip_id"]]["has_audio"]:
-            graph.append(f"[{k}:a]atrim=duration={duration:.3f},asetpts=PTS-STARTPTS,aresample=48000,"
-                         f"aformat=channel_layouts=stereo[a{k}]")
+        prev = cuts[k - 1] if k else None
+        if prev and prev["clip_id"] == c["clip_id"] and prev["end"] - 0.002 <= c["start"] <= prev["end"] + GROUP_GAP:
+            groups[-1][1] = k
         else:
-            graph.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={duration:.3f}[a{k}]")
-        labels.append(f"[v{k}][a{k}]")
-    graph.append(f"{''.join(labels)}concat=n={len(cuts)}:v=1:a=1[v][a]")
+            groups.append([k, k])
+    # Where each piece starts in its run (frames on the run's own 30 fps clock), and in the clip.
+    at, source = [0] * len(cuts), [0.0] * len(cuts)
+    for g0, g1 in groups:
+        for k in range(g0, g1 + 1):
+            carries_on = k > g0 and abs(cuts[k - 1]["end"] - cuts[k]["start"]) < 0.002
+            at[k] = (at[k - 1] + frames[k - 1] if carries_on else
+                     max(round((cuts[k]["start"] - cuts[g0]["start"]) * FPS), at[k - 1] + frames[k - 1] if k > g0 else 0))
+            source[k] = cuts[g0]["start"] + at[k] / FPS
+
+    args, graph, video, n = [settings.FFMPEG, "-y", "-v", "error"], [], [], -1
+    for g, (g0, g1) in enumerate(groups):
+        clip, total = clips[cuts[g0]["clip_id"]], sum(frames[g0:g1 + 1])
+        span = at[g1] + frames[g1]
+        n += 1
+        args += ["-an", "-ss", f"{source[g0]:.4f}", "-t", f"{span / FPS + 0.3:.3f}", "-i", clip["video_path"]]
+        keep = "+".join(f"between(n,{at[k]},{at[k] + frames[k] - 1})" for k in range(g0, g1 + 1))
+        first = list(itertools.accumulate([0] + frames[g0:g1]))
+        graph.append(f"[{n}:v]setpts=PTS-STARTPTS,fps={FPS},select='{keep}',setpts=N/({FPS}*TB),"
+                     f"tpad=stop_mode=clone:stop={total},trim=end_frame={total},setpts=PTS-STARTPTS,"
+                     f"{_group_filter(cuts[g0:g1 + 1], first, clip, f'g{g}')},setsar=1,format=yuv420p[v{g}]")
+        video.append(f"[v{g}]")
+
+    runs = []  # unbroken sound: [clip, start in the clip, frames]
+    for k, c in enumerate(cuts):
+        if k and cuts[k - 1]["clip_id"] == c["clip_id"] and abs(source[k - 1] + frames[k - 1] / FPS - source[k]) < 1e-6:
+            runs[-1][2] += frames[k]
+        else:
+            runs.append([clips[c["clip_id"]], source[k], frames[k]])
+    sound = []
+    for j, (clip, start, length) in enumerate(runs):
+        samples = length * RATE // FPS
+        seconds = samples / RATE
+        if clip["has_audio"]:
+            n += 1
+            args += ["-vn", "-ss", f"{start:.4f}", "-t", f"{seconds + 0.3:.3f}", "-i", clip["video_path"]]
+            fades = (f",afade=t=in:d={JOIN_FADE},afade=t=out:st={seconds - JOIN_FADE:.4f}:d={JOIN_FADE}"
+                     if len(runs) > 1 and seconds > 4 * JOIN_FADE else "")
+            graph.append(f"[{n}:a]asetpts=PTS-STARTPTS,aresample={RATE},aformat=channel_layouts=stereo,"
+                         f"apad=whole_len={samples},atrim=end_sample={samples}{fades}[a{j}]")
+        else:
+            graph.append(f"anullsrc=r={RATE}:cl=stereo,atrim=end_sample={samples}[a{j}]")
+        sound.append(f"[a{j}]")
+    graph.append(f"{''.join(video)}concat=n={len(video)}:v=1:a=0[v]")
+    graph.append(f"{''.join(sound)}concat=n={len(sound)}:v=0:a=1[a]")
     extract._run(args + ["-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]",
                          "-c:v", "libx264", "-preset", "fast", "-crf", "16", "-c:a", "aac", "-b:a", "256k", str(out)])
     return sum(c["end"] - c["start"] for c in cuts)
@@ -501,8 +698,38 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
     cuts = [s for s in (snap(c, clips[c["clip_id"]]) for c in edl["cuts"] if c["clip_id"] in clips) if s]
     if not cuts:
         raise RuntimeError("the edit plan kept no usable footage")
-    edl["cuts"] = cuts
+    edl["cuts"] = finish_cuts(cuts, clips, edl)
     return _render(conn, production, clips, edl, plan, version, find_track)
+
+
+def finish_cuts(cuts: list[dict], clips: dict[int, dict], edl: dict) -> list[dict]:
+    """After snapping: jump cuts, then framing (reframe, punch-ins), each as the
+    settings say. Notes what was done in edl["framing"] and in the summary Bryan
+    reads; the cuts carry it all, so a re-render or Resolve project matches."""
+    planned = sum(c["end"] - c["start"] for c in cuts)
+    cuts = [{**c, "part": n} for n, c in enumerate(cuts)]
+    if settings.EDIT_JUMP_CUTS:
+        cuts = tighten(cuts, clips)
+    removed = planned - sum(c["end"] - c["start"] for c in cuts)
+    stats = {}
+    if settings.EDIT_REFRAME or settings.EDIT_PUNCH_INS:
+        cuts, stats = framing.frame_cuts(cuts, clips, hook=bool(edl.get("hook_text", "").strip()),
+                                         reframe_on=settings.EDIT_REFRAME, punch_on=settings.EDIT_PUNCH_INS,
+                                         zoom=settings.EDIT_PUNCH_ZOOM)
+    edl["framing"] = {"jump_cuts": settings.EDIT_JUMP_CUTS, "max_pause": settings.EDIT_MAX_PAUSE,
+                      "pauses_removed": round(removed, 2), "reframe": settings.EDIT_REFRAME,
+                      "punch_ins": settings.EDIT_PUNCH_INS, "zoom": settings.EDIT_PUNCH_ZOOM, **stats}
+    done = []
+    if removed >= 0.3:
+        done.append(f"tightened the pauses ({removed:.1f}s of silence and hesitation cut)")
+    if stats.get("reframed"):
+        done.append("framed the horizontal shots on you")
+    if stats.get("punch_ins"):
+        done.append(f"punched in {stats['punch_ins']} times on the talking shots")
+    if done:
+        edl["summary"] = (edl.get("summary", "").rstrip() + " Studio also " + ", ".join(done[:-1])
+                          + (" and " if len(done) > 1 else "") + done[-1] + ".").strip()
+    return cuts
 
 
 def rerender(conn, production_id: int, find_track=None) -> Path:

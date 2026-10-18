@@ -53,5 +53,6 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   or `STUDIO_SUPABASE_ANON_KEY` in `/home/studio/personal_assistant/studio/.env`.
 - Not yet proven live: the `place` job and tagging with real Claude after this update; iPhone "Film"
   upload quality from Safari.
-- Offered next: editor upgrades from the reel analysis (trim pauses/breaths, punch-in zooms every few
-  seconds, numbered chapter labels, screenshots floating above the speaker).
+- Editor upgrades built (not yet proven on real footage): jump cuts (`editor.tighten`), face-tracked
+  reframing of horizontal footage and punch-ins (`framing.py`, OpenCV), each a `STUDIO_EDIT_*` setting.
+  Still offered: numbered chapter labels, screenshots floating above the speaker.

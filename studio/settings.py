@@ -22,6 +22,11 @@ def _env(name: str, default: str = "") -> str:
     return os.getenv(name, "").strip() or default
 
 
+def _flag(name: str, default: bool) -> bool:
+    """An on/off setting: 0, off, false or no turn it off; blank = the default."""
+    return _env(name, "1" if default else "0").lower() not in ("0", "off", "false", "no")
+
+
 def _path(name: str, default: Path) -> Path:
     value = _env(name)
     return Path(value).expanduser() if value else default
@@ -78,6 +83,19 @@ ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")
 CLAUDE_MODEL = _env("STUDIO_CLAUDE_MODEL", "claude-opus-5-5")
 CLAUDE_EFFORT = _env("STUDIO_CLAUDE_EFFORT", "medium")
 BRANDS_FILE = _path("STUDIO_BRANDS_FILE", HERE / "brands.md")
+
+# ── The editor's cutting and framing ──────────────────────────────────────────
+# Jump cuts: inside every stretch the editor keeps, silences, breaths and lone "um"s
+# longer than EDIT_MAX_PAUSE seconds are cut down to a short breath.
+EDIT_JUMP_CUTS = _flag("STUDIO_EDIT_JUMP_CUTS", True)
+EDIT_MAX_PAUSE = float(_env("STUDIO_EDIT_MAX_PAUSE", "0.35"))
+# Reframing: horizontal footage (Z fc, GoPro) is cropped around the person's face
+# instead of down the middle. Off = the centre crop.
+EDIT_REFRAME = _flag("STUDIO_EDIT_REFRAME", True)
+# Punch-ins: on talking shots, every 4-7 seconds the picture cuts between normal and a
+# closer framing (EDIT_PUNCH_ZOOM, 1.12 = 112%), so a long shot never sits still.
+EDIT_PUNCH_INS = _flag("STUDIO_EDIT_PUNCH_INS", True)
+EDIT_PUNCH_ZOOM = float(_env("STUDIO_EDIT_PUNCH_ZOOM", "1.12"))
 
 # ── Epidemic Sound (music for the editor) ─────────────────────────────────────
 # Personal MCP key from epidemicsound.com/account/api-keys.
