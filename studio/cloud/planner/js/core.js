@@ -236,13 +236,14 @@ document.addEventListener("error", (e) => {
 // ── Shots ───────────────────────────────────────────────────────────────────
 
 export const takeVerdict = (t) => t?.clips?.verdict ?? null;
+export const takeRetake = (t) => needsRetake(t?.clips);
 export const takeFlags = (t) => (Array.isArray(t?.clips?.flags) ? t.clips.flags : [])
   .map((f) => (typeof f === "string" ? f : f?.text)).filter(Boolean);
 
 // needed | filmed (ticked, footage not in yet) | got (a usable take) | retake.
 export function shotState(shot) {
   const takes = shot.takes || [];
-  if (takes.some((t) => takeVerdict(t) !== "retake")) return "got";
+  if (takes.some((t) => !takeRetake(t))) return "got";
   if (takes.length) return "retake";
   return shot.filmed_at ? "filmed" : "needed";
 }
@@ -260,12 +261,12 @@ export function prepShots(shots) {
   }
   return list;
 }
-export const bestTake = (s) => s.takes.find((t) => takeVerdict(t) !== "retake") || s.takes[0] || null;
+export const bestTake = (s) => s.takes.find((t) => !takeRetake(t)) || s.takes[0] || null;
 
-export function verdictChip(verdict) {
-  if (!verdict) return `<span class="chip">Not checked</span>`;
-  return `<span class="chip verdict ${esc(verdict)}">${esc(VERDICT[verdict] || verdict)}</span>`;
-}
+// "As long as videos are usable, don't flag": cards and thumbnails only warn about a clip
+// that needs a retake (clips.flagged, after the database update, says the same).
+export const needsRetake = (c) => !!c && (c.verdict === "retake" || c.flagged === true);
+export const retakeBadge = (c) => (needsRetake(c) ? `<span class="chip verdict retake">Retake</span>` : "");
 
 // got / filmed / retake / needed as one segmented bar. Widths are set by script
 // (the CSP allows no inline styles), see the observer below.
@@ -395,12 +396,22 @@ export function laptopWait() {
   return `Waiting for Studio (offline${since ? ` since ${since}` : ""}). It runs as soon as Studio is back.`;
 }
 
-// Content under an overlay (viewer, checklist, modal) can't be reached by keyboard or screen readers.
+// Phones (720 px and less, where the tab bar is): a planned post opens as a page of its
+// own under the top bar, not over everything.
+export const PHONE = window.matchMedia("(max-width: 720px)");
+export const pageMode = () => PHONE.matches;
+// Content under an overlay (viewer, checklist, modal) can't be reached by keyboard or screen
+// readers. On a phone the post is a page: the top bar and tab bar stay usable.
 export function syncInert() {
-  const overlay = !$("#viewer").hidden || !$("#checklist").hidden;
+  const viewer = !$("#viewer").hidden;
+  const page = viewer && pageMode();
+  const overlay = (viewer && !page) || !$("#checklist").hidden;
+  document.body.classList.toggle("idea-page", page);
+  $("#viewer").toggleAttribute("aria-modal", viewer && !page);
+  $("#viewer").setAttribute("role", page ? "region" : "dialog");
   $("#shell-top").inert = overlay;
   // Today on site is one of the phone tabs, so the tab bar stays usable over it.
-  $("#shell-tabbar").inert = !$("#viewer").hidden;
+  $("#shell-tabbar").inert = viewer && !page;
   $("#main").inert = overlay;
   $("#app").inert = !$("#modal").hidden;
 }
@@ -409,9 +420,17 @@ export function syncInert() {
 
 let modalClick = null;
 let modalReturn = null;
-// kind "sheet": full screen on phones (quick add).
+// On a phone a dialog is a step in the history, so the back gesture closes it.
+const modalStep = { on: false, skip: false, done: null };
+// kind "sheet": full screen on phones (quick add, the footage and shot pickers).
 export function openModal(html, onClick, wide = false, kind = "") {
-  if ($("#modal").hidden) modalReturn = document.activeElement;
+  if ($("#modal").hidden) {
+    modalReturn = document.activeElement;
+    if (pageMode()) {
+      history.pushState({ ...(history.state || {}), studioModal: true }, "");
+      modalStep.on = true;
+    }
+  }
   $("#modal-body").innerHTML = html;
   $("#modal .modal-card").classList.toggle("wide", wide);
   $("#modal").classList.toggle("sheet", kind === "sheet");
@@ -419,17 +438,43 @@ export function openModal(html, onClick, wide = false, kind = "") {
   $("#modal").hidden = false;
   syncInert();
   document.body.classList.add("locked");
+  if (kind === "sheet") $("#modal .modal-card").scrollTop = 0;
   $("#modal-body").querySelector("input:not([type=hidden]), textarea, select")?.focus();
 }
+// Resolves once the history is back where it was (await it before going somewhere else).
 export function closeModal() {
-  if ($("#modal").hidden) return;
+  if ($("#modal").hidden) return Promise.resolve();
   $("#modal").hidden = true;
   $("#modal-body").innerHTML = "";
   modalClick = null;
   syncInert();
-  if ($("#viewer").hidden && $("#checklist").hidden) document.body.classList.remove("locked");
+  if (lockedBehind()) document.body.classList.add("locked"); else document.body.classList.remove("locked");
   modalReturn?.focus?.();
   modalReturn = null;
+  if (!modalStep.on) return Promise.resolve();
+  modalStep.on = false;
+  if (!history.state?.studioModal) return Promise.resolve();
+  modalStep.skip = true;
+  const back = new Promise((resolve) => { modalStep.done = resolve; setTimeout(resolve, 1000); });
+  history.back();
+  return back;
+}
+window.addEventListener("popstate", () => {
+  if (modalStep.skip) {
+    modalStep.skip = false;
+    modalStep.done?.();
+    modalStep.done = null;
+    return;
+  }
+  // The back gesture with a dialog open: it closes.
+  if (modalStep.on && !$("#modal").hidden && !history.state?.studioModal) {
+    modalStep.on = false;
+    closeModal();
+  }
+});
+// Something under the dialog still holds the page still (a desktop overlay, Today on site).
+function lockedBehind() {
+  return (!$("#viewer").hidden && !pageMode()) || !$("#checklist").hidden;
 }
 export const modalOpen = () => !$("#modal").hidden;
 $("#modal").addEventListener("click", async (e) => {

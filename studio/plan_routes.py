@@ -428,6 +428,9 @@ def decide(idea_id: int):
 @bp.post("/api/idea/<int:idea_id>/adopt")
 def adopt(idea_id: int):
     """Move a library idea (from footage) onto a project's board."""
+    import cloud_sync
+    if cloud_sync.enabled():  # library ideas moved to the planner by themselves (footage_ideas.py)
+        return jsonify({"error": "Ideas live in the planner now"}), 410
     _row("ideas", idea_id)
     data = body()
     project_id = int(data.get("project_id") or 0)

@@ -144,10 +144,11 @@ document.addEventListener("error", (e) => {
   if (e.target.tagName === "IMG") e.target.classList.add("broken");
 }, true);
 
-function verdictChip(verdict) {
-  if (!verdict) return `<span class="chip">Not checked</span>`;
-  return `<span class="chip verdict ${esc(verdict)}">${esc({ good: "Good", check: "Check", retake: "Retake" }[verdict] || verdict)}</span>`;
-}
+// "As long as videos are usable, don't flag": cards and thumbnails only warn about a clip
+// that needs a retake (flagged, from the server, means the same). What could be better
+// next time is on the clip's own page.
+const needsRetake = (c) => !!c && (c.verdict === "retake" || (c.flagged === true && c.usable !== 0));
+const retakeBadge = (c) => (needsRetake(c) ? `<span class="chip verdict retake">Retake</span>` : "");
 
 // The accounts Studio makes content for (settings.BRANDS). With just one (Urban Makers
 // for now), account labels, filters and pickers are left out.
@@ -166,7 +167,7 @@ function chips(item, short = false) {
   const status = item.kind === "clip" && item.status === "tagged" ? (item.reviewed ? "Checked" : null)
     : (short && STATUS_SHORT[item.status]) || STATUS[item.status];
   if (item.kind === "clip" && item.usable === 0) out.push(`<span class="chip failed">Unusable</span>`);
-  if (item.kind === "clip" && (item.verdict === "retake" || item.verdict === "check")) out.push(verdictChip(item.verdict));
+  if (item.kind === "clip") out.push(retakeBadge(item));
   if (status) out.push(`<span class="chip status ${esc(item.status)}">${esc(status)}</span>`);
   return out.join("");
 }
@@ -281,14 +282,14 @@ function openModal(html, onClick, wide = false) {
   $("#modal .modal-card").classList.toggle("wide", wide);
   modalClick = onClick || null;
   $("#modal").hidden = false;
-  document.body.style.overflow = "hidden";
+  syncScrollLock();
   $("#modal-body").querySelector("input:not([type=hidden]), textarea, select")?.focus();
 }
 function closeModal() {
   $("#modal").hidden = true;
   $("#modal-body").innerHTML = "";
   modalClick = null;
-  if ($("#viewer").hidden && $("#checklist").hidden) document.body.style.overflow = "";
+  syncScrollLock();
 }
 $("#modal").addEventListener("click", async (e) => {
   if (e.target.id === "modal" || e.target.closest("[data-modal-close]")) { closeModal(); return; }
@@ -391,9 +392,15 @@ function visible(stage) {
   return state.items.filter((i) => i.stage === stage && (!state.brand || i.brand === state.brand));
 }
 
+// With planning online, ideas live in the planner only: Review has no Ideas stage. A
+// machine without it (the laptop's setup) still has its library ideas here.
+const ideasHere = () => !!state.ideasHere;
+const shownStage = (key) => key !== "plan" && (key !== "ideas" || ideasHere());
+
 function renderTabs() {
   // Plan (the local board) is the top bar's Plan, not one of these.
-  $("#tabs").innerHTML = STAGES.filter((s) => s.key !== "plan").map((s) => {
+  if (state.stage === "ideas" && !ideasHere()) state.stage = "library";
+  $("#tabs").innerHTML = STAGES.filter((s) => shownStage(s.key)).map((s) => {
     const n = visible(s.key).length;
     const hot = s.key === "review" && n ? " hot" : "";
     const on = s.key === state.stage;
@@ -414,7 +421,7 @@ function renderTabs() {
 }
 
 function renderToolbar() {
-  $("#toolbar").hidden = state.stage !== "ideas";
+  $("#toolbar").hidden = state.stage !== "ideas" || !ideasHere();
   const owner = isOwner();
   $("#idea-focus").hidden = !owner;
   $("#suggest").hidden = !owner;
@@ -520,6 +527,7 @@ async function sync() {
     const wasRunning = state.ideasJob?.running;
     state.items = data.items;
     state.ideasJob = data.ideas_job || {};
+    state.ideasHere = !data.ideas_online && ("ideas_job" in data || data.items.some((i) => i.kind === "idea"));
     const cloudBefore = JSON.stringify(state.cloud ?? null);
     state.cloud = data.cloud || null;
     state.machine = data.machine || null;
@@ -541,7 +549,7 @@ async function sync() {
     if (!state.stage) {
       // First load: open on whatever needs attention. The team mostly plans.
       const saved = recall("studio.stage");
-      const known = STAGES.some((s) => s.key === saved);
+      const known = STAGES.some((s) => s.key === saved) && (saved === "plan" || shownStage(saved));
       state.stage = isOwner()
         ? (visible("review").length ? "review" : (known ? saved : "library"))
         : (known ? saved : "plan");
@@ -771,8 +779,14 @@ function renderPlanBoard(force = false) {
   if (plan.addingArc) $("#arc-new-title")?.focus();
 }
 
+// The arc Studio fills with posts it found in new footage (footage_ideas.py makes it).
+const FOOTAGE_ARC = "from your footage";
+const fromFootage = (a) => !!a && String(a.title || "").trim().toLowerCase() === FOOTAGE_ARC;
+const FOOTAGE_ICON = `<svg class="footage-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>`;
+
 function columnHTML(c, arcCount) {
   const a = c.arc;
+  const footage = fromFootage(a);
   const key = a ? String(a.id) : "";
   let head;
   if (a && plan.editingArc === a.id) {
@@ -787,15 +801,16 @@ function columnHTML(c, arcCount) {
         <button data-arc-action="left" data-arc-id="${esc(a.id)}" ${c.index === 0 ? "disabled" : ""}>Move left</button>
         <button data-arc-action="right" data-arc-id="${esc(a.id)}" ${c.index === arcCount - 1 ? "disabled" : ""}>Move right</button>
         <button data-arc-action="delete" data-arc-id="${esc(a.id)}" class="danger">Delete arc…</button></div></details>` : ""}</div>
+      ${footage ? `<p class="col-source">${FOOTAGE_ICON}Found in your footage</p>` : ""}
       ${a ? (a.purpose ? `<p class="col-purpose">${esc(a.purpose)}</p>` : "") : `<p class="col-purpose">Not in a series yet. Drag into an arc, or let Claude organise them.</p>`}`;
   }
-  return `<section class="col" data-arc="${esc(key)}">
+  return `<section class="col${footage ? " from-footage" : ""}" data-arc="${esc(key)}">
     <header class="col-head">${head}</header>
-    <div class="col-cards">${c.ideas.map(cardHTML).join("") || `<p class="muted small col-empty">Drop ideas here</p>`}</div>
+    <div class="col-cards">${c.ideas.map((i) => cardHTML(i, footage)).join("") || `<p class="muted small col-empty">Drop ideas here</p>`}</div>
   </section>`;
 }
 
-function cardHTML(i) {
+function cardHTML(i, footage = false) {
   const p = i.progress;
   const thumb = safeSrc(i.thumb);
   const ups = i.votes.up.length, downs = i.votes.down.length;
@@ -813,6 +828,7 @@ function cardHTML(i) {
         ${oneBrand() ? "" : `<span class="chip ${esc(i.brand)}">${esc(BRAND[i.brand] || i.brand)}</span>`}
         ${i.decision === "go" ? `<span class="chip go">Go</span>` : i.decision === "parked" ? `<span class="chip parked">Parked</span>` : ""}
         ${i.status === "made" ? `<span class="chip producing">In edit</span>` : ""}
+        ${footage ? `<span class="chip footage">From footage</span>` : ""}
       </span>
       ${pbarHTML(p)}
       <span class="card-meta">${meta}</span>
@@ -1035,6 +1051,53 @@ const isDetail = (kind) => kind === "production" || kind === "clip";
 const detailMode = () => !$("#viewer").hidden && $("#viewer").classList.contains("detail-mode");
 const PHONE = window.matchMedia("(max-width: 720px)");
 const phone = () => PHONE.matches;
+const viewerOpen = () => !$("#viewer").hidden;
+
+// ── Pages on a phone ────────────────────────────────────────────────────────
+// On a phone a draft, clip or idea opens as a page of its own: under the top bar, scrolling
+// with the page, the tab bar still there. Back (at the top, or the phone's back gesture)
+// returns to the list where it was. On a computer it's the overlay it always was.
+history.scrollRestoration = "manual";
+function syncScrollLock() {
+  const lock = !$("#modal").hidden || !$("#checklist").hidden || (viewerOpen() && !phone());
+  document.body.style.overflow = lock ? "hidden" : "";
+}
+function syncPage() {
+  document.body.classList.toggle("viewer-page", viewerOpen() && phone());
+  syncScrollLock();
+}
+// Where the list was and what opened the page, to come back to.
+function rememberList() {
+  state.listScroll = window.scrollY;
+  state.listFocus = document.activeElement;
+}
+function backToList() {
+  requestAnimationFrame(() => {
+    if (viewerOpen()) return;
+    window.scrollTo(0, state.listScroll || 0);
+    const last = state.lastItem;
+    let el = null;
+    if (last?.kind === "plan") el = document.querySelector(`.card[data-plan-idea="${CSS.escape(String(last.id))}"]`);
+    else if (last) {
+      const i = state.list.findIndex((it) => it.kind === last.kind && String(it.id) === String(last.id));
+      if (i >= 0) el = document.querySelector(`#grid .tile[data-index="${i}"]`);
+    }
+    if (!el && state.listFocus && document.contains(state.listFocus) && state.listFocus !== document.body) el = state.listFocus;
+    el?.focus({ preventScroll: true });
+  });
+}
+// The address names the page. Opening one from a list adds a step to the history (so the
+// back gesture closes it); going from one page to the next replaces it.
+function routeTo(route, fresh) {
+  if (location.hash === route) return;
+  if (fresh) history.pushState({ studio: "page" }, "", route);
+  else history.replaceState(history.state, "", route);
+}
+// Fresh page: keyboard and screen reader start at its title.
+function focusPage() {
+  const el = $("#panel h1[tabindex], #panel h2[tabindex]") || $("#detail-head [data-back]") || $("#close");
+  el?.focus({ preventScroll: true });
+}
 
 function openAny(item) {
   if (item?.kind === "plan") openPlanIdea(item.id);
@@ -1043,19 +1106,23 @@ function openAny(item) {
 
 async function openItem(item) {
   if (!item) return;
+  const fresh = !viewerOpen();
+  if (fresh) rememberList();
   $("#player-frame").querySelectorAll("video, audio").forEach((m) => m.pause());
   state.current = { kind: item.kind, id: item.id };
-  const route = `#/${item.kind}/${encodeURIComponent(item.id)}`;
-  if (location.hash !== route) history.pushState(null, "", route);
+  state.lastItem = state.current;
+  routeTo(`#/${item.kind}/${encodeURIComponent(item.id)}`, fresh);
   $("#viewer").hidden = false;
   $("#viewer").classList.remove("plan-mode");
   $("#viewer").classList.toggle("detail-mode", isDetail(item.kind));
   $("#viewer").scrollTop = 0;
   if (!isDetail(item.kind)) { $("#detail-head").innerHTML = ""; $("#tile-meta").innerHTML = ""; renderDecisionBar(); }
-  document.body.style.overflow = "hidden";
+  syncPage();
+  if (phone()) window.scrollTo(0, 0);
   renderPlayer(item);
   await loadDetail();
   updateArrows();
+  if (fresh) focusPage();
 }
 
 function closeViewer(silent = false) {
@@ -1068,15 +1135,23 @@ function closeViewer(silent = false) {
   if (wasPlan) $("#player-frame").innerHTML = "";
   $("#viewer").classList.remove("plan-mode", "detail-mode");
   $("#decision-bar").hidden = true;
-  document.body.style.overflow = "";
+  $("#detail-head").innerHTML = "";
+  syncPage();
+  backToList();
   if (silent) return;
+  // Opened from the list: going back is the list's own step in the history.
+  const pushed = history.state?.studio === "page";
   if (wasPlan) {
     if (pid && pid !== plan.pid) selectProject(pid);
     state.stage = "plan";
-    history.pushState(null, "", plan.pid ? `#/plan/${plan.pid}` : "#/tab/plan");
+    if (!pushed) history.replaceState(null, "", plan.pid ? `#/plan/${plan.pid}` : "#/tab/plan");
     render();
     loadPlan(true).catch(() => {});
-  } else history.pushState(null, "", `#/tab/${state.stage || "review"}`);
+  } else if (!pushed) history.replaceState(null, "", `#/tab/${state.stage || "review"}`);
+  if (pushed) {
+    state.pendingBack = true;  // the list is drawn again on the way back: then its place and focus
+    history.back();
+  }
 }
 
 function renderPlayer(item) {
@@ -1234,9 +1309,16 @@ function musicHTML(m) {
 
 function usedInPlanHTML(shots) {
   if (!shots?.length) return "";
-  return `<div><h3>Used in the plan</h3><ul class="moments">${shots.map((s) => `<li><button data-open-plan-idea="${esc(s.idea_id)}">
+  // With planning online the post opens in the planner (when Studio knows its address there).
+  const open = (s, body) => {
+    const remote = Number(s.idea_remote_id) || 0;
+    if (PLAN_HERE && remote) return `<a class="moment-link" href="${esc(`${PLAN_HERE}#/idea/${remote}`)}">${body}</a>`;
+    if (!state.cloud) return `<button data-open-plan-idea="${esc(s.idea_id)}">${body}</button>`;
+    return `<div class="moment-static">${body}</div>`;
+  };
+  return `<div><h3>Used in the plan</h3><ul class="moments">${shots.map((s) => `<li>${open(s, `
     <strong>${esc(s.idea_title)}</strong> ${esc(s.description)}
-    <span class="muted small">${mmss(s.start)}–${s.end != null ? mmss(s.end) : "end"} · ${s.source === "auto" ? "matched automatically" : "added by hand"}</span></button></li>`).join("")}</ul></div>`;
+    <span class="muted small">${mmss(s.start)}–${s.end != null ? mmss(s.end) : "end"} · ${s.source === "auto" ? "matched automatically" : "added by hand"}</span>`)}</li>`).join("")}</ul></div>`;
 }
 
 const bryanDecides = (text) => `<div class="box bryan"><p><strong>Bryan decides.</strong> ${esc(text)}</p></div>`;
@@ -1267,7 +1349,7 @@ function renderPanel() {
   const panel = $("#panel");
   if (!d) { panel.innerHTML = `<p class="muted">This item is gone.</p>`; return; }
   const owner = isOwner();
-  const head = `<div><h2>${esc(d.title)}</h2></div><div class="chips">${chips(d)}${d.format ? `<span class="chip">${esc(FORMAT[d.format] || d.format)}</span>` : ""}</div>`;
+  const head = `<div><h2 tabindex="-1">${esc(d.title)}</h2></div><div class="chips">${chips(d)}${d.format ? `<span class="chip">${esc(FORMAT[d.format] || d.format)}</span>` : ""}</div>`;
 
   if (d.kind === "inbox") {
     panel.innerHTML = `${head}<div class="box"><p>${esc(d.size_mb)} MB in the OneDrive inbox.
@@ -1323,7 +1405,7 @@ function foldHTML(kind, key, title, peek, body) {
 }
 
 function titleHTML(d, sub) {
-  return `<div class="d-title"><h1>${esc(d.title)}</h1>${sub ? `<p class="d-sub">${esc(sub)}</p>` : ""}</div>`;
+  return `<div class="d-title"><h1 tabindex="-1">${esc(d.title)}</h1>${sub ? `<p class="d-sub">${esc(sub)}</p>` : ""}</div>`;
 }
 
 function timeChip(at, label = "") {
@@ -1514,19 +1596,78 @@ function productionPageHTML(d) {
     <section class="folds">${folds}</section>`;
 }
 
+// The clip's quality, calmly: a usable clip just says so (what could be better is under
+// "Tips for next time"); only a clip that needs a retake gets the red card with what's wrong.
 function clipVerdictHTML(d) {
   if (d.status === "failed") return `<div class="box state-box bad"><p><strong>Failed:</strong> ${esc(d.error)}</p><p class="muted small">The worker retries it next time it starts.</p></div>`;
   if (d.status !== "tagged" && d.status !== "transcribed") return `<div class="box state-box"><p>Still being processed. The checks show here when it's done.</p></div>`;
   const q = d.quality;
+  if (d.usable === 0 && !needsRetake({ verdict: q?.verdict })) {
+    return `<section class="verdict-card v-none"><div class="vc-head"><span class="dot" aria-hidden="true"></span><span>Marked unusable</span></div>
+      <p class="muted small">Change it under Tags if it can be used after all.</p></section>`;
+  }
   if (!q) return `<section class="verdict-card v-none"><div class="vc-head"><span class="dot"></span><span>Not checked</span></div>
     <p class="muted small">This clip came in before quality checks.</p></section>`;
   const flags = q.flags || [];
-  const label = q.verdict === "good" ? "Good to use" : q.verdict === "retake" ? "Retake"
-    : flags.length ? `Usable, with ${plural(flags.length, "problem")}` : "Usable, with issues";
-  return `<section class="verdict-card v-${esc(q.verdict)}">
-    <div class="vc-head"><span class="dot" aria-hidden="true"></span><span>${esc(label)}</span></div>
-    ${flags.length ? `<ul class="vc-flags">${flags.map((f) => `<li><strong>${esc(f.text)}</strong>${f.tip ? `<span class="tip">Next time: ${esc(f.tip)}</span>` : ""}</li>`).join("")}</ul>` : ""}
-    ${d.usable === 0 ? `<p class="small">Marked unusable in the tags.</p>` : ""}
+  if (needsRetake({ verdict: q.verdict, flagged: d.flagged, usable: d.usable })) {
+    return `<section class="verdict-card v-retake">
+      <div class="vc-head"><span class="dot" aria-hidden="true"></span><span>Retake</span></div>
+      ${flags.length ? `<ul class="vc-flags">${flags.map((f) => `<li><strong>${esc(f.text)}</strong>${f.tip ? `<span class="tip">Next time: ${esc(f.tip)}</span>` : ""}</li>`).join("")}</ul>` : ""}
+      ${d.usable === 0 ? `<p class="small">Marked unusable in the tags.</p>` : ""}
+    </section>`;
+  }
+  return `<section class="verdict-card v-good">
+    <div class="vc-head"><span class="dot" aria-hidden="true"></span><span>Good to use</span></div>
+    ${flags.length ? `<p class="vc-note">${esc(plural(flags.length, "tip"))} for next time further down.</p>` : ""}
+  </section>`;
+}
+
+// What could be better next time on a usable clip: folded, lower down the page.
+const AREA = { light: "Light", audio: "Sound", sound: "Sound", picture: "Picture", focus: "Focus", stability: "Steadiness", framing: "Framing" };
+function tipsFoldHTML(d) {
+  const q = d.quality;
+  const flags = q?.flags || [];
+  if (!flags.length || needsRetake({ verdict: q.verdict, flagged: d.flagged, usable: d.usable })) return "";
+  const areas = [...new Set(flags.map((f) => AREA[f.area] || "").filter(Boolean))].join(", ");
+  return foldHTML("clip", "tips", `Tips for next time (${flags.length})`, areas,
+    `<ul class="tips">${flags.map((f) => `<li><span class="tip-what">${esc(f.text)}</span>${f.tip ? `<span class="tip-how">${esc(f.tip)}</span>` : ""}</li>`).join("")}</ul>
+     <p class="muted small">The clip is fine to use as it is.</p>`);
+}
+
+// The planned posts this clip is already in: one link each. With the planner here
+// (online planning), it opens there; on a machine without it, in the local plan.
+function usedInHTML(d) {
+  const byIdea = new Map();
+  for (const s of d.shots || []) {
+    const k = String(s.idea_id);
+    if (!byIdea.has(k)) byIdea.set(k, { ...s, n: 0 });
+    byIdea.get(k).n += 1;
+  }
+  if (!byIdea.size) return "";
+  const link = (s) => {
+    const label = esc(s.idea_title || "a planned post");
+    const remote = Number(s.idea_remote_id) || 0;
+    if (PLAN_HERE && remote) return `<a class="used-link" href="${esc(`${PLAN_HERE}#/idea/${remote}`)}">${label}</a>`;
+    if (!state.cloud) return `<button class="used-link" data-open-plan-idea="${esc(s.idea_id)}">${label}</button>`;
+    return `<span class="used-name">${label}</span>`;
+  };
+  return `<p class="used-in"><span class="used-label">Used in:</span> ${[...byIdea.values()].map(link).join('<span class="used-sep">, </span>')}</p>`;
+}
+
+// The post Claude suggests from this clip, first thing on the page: the hook as a quote,
+// a one-line summary and the moments it's good for.
+function suggestedPostHTML(d) {
+  const moments = d.moments || [];
+  const summary = sentences(d.summary);
+  const used = usedInHTML(d);
+  if (!d.suggested_hook && !summary.length && !moments.length && !used) return "";
+  return `<section class="post-card" aria-labelledby="post-card-h">
+    <h2 class="eyebrow" id="post-card-h">Suggested post</h2>
+    ${d.suggested_hook ? `<blockquote class="post-hook">“${esc(d.suggested_hook)}”</blockquote>` : ""}
+    ${summary.length ? `<p class="post-summary">${esc(summary[0])}</p>` : ""}
+    ${moments.length ? `<div class="post-moments"><h3 class="post-sub">Good for</h3><div class="moment-chips">${moments.map((m) =>
+      `<button class="moment-chip" data-seek="${Number(m.start) || 0}"><strong>${mmss(m.start)}</strong> ${esc(m.description)}</button>`).join("")}</div></div>` : ""}
+    ${used}
   </section>`;
 }
 
@@ -1551,7 +1692,6 @@ function measureRows(q) {
 function clipPageHTML(d) {
   const tagged = d.status === "tagged" || d.status === "transcribed";
   const option = (values, labels, current) => values.map((v) => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(labels[v] || v)}</option>`).join("");
-  const moments = d.moments || [];
   const words = String(d.transcript || "").trim().split(/\s+/).filter(Boolean).length;
   const q = d.quality;
   const snr = q?.audio?.snr_db;
@@ -1559,9 +1699,9 @@ function clipPageHTML(d) {
   const tagPeek = [d.brands.length > 1 && (BRAND[d.brand] || d.brand), FORMAT[d.format] || d.format,
     d.usable === 0 ? "unusable" : "usable", d.reviewed ? "checked" : ""].filter(Boolean).join(" · ");
   const openNotes = d.notes.filter((n) => n.status === "open").length;
+  const summary = sentences(d.summary);
   const folds = [
-    d.suggested_hook || d.summary ? foldHTML("clip", "post", "Suggested post", "Hook and summary",
-      `${d.suggested_hook ? `<h3>Hook</h3><p>“${esc(d.suggested_hook)}”</p>` : ""}${d.summary ? `<h3>Summary</h3>${bullets(sentences(d.summary).map(esc))}` : ""}`) : "",
+    tipsFoldHTML(d),
     tagged ? foldHTML("clip", "tags", "Tags", tagPeek, `<div class="tag-controls">
         <div class="row">
           ${d.brands.length > 1 ? `<label class="field-label">Account<select id="tag-brand">${option(d.brands, BRAND, d.brand)}</select></label>` : ""}
@@ -1572,8 +1712,9 @@ function clipPageHTML(d) {
         ${d.brand_reason && d.brands.length > 1 ? `<p class="muted small">Why this account: ${esc(d.brand_reason)}</p>` : ""}
         ${d.topics.length ? `<p class="muted small">${d.topics.map((t) => `#${esc(t)}`).join(" ")}</p>` : ""}
       </div>`) : "",
-    d.transcript ? foldHTML("clip", "transcript", "Transcript", plural(words, "word"), `<p class="transcript">${esc(d.transcript)}</p>`) : "",
-    d.shots?.length ? foldHTML("clip", "plan", "Used in the plan", plural(d.shots.length, "shot"), usedInPlanHTML(d.shots).replace(/^<div><h3>Used in the plan<\/h3>/, "<div>")) : "",
+    summary.length > 1 || d.transcript ? foldHTML("clip", "transcript", "Summary and transcript", d.transcript ? plural(words, "word") : "",
+      `${summary.length > 1 ? `<h3>Summary</h3>${bullets(summary.map(esc))}` : ""}${d.transcript ? `${summary.length > 1 ? "<h3>Transcript</h3>" : ""}<p class="transcript">${esc(d.transcript)}</p>` : ""}`) : "",
+    d.shots?.length ? foldHTML("clip", "plan", "Shots it's on", plural(d.shots.length, "shot"), usedInPlanHTML(d.shots).replace(/^<div><h3>Used in the plan<\/h3>/, "<div>")) : "",
     tagged ? foldHTML("clip", "measure", "Measurements", snr != null ? `Voice ${Math.round(snr)} dB above noise` : "",
       `${rows.length ? `<dl class="measures">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : `<p class="muted small">No measurements.</p>`}
        ${q ? `<p class="muted small">${q.judged ? "Focus, stability, framing and lighting were also checked by Claude." : "Focus, stability and framing weren't checked (tagged without Claude)."}</p>` : ""}
@@ -1583,9 +1724,8 @@ function clipPageHTML(d) {
       `${noteListHTML(d.notes, 0, false)}${composerRowHTML("How should this clip be used? e.g. \"Great hook for the kitchen reveal\"")}`),
   ].join("");
   return `${titleHTML(d, [d.duration ? mmss(d.duration) : "", d.video ? "tap to play" : ""].filter(Boolean).join(" · "))}
+    ${suggestedPostHTML(d)}
     ${clipVerdictHTML(d)}
-    ${moments.length ? `<section class="d-sec"><h2>Good for</h2><div class="moment-chips">${moments.map((m) =>
-      `<button class="moment-chip" data-seek="${Number(m.start) || 0}"><strong>${mmss(m.start)}</strong> ${esc(m.description)}</button>`).join("")}</div></section>` : ""}
     <section class="folds">${folds}</section>`;
 }
 
@@ -1606,18 +1746,20 @@ function renderTileMeta(d) {
 }
 
 // The page's top line: back to the list, where this one is in it, and the next one.
+// (On a phone every page has it; on a computer drafts and clips do, the rest have ×.)
 function renderHead() {
   const head = $("#detail-head");
-  if (!detailMode() || !state.current) { head.innerHTML = ""; return; }
-  const stage = STAGES.find((s) => s.key === state.stage) || STAGES[0];
-  const count = visible(stage.key).length;
+  if (!state.current || !(detailMode() || phone())) { head.innerHTML = ""; return; }
+  const kind = state.current.kind;
+  const stage = STAGES.find((s) => s.key === (kind === "plan" ? "plan" : state.stage)) || STAGES[0];
+  const count = kind === "plan" ? plan.order.length : visible(stage.key).length;
   const i = indexOfCurrent();
-  const draft = state.current.kind === "production";
+  const what = { production: "draft", clip: "clip", plan: "idea", idea: "idea", inbox: "upload" }[kind] || "item";
   const pos = i >= 0 ? `${i + 1} of ${state.list.length}` : "";
   const last = i < 0 || i >= state.list.length - 1;
-  head.innerHTML = `<button class="head-link" data-back title="Back (Esc)">‹&nbsp;${esc(stage.label)}<span class="hide-phone">&nbsp;(${count})</span></button>
-    ${pos ? `<span class="head-pos">${draft ? `<span class="hide-phone">Draft </span>` : ""}${esc(pos)}</span>` : ""}
-    <button class="head-link head-next" id="head-next" ${last ? "disabled" : ""} title="Next (J)" aria-label="Next ${draft ? "draft" : "clip"}"><span class="hide-phone">Next ${draft ? "draft" : "clip"}&nbsp;</span>›</button>`;
+  head.innerHTML = `<button class="head-link" data-back title="Back (Esc)" aria-label="Back to ${esc(stage.label)}">‹&nbsp;<span class="hide-phone">${esc(stage.label)}&nbsp;(${count})</span><span class="show-phone">Back</span></button>
+    ${pos ? `<span class="head-pos"><span class="hide-phone">${esc(what[0].toUpperCase() + what.slice(1))} </span>${esc(pos)}</span>` : ""}
+    ${kind === "inbox" ? "" : `<button class="head-link head-next" id="head-next" ${last ? "disabled" : ""} title="Next (J)" aria-label="Next ${what}"><span class="hide-phone">Next ${what}&nbsp;</span>›</button>`}`;
 }
 
 // Approve / send back / reject, always in reach at the bottom of a draft waiting for review.
@@ -1679,6 +1821,7 @@ const nextForReview = () => nextIn("review");
 
 function goToTab(stage) {
   closeViewer(true);
+  state.listScroll = 0;
   state.stage = stage;
   history.pushState(null, "", `#/tab/${stage}`);
   render();
@@ -1696,7 +1839,12 @@ $("#panel").addEventListener("click", async (e) => {
   await detailClick(e);
 });
 for (const id of ["#detail-head", "#tile-meta", "#decision-bar"]) {
-  $(id).addEventListener("click", (e) => { if (state.current && state.current.kind !== "plan") detailClick(e); });
+  $(id).addEventListener("click", (e) => {
+    if (!state.current) return;
+    if (state.current.kind !== "plan") { detailClick(e); return; }
+    if (e.target.closest("[data-back]")) closeViewer();
+    else if (e.target.closest("#head-next")) step(1);
+  });
 }
 $("#player-frame").addEventListener("click", (e) => {
   if (!detailMode()) return;
@@ -1712,7 +1860,10 @@ $("#panel").addEventListener("toggle", (e) => {
   if (key) store(`studio.fold.${key}`, e.target.open ? "1" : "0");
 }, true);
 // Phone or computer layout: the draft page is laid out differently, so draw it again.
-PHONE.addEventListener("change", () => { if (detailMode() && state.detail) renderPanel(); });
+PHONE.addEventListener("change", () => {
+  syncPage();
+  if (detailMode() && state.detail) renderPanel(); else renderHead();
+});
 
 async function detailClick(e) {
   if (e.target.closest("[data-back]")) { closeViewer(); return; }
@@ -1871,21 +2022,24 @@ $("#panel").addEventListener("keydown", (e) => {
 
 async function openPlanIdea(id) {
   id = Number(id);
+  const fresh = !viewerOpen();
+  if (fresh) rememberList();
   $("#viewer").querySelectorAll("video, audio").forEach((m) => m.pause());
   state.current = { kind: "plan", id };
+  state.lastItem = state.current;
   state.detail = null;
   state.planSig = "";
   state.storySig = "";
   state.list = plan.order;
-  const route = `#/plan-idea/${id}`;
-  if (location.hash !== route) history.pushState(null, "", route);
+  routeTo(`#/plan-idea/${id}`, fresh);
   $("#viewer").hidden = false;
   $("#viewer").classList.remove("detail-mode");
   $("#viewer").classList.add("plan-mode");
   $("#detail-head").innerHTML = "";
   $("#tile-meta").innerHTML = "";
   $("#decision-bar").hidden = true;
-  document.body.style.overflow = "hidden";
+  syncPage();
+  if (phone()) window.scrollTo(0, 0);
   $("#player-frame").innerHTML = `<div class="placeholder">Loading the storyboard…</div>`;
   $("#panel").innerHTML = "";
   try {
@@ -1894,6 +2048,7 @@ async function openPlanIdea(id) {
     $("#panel").innerHTML = `<p class="muted">Couldn't open this idea (${esc(err.message)}).</p>`;
   }
   updateArrows();
+  if (fresh) focusPage();
 }
 
 const JOB_DONE = { develop: "Claude refined the plan.", music: "Music shortlist ready." };
@@ -1948,7 +2103,7 @@ function frameHTML(s, i) {
         ${s.on_screen ? `<span class="sb-caption">${esc(s.on_screen)}</span>` : ""}
         ${s.line ? `<span class="sb-line">“${esc(s.line)}”</span>` : ""}
       </button>`;
-  const flags = s.state === "retake" || take?.verdict === "check" ? (take?.flags || []) : [];
+  const flags = s.state === "retake" ? (take?.flags || []) : [];
   return `<article class="sb-frame st-${esc(s.state)}" id="frame-${esc(s.id)}">
     <div class="sb-card">${media}
       <span class="sb-num">${i + 1}</span>
@@ -2013,9 +2168,9 @@ function takeHTML(s, t) {
     <button class="take-thumb" data-play-take="${esc(s.id)}:${esc(t.id)}" title="Play this take in the storyboard" aria-label="Play take">
       <img src="${esc(safeSrc(t.thumb))}" alt="" loading="lazy"><span class="play" aria-hidden="true">▶</span></button>
     <div class="take-info">
-      <div class="row tight">${verdictChip(t.verdict)}<span class="muted small">${t.source === "auto" ? "Matched automatically" : "Added by hand"}</span></div>
+      <div class="row tight">${retakeBadge(t)}<span class="muted small">${t.source === "auto" ? "Matched automatically" : "Added by hand"}</span></div>
       <div class="small">${esc(t.title)} · ${mmss(t.start)}–${t.end != null ? mmss(t.end) : "end"}</div>
-      ${t.flags?.length ? `<ul class="take-flags">${t.flags.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
+      ${needsRetake(t) && t.flags?.length ? `<ul class="take-flags">${t.flags.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
     </div>
     <button class="icon-btn danger" data-take-remove="${esc(t.id)}" title="Remove this take" aria-label="Remove take">×</button>
   </div>`;
@@ -2330,7 +2485,7 @@ async function loadPicker(projectId, shot) {
   const attached = new Set(shot.takes.map((t) => t.clip_id));
   const tile = (c) => `<button class="pick" data-pick-clip="${esc(c.id)}" ${attached.has(c.id) ? "disabled" : ""}>
     <img src="${esc(safeSrc(c.thumb))}" alt="" loading="lazy">
-    <span class="pick-chips">${c.verdict ? verdictChip(c.verdict) : ""}${attached.has(c.id) ? `<span class="chip">Attached</span>` : ""}</span>
+    <span class="pick-chips">${retakeBadge(c)}${attached.has(c.id) ? `<span class="chip">Attached</span>` : ""}</span>
     <span class="pick-text"><span class="pick-title">${esc(c.title)}</span>
       <span class="pick-meta">${c.duration ? esc(mmss(c.duration)) : ""}${c.recorded_at ? ` · ${esc(shortDate(c.recorded_at))}` : ""}</span></span>
   </button>`;
@@ -2351,7 +2506,7 @@ async function openChecklist(pid) {
   if (location.hash !== route) history.pushState(null, "", route);
   if (!$("#viewer").hidden) closeViewer(true);
   $("#checklist").hidden = false;
-  document.body.style.overflow = "hidden";
+  syncScrollLock();
   $("#checklist").innerHTML = `<p class="muted cl-loading">Loading the shot list…</p>`;
   try {
     await loadChecklist();
@@ -2362,7 +2517,7 @@ async function openChecklist(pid) {
 function closeChecklist(push = true) {
   $("#checklist").hidden = true;
   $("#checklist").innerHTML = "";
-  if ($("#viewer").hidden && $("#modal").hidden) document.body.style.overflow = "";
+  syncScrollLock();
   if (!push) return;
   if (check.pid && check.pid !== plan.pid) selectProject(check.pid);
   state.stage = "plan";
@@ -2503,6 +2658,9 @@ $("#next").addEventListener("click", () => step(1));
 async function routeFromHash() {
   const hash = location.hash;
   if (toPlan(hash)) { location.assign(PLAN_HERE); return; }  // Plan lives at /plan/ here
+  // Back from a page to its list: the list where it was, focus on what was opened.
+  const restore = viewerOpen() || state.pendingBack;
+  state.pendingBack = false;
   const closeOverlays = () => {
     if (!$("#viewer").hidden) closeViewer(true);
     if (!$("#checklist").hidden) closeChecklist(false);
@@ -2511,9 +2669,10 @@ async function routeFromHash() {
   const tab = hash.match(/^#\/tab\/(\w+)$/);
   if (tab && STAGES.some((s) => s.key === tab[1])) {
     closeOverlays();
-    state.stage = tab[1];
+    state.stage = tab[1] === "ideas" && !ideasHere() ? "library" : tab[1];
     if (state.stage !== "plan") store("studio.stage", state.stage);
     render();
+    if (restore) backToList();
     return;
   }
   const project = hash.match(/^#\/plan\/(\d+)$/);
@@ -2522,6 +2681,7 @@ async function routeFromHash() {
     if (Number(project[1]) !== plan.pid) selectProject(Number(project[1]));
     state.stage = "plan";
     render();
+    if (restore) backToList();
     return;
   }
   const planIdea = hash.match(/^#\/plan-idea\/(\d+)$/);

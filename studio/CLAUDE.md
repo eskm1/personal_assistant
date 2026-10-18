@@ -44,7 +44,11 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
 ## Open items (as of 2026-10-17)
 
 - Bryan to run once on the laptop: `git pull` then `.\venv\Scripts\python cloud_setup.py --update`
-  (adds the shoot-plan tables and redeploys the team function with the domain rule).
+  (shoot-plan tables, the team function's domain rule, and migration 20261019000000_footage_ideas:
+  the `ideas` job kind, `clips.usable`/`clips.flagged`). Re-run after any new migration.
+- Ideas live only in the planner (footage_ideas.py proposes ideas from new footage into each project's
+  "From your footage" arc after uploads go quiet; "Everyday posts" project for loose clips).
+  Usable clips are never flagged on cards; only retakes.
 - If /plan/ can't find the planner's public key, the server needs `STUDIO_PLANNER_URL` (Netlify address)
   or `STUDIO_SUPABASE_ANON_KEY` in `/home/studio/personal_assistant/studio/.env`.
 - Not yet proven live: the `place` job and tagging with real Claude after this update; iPhone "Film"

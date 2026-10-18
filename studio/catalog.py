@@ -18,6 +18,8 @@ The studio catalogue (SQLite), shared by the worker, the dashboard and the edito
   matched to shots as takes, so the board shows what's filmed and what's missing.
 - users / invites / votes: team logins, invite links, and the team's vote on
   planned ideas. Bryan (owner) has the final say; the team plans and comments.
+- idea_runs: what each "ideas from new footage" run did (footage_ideas.py);
+  clips.ideas_run points at the run that read a clip, so it's read once.
 
 The review contract between the dashboard and the editor:
   ready --(request changes)--> revising --(editor re-renders, version + 1,
@@ -196,6 +198,20 @@ CREATE TABLE IF NOT EXISTS upload_pins (     -- footage uploaded from the planne
 );
 CREATE INDEX IF NOT EXISTS upload_pins_path ON upload_pins (path, state);
 
+CREATE TABLE IF NOT EXISTS idea_runs (       -- "ideas from new footage" (footage_ideas.py), one row per project per run
+    id          INTEGER PRIMARY KEY,
+    trigger     TEXT NOT NULL,             -- auto (quiet after uploads) | job (asked in the planner) | baseline
+    place       TEXT,                      -- cloud (the online planner) | local (this dashboard's plan)
+    project_ref INTEGER,                   -- the project's id there
+    project     TEXT,                      -- its name
+    clip_ids    TEXT,                      -- JSON: the clips this run looked at
+    state       TEXT NOT NULL,             -- running | done | failed
+    result      TEXT,                      -- JSON: {new_ideas: [ids], attached: [...], skipped, notes}
+    error       TEXT,
+    started_at  TEXT NOT NULL,
+    finished_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS votes (
     idea_id     INTEGER NOT NULL,
     user_id     INTEGER NOT NULL,
@@ -215,6 +231,8 @@ _ADDED_COLUMNS = {
         "cloud_thumb": "TEXT",     # the frame last uploaded as its still
         "cloud_pushed_at": "TEXT",
         "idea_id": "INTEGER",      # the post folder it came from (Inbox/<project>/<post>/), if any
+        "ideas_run": "INTEGER",    # the idea_runs row that read it for ideas (footage_ideas.py); NULL = not yet
+        "ideas_tries": "INTEGER",  # failed attempts at that (it stops trying after a few)
     },
     "productions": {
         "plan": "TEXT",   # JSON: the approved idea the editor follows

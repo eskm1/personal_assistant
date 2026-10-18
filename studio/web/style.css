@@ -793,3 +793,64 @@ body:has(.viewer.detail-mode:not([hidden]) .decision-bar:not([hidden])) .toast {
 @media (max-width: 720px) {
   .viewer.detail-mode .player-frame > .placeholder { font-size: 0; }
 }
+
+/* ── The clip page: the suggested post first, a calm verdict, tips folded ── */
+.post-card { background: #18181c; border: 1px solid #2a2a31; border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.viewer.detail-mode .panel .post-card h2.eyebrow { font-size: 12px; font-weight: 800; color: #8e8e98; }
+.post-hook {
+  margin: 0; font-size: 20px; font-weight: 800; line-height: 1.3; overflow-wrap: anywhere;
+  padding-left: 12px; border-left: 3px solid var(--accent);
+}
+.post-summary { font-size: 15px; color: #d4d4d8; line-height: 1.45; }
+.viewer.detail-mode .panel .post-sub { margin: 4px 0 6px; }
+.used-in { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; font-size: 14px; line-height: 1.5; }
+.used-label { color: var(--muted); font-weight: 700; }
+.used-link { background: none; border: 0; padding: 0; color: #ff7a8a; font-weight: 700; text-align: left; text-decoration: none; font-size: 14px; }
+.used-link:hover { color: #ffa3ae; text-decoration: underline; }
+.used-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.used-name { font-weight: 700; }
+.used-sep { margin-left: -6px; color: var(--muted); }
+.vc-note { font-size: 13px; font-weight: 500; opacity: .8; }
+.tips { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: 14px; line-height: 1.45; color: #d4d4d8; }
+.tips li { display: flex; flex-direction: column; gap: 2px; }
+.tip-what { font-weight: 700; color: var(--text); }
+.tip-how { color: #b4b4bc; }
+.moments .moment-link, .moments .moment-static { display: block; width: 100%; background: var(--surface-2); border-radius: 8px; padding: 8px 10px; color: var(--text); text-decoration: none; }
+.moments .moment-link:hover { background: #2a2a31; }
+
+/* "From your footage": the arc Studio fills with posts it found in new footage */
+.col.from-footage { border-top: 2px solid rgba(106, 168, 255, .55); }
+.col-source { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; font-size: 12px; font-weight: 700; color: var(--filmed); }
+.footage-icon { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.chip.footage { color: var(--filmed); }
+
+/* ── Phones: a page, not a pop-up ───────────────────── */
+.show-phone { display: none; }
+@media (max-width: 720px) {
+  .show-phone { display: inline; }
+  body.viewer-page #subnav, body.viewer-page main { display: none; }
+  body.viewer-page .viewer, body.viewer-page .viewer.detail-mode {
+    position: static; inset: auto; overflow: visible; background: var(--bg);
+    display: flex; flex-direction: column; min-height: calc(100vh - var(--shell-top-h));
+    padding-bottom: var(--shell-bottom);
+  }
+  body.viewer-page .viewer .close, body.viewer-page .viewer .nav { display: none; }
+  body.viewer-page .viewer .detail-head:not(:empty) {
+    display: flex; align-items: center; gap: 8px; position: sticky; top: var(--shell-top-h); z-index: 3; flex: none;
+    padding: 4px 12px 4px 16px; background: rgba(11, 11, 13, .96); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line);
+  }
+  body.viewer-page .viewer .head-pos { margin-left: auto; }
+  body.viewer-page .viewer .head-next { margin-left: 0; min-width: 44px; justify-content: center; font-size: 20px; }
+  body.viewer-page .viewer .head-link[data-back] { font-size: 15px; color: var(--text); padding-right: 12px; }
+  body.viewer-page .viewer:not(.detail-mode) .player-col { padding-top: 12px; }
+  body.viewer-page .viewer.plan-mode .player-frame { padding-top: 12px; }
+  body.viewer-page .viewer .panel { overflow: visible; }
+  /* Decisions sit just above the tab bar */
+  body.viewer-page .viewer.detail-mode .decision-bar:not([hidden]) { bottom: var(--shell-bottom); padding-bottom: 10px; }
+  body.viewer-page .viewer .decision { bottom: var(--shell-bottom); }
+  body.viewer-page:has(.decision-bar:not([hidden])) .toast { bottom: calc(84px + var(--shell-bottom)); }
+  .post-card { padding: 12px 14px; border-radius: 14px; gap: 8px; }
+  .post-hook { font-size: 17px; }
+  .post-summary { font-size: 14px; }
+  .used-link { min-height: 32px; }
+}

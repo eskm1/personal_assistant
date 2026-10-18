@@ -50,14 +50,31 @@ def dashboard_link(tab: str) -> str:
     return f"{base}/#/tab/{tab}"
 
 
+def planner_link() -> str:
+    """Where the team plans: the planner when planning is online (at /plan/ on the
+    Studio machine, else the Netlify address), otherwise the dashboard's Plan tab."""
+    import cloud_sync
+    import settings
+    if cloud_sync.enabled():
+        if DASHBOARD_URL:
+            return f"{DASHBOARD_URL}/plan/"
+        if settings.PLANNER_URL:
+            return settings.PLANNER_URL + "/"
+    return dashboard_link("plan")
+
+
 class Digest:
     def __init__(self):
         self._lock = threading.Lock()
         self._counts: Counter = Counter()
+        self._notes: dict[str, str] = {}
         self._first = self._last = 0.0
 
     def add(self, kind: str, n: int = 1) -> None:
-        """kind: processed | retake | matched | duplicate | unreadable | failed | draft | edit_failed"""
+        """kind: processed | retake | matched | duplicate | unreadable | failed | draft | edit_failed
+        | ideas_new | ideas_attached (ideas from new footage)"""
+        if n <= 0:
+            return
         with self._lock:
             now = time.time()
             if not self._counts:
@@ -65,7 +82,12 @@ class Digest:
             self._counts[kind] += n
             self._last = now
 
-    def message(self, counts: Counter) -> str:
+    def note(self, key: str, text: str) -> None:
+        """A word for the next message (ideas_when: "today's footage")."""
+        with self._lock:
+            self._notes[key] = text
+
+    def message(self, counts: Counter, notes: dict | None = None) -> str:
         def n(k, one, many):
             c = counts[k]
             return f"{c} {one if c == 1 else many}"
@@ -88,6 +110,13 @@ class Digest:
                 counts["unreadable"] and n("unreadable", "file couldn't be read", "files couldn't be read"),
                 counts["failed"] and n("failed", "failed and will be retried", "failed and will be retried"),
             ) if x) + f". {dashboard_link('ingesting')}")
+        if counts["ideas_new"] or counts["ideas_attached"]:
+            parts = [x for x in (
+                counts["ideas_new"] and n("ideas_new", "new post idea", "new post ideas"),
+                counts["ideas_attached"] and n("ideas_attached", "clip added to existing ideas",
+                                               "clips added to existing ideas")) if x]
+            lines.append(" and ".join(parts).capitalize() + f" from {(notes or {}).get('ideas_when') or 'the new footage'}"
+                         f": {planner_link()}")
         if counts["draft"] or counts["edit_failed"]:
             drafts = [x for x in (counts["draft"] and n("draft", "draft ready to review", "drafts ready to review"),
                                   counts["edit_failed"] and n("edit_failed", "edit failed", "edits failed")) if x]
@@ -106,7 +135,10 @@ class Digest:
                 if now - self._last < QUIET_SECONDS:
                     return False
             counts, self._counts = self._counts, Counter()
-        return send(self.message(counts))
+            notes, self._notes = self._notes, {}
+        if not +counts:
+            return False
+        return send(self.message(counts, notes))
 
 
 digest = Digest()

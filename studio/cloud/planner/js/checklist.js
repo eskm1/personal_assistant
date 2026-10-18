@@ -4,7 +4,7 @@
 // shot filmed (or unticks it). Routes: #/today/<project_id> (and the old #/checklist/<id>).
 import {
   $, CAMERA, CAMERA_LONG, CAMERA_ORDER, FRAMING, KIND, esc, sb, must, toast, store, recall, pbarHTML, fbarHTML, prepShots,
-  progress, takeVerdict, takeFlags, nameOf, state, syncInert, dayLabel, plural, stillUrl, takePaths,
+  progress, takeRetake, takeFlags, nameOf, state, syncInert, dayLabel, plural, stillUrl, takePaths,
 } from "./core.js";
 import { loadShoot, visitFor } from "./shoot.js";
 import { uploadButtonsHTML } from "./upload.js";
@@ -149,7 +149,7 @@ function renderChecklist() {
         ${g.decision === "go" ? `<span class="chip go">Go</span>` : ""}
         <span class="muted small">${esc(g.progress.got)}/${esc(g.progress.total)} got</span></div>
       <ul class="cl-shots">${g.list.map((s) => {
-        const take = s.takes.find((t) => takeVerdict(t) === "retake") || null;
+        const take = s.takes.find(takeRetake) || null;
         const flags = takeFlags(take);
         const label = [s.camera ? CAMERA[s.camera] : "", FRAMING[s.framing] ? FRAMING[s.framing].toUpperCase() : "", KIND[s.kind] || "", s.seconds ? `${Math.round(s.seconds * 10) / 10}s` : ""].filter(Boolean).join(" · ");
         const by = nameOf(s.filmed_by);

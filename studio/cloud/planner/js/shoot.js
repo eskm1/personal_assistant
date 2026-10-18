@@ -6,7 +6,7 @@
 import {
   $, $$, CAMERA_LONG, CAMERA_ORDER, esc, sb, must, toast, store, recall, plural, stillUrl, signPaths, takePaths,
   takeVerdict, prepShots, isFilmed, todayISO, dayOf, dayLabel, dayRange, missingTable, mmss, nameOf, ownerName,
-  openModal, closeModal, formError, jobView, jobActive, laptopWait, state, verdictChip,
+  openModal, closeModal, formError, jobView, jobActive, laptopWait, state, retakeBadge, takeRetake,
 } from "./core.js";
 import { uploadButtonsHTML, rememberShot, onClipDrop, clipDragType, uploadsFor } from "./upload.js";
 
@@ -28,7 +28,7 @@ export async function loadShoot(pid) {
       sb.from("site_days").select("*").eq("project_id", pid).order("day").then(must),
       sb.from("ideas").select(`id,title,folder,decision,status,arc_id,position,shots(${SHOT_COLS})`)
         .eq("project_id", pid).eq("decision", "go").neq("status", "dismissed").order("position").order("id").then(must),
-      sb.from("clips").select("id,title,duration,recorded_at,thumb_path,idea_id,takes(id)").eq("project_id", pid)
+      sb.from("clips").select("id,title,duration,recorded_at,thumb_path,idea_id,verdict,takes(id)").eq("project_id", pid)
         .order("recorded_at", { ascending: false, nullsFirst: false }).order("id", { ascending: false }).limit(300).then(must),
       sb.from("jobs").select("id,kind,runner,project_id,state,result,error,created_at,started_at,updated_at")
         .eq("kind", "place").eq("project_id", pid).order("id", { ascending: false }).limit(1).then(must),
@@ -226,8 +226,9 @@ export function takeThumbsHTML(s, key) {
   return s.takes.map((t) => {
     const url = stillUrl(...takePaths(t));
     const title = t.clips?.title || `Clip ${t.clip_id}`;
-    return `<button type="button" class="sp-thumb${takeVerdict(t) === "retake" ? " retake" : ""}" data-take="${esc(t.id)}" data-take-shot="${esc(s.id)}" data-fk="t:${key}:${esc(t.id)}" aria-label="${esc(`Footage: ${title}. Move or remove`)}">
-      ${url ? `<img src="${esc(url)}" alt="" loading="lazy">` : `<span class="take-none" aria-hidden="true">No still</span>`}</button>`;
+    const retake = takeRetake(t);
+    return `<button type="button" class="sp-thumb${retake ? " retake" : ""}" data-take="${esc(t.id)}" data-take-shot="${esc(s.id)}" data-fk="t:${key}:${esc(t.id)}" aria-label="${esc(`Footage: ${title}${retake ? " (needs a retake)" : ""}. Move or remove`)}">
+      ${url ? `<img src="${esc(url)}" alt="" loading="lazy">` : `<span class="take-none" aria-hidden="true">No still</span>`}${retake ? `<span class="thumb-badge" aria-hidden="true">Retake</span>` : ""}</button>`;
   }).join("");
 }
 
@@ -290,7 +291,7 @@ function homelessHTML(d) {
       const url = stillUrl(c.thumb_path);
       return `<li class="nh-clip" draggable="true" data-clip="${esc(c.id)}">
         <span class="nh-thumb">${url ? `<img src="${esc(url)}" alt="" loading="lazy" draggable="false">` : `<span class="take-none" aria-hidden="true">No still</span>`}</span>
-        <span class="nh-text"><span class="nh-title">${esc(c.title || `Clip ${c.id}`)}</span>
+        <span class="nh-text"><span class="nh-title">${esc(c.title || `Clip ${c.id}`)}</span>${retakeBadge(c)}
           <span class="muted small">${c.duration ? esc(mmss(c.duration)) : ""}${c.idea ? ` · from ${esc(c.idea.title)}` : ""}</span>
           <button type="button" class="btn small" data-clip-put="${esc(c.id)}" data-fk="c:${esc(c.id)}">Put on a shot…</button></span>
       </li>`;
@@ -440,7 +441,7 @@ export async function pickShot(pid, { title, intro = "", exclude = null, onPick 
     b.disabled = true;
     try { await onPick(Number(b.dataset.pickShot)); } catch (err) { b.disabled = false; toast(`Couldn't do that: ${err.message}`); return; }
     closeModal();
-  }, true);
+  }, true, "sheet");
   const ideas = must(await sb.from("ideas").select("id,title,position,shots(id,position,description,camera,filmed_at,takes(id))")
     .eq("project_id", pid).eq("decision", "go").neq("status", "dismissed").order("position").order("id"));
   const box = $("#ps-list");
@@ -471,8 +472,8 @@ export async function openTake(takeId, shotId) {
   const c = t.clips || {};
   openModal(`<h2 id="modal-title">Footage on this shot</h2>
     <div class="take-detail">${url ? `<img class="take-big" src="${esc(url)}" alt="">` : ""}
-      <div><p><strong>${esc(c.title || `Clip ${t.clip_id}`)}</strong></p><p class="muted small">${c.duration ? esc(mmss(c.duration)) : ""} ${verdictChip(c.verdict)}
-        ${t.source === "auto" ? "Matched by Studio" : "Added by hand"}</p></div></div>
+      <div><p><strong>${esc(c.title || `Clip ${t.clip_id}`)}</strong></p><p class="muted small">${c.duration ? esc(mmss(c.duration)) : ""} ${retakeBadge(c)}
+        ${t.note ? esc(t.note) : t.source === "auto" ? "Matched by Studio" : "Added by hand"}</p></div></div>
     <div class="row end"><button type="button" class="btn ghost danger" id="tk-remove">Remove from this shot</button>
       <button type="button" class="btn primary" id="tk-move">Move to another shot…</button></div>`, async (e) => {
     if (e.target.id === "tk-remove") {

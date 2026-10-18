@@ -125,6 +125,10 @@ SUPABASE_ANON_KEY = _env("STUDIO_SUPABASE_ANON_KEY")
 UPLOAD_ORIGINS = {o.strip().rstrip("/") for o in _env("STUDIO_UPLOAD_ORIGINS").split(",") if o.strip()}
 # Footage uploaded from the planner waits here until it's complete.
 UPLOADS = ROOT / "Uploads"
+# Ideas from new footage (footage_ideas.py): once new clips stop arriving for this many
+# minutes (a shoot day's uploads are done), Claude suggests posts from them and adds them
+# to the posts already planned. 0 turns it off (the planner's button still works).
+IDEAS_AFTER_MINUTES = int(_env("STUDIO_IDEAS_AFTER_MINUTES", "20"))
 
 # Who may sign in to the dashboard: emails at these domains (comma-separated; "*" = anyone).
 # Owner accounts are always allowed, whatever their address.

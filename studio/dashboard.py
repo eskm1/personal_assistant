@@ -349,14 +349,23 @@ def _inbox_items() -> list[dict]:
     return sorted(items, key=lambda i: i["mtime"], reverse=True)
 
 
+def clip_flagged(quality: dict | None, usable) -> bool:
+    """Only a clip that needs a retake (or isn't usable) is flagged; "check" is a note
+    for the detail view, not a warning ("as long as videos are usable, don't flag")."""
+    return (quality or {}).get("verdict") == "retake" or usable == 0
+
+
 def _clip_item(row: sqlite3.Row, open_notes: dict[int, int]) -> dict:
     files = _clip_files(row)
+    quality = json.loads(row["quality"]) if row["quality"] else None
     return {
         "kind": "clip", "id": row["id"], "stage": CLIP_STAGE.get(row["status"], "ingesting"),
         "status": row["status"], "title": row["title"] or row["source_name"],
         "brand": row["brand"], "format": row["format"], "duration": row["duration"],
         "orientation": row["orientation"], "usable": row["usable"], "reviewed": bool(row["reviewed_at"]),
-        "verdict": json.loads(row["quality"]).get("verdict") if row["quality"] else None,
+        # verdict: good | check | retake (unchanged); flagged: show a warning only when true.
+        "verdict": quality.get("verdict") if quality else None,
+        "flagged": clip_flagged(quality, row["usable"]),
         "project_id": row["project_id"],
         "error": row["error"], "open_notes": open_notes.get(row["id"], 0),
         "thumb": f"/media/clip/{row['id']}/thumb" if files["thumb"] else None,
@@ -440,20 +449,25 @@ def board():
     clip_notes, production_notes = _open_notes("clip"), _open_notes("production")
     clips = db().execute("SELECT * FROM clips ORDER BY ingested_at DESC").fetchall()
     productions = db().execute("SELECT * FROM productions ORDER BY updated_at").fetchall()
-    ideas = db().execute("""SELECT * FROM ideas WHERE status = 'new' AND COALESCE(origin, 'library') = 'library'
-                            ORDER BY id DESC""").fetchall()
-    return jsonify({
+    # One home for ideas: with planning online they live in the planner, not Review.
+    online = cloud_sync.enabled()
+    ideas = [] if online else db().execute("""SELECT * FROM ideas WHERE status = 'new'
+                                              AND COALESCE(origin, 'library') = 'library' ORDER BY id DESC""").fetchall()
+    out = {
         "items": [*_inbox_items(),
                   *(_clip_item(r, clip_notes) for r in clips),
                   *(_production_item(r, production_notes) for r in productions),
                   *(_idea_item(r) for r in ideas)],
-        "ideas_job": dict(_ideas_job),
+        "ideas_online": online,
         "version": _version_commit(),
         "costs": usage.month_summary(db()) if is_owner() else None,
         # Planning online (cloud_sync.py): the Plan tab links to the planner instead.
         "cloud": cloud_sync.dashboard_info(),
         "machine": _machine_info(),
-    })
+    }
+    if not online:
+        out["ideas_job"] = dict(_ideas_job)
+    return jsonify(out)
 
 
 def _machine_info() -> dict:
@@ -489,7 +503,7 @@ def clip_detail(clip_id: int):
         "cost": usage.total_for(db(), f"clip:{clip_id}") if is_owner() else None,
         "quality": json.loads(row["quality"]) if row["quality"] else None,
         "shots": [dict(r) for r in db().execute(
-            """SELECT t.id AS take_id, t.shot_id, t.source, t.start, t.end, s.description, i.id AS idea_id,
+            """SELECT t.id AS take_id, t.shot_id, t.source, t.start, t.end, s.description, i.id AS idea_id, i.remote_id AS idea_remote_id,
                       i.title AS idea_title FROM takes t JOIN shots s ON s.id = t.shot_id
                       JOIN ideas i ON i.id = s.idea_id WHERE t.clip_id = ? ORDER BY t.id""", (clip_id,))],
     })
@@ -568,6 +582,8 @@ def _shot_list_target(row) -> tuple[str, int] | None:
 # ── Actions ───────────────────────────────────────────────────────────────────
 
 # One "Suggest posts" run at a time, in the background; the board reports progress.
+# With planning online, ideas come from new footage in the planner instead (footage_ideas.py).
+IDEAS_MOVED = "Ideas live in the planner now"
 _ideas_job = {"running": False, "error": None, "count": None, "finished": None}
 _ideas_lock = threading.Lock()
 
@@ -590,6 +606,8 @@ def _run_ideas(focus: str) -> None:
 @app.post("/api/ideas/generate")
 @owner_only
 def generate_ideas():
+    if cloud_sync.enabled():
+        return jsonify({"error": IDEAS_MOVED}), 410
     focus = str((request.json or {}).get("focus", ""))[:500]
     with _ideas_lock:
         if _ideas_job["running"]:

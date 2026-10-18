@@ -4,6 +4,7 @@ import {
   $, $$, BRAND, ACCOUNTS, oneBrand, esc, sb, must, invoke, toast, options, store, recall, plural, typingIn, keepDrafts,
   pbarHTML, prepShots, progress, signPaths, stillUrl, takePaths, jobView, jobActive, kickDevelop,
   openModal, closeModal, formError, nameOf, PRODUCTION, state, fbarHTML, isFilmed, folderLineHTML, httpsUrl,
+  laptopWait, ago, dayOf, todayISO, parseDay, dayLabel,
 } from "./core.js";
 import { shoot, loadShoot, renderShoot } from "./shoot.js";
 
@@ -20,8 +21,8 @@ export function planMode() {
   return d && (d.phases.length || d.days.length) ? "shoot" : "ideas";
 }
 
-const IDEA_COLS = "id,project_id,arc_id,title,brand,format,decision,status,production,position,created_by,updated_at,"
-  + "shots(id,position,filmed_at,takes(id,thumb_path,clip_id,clips(verdict,thumb_path))),votes(user_id,vote),comments(count)";
+const IDEA_COLS = "id,project_id,arc_id,title,brand,format,decision,status,production,position,created_by,created_at,updated_at,"
+  + "shots(id,position,filmed_at,takes(id,thumb_path,clip_id,clips(verdict,thumb_path,recorded_at))),votes(user_id,vote),comments(count)";
 const JOB_COLS = "id,kind,runner,project_id,idea_id,state,result,error,created_at,started_at,updated_at";
 
 export const currentProject = () => plan.projects.find((p) => p.id === plan.pid) || null;
@@ -61,7 +62,7 @@ export async function loadBoard() {
   ]);
   await shootLoad;
   const ids = ideas.map((i) => i.id);
-  const jobs = must(await sb.from("jobs").select(JOB_COLS).in("kind", ["organise", "develop"])
+  const jobs = must(await sb.from("jobs").select(JOB_COLS).in("kind", ["organise", "develop", "ideas"])
     .or(ids.length ? `project_id.eq.${pid},idea_id.in.(${ids.join(",")})` : `project_id.eq.${pid}`)
     .order("id", { ascending: false }).limit(400));
   if (stale()) return;
@@ -89,6 +90,7 @@ export async function loadBoard() {
   plan.board = {
     project: plan.projects.find((p) => p.id === pid), arcs, ideas, jobs, develop,
     organise: jobs.find((j) => j.kind === "organise" && j.project_id === pid) || null,
+    ideasJob: jobs.find((j) => j.kind === "ideas" && j.project_id === pid) || null,
   };
   kickDevelop(jobs);
 }
@@ -166,6 +168,7 @@ function plannerShellHTML() {
         </div>
       </div>
     </details>
+    <div id="footage-news"></div>
     <section class="shoot" id="shoot-view" aria-label="Shoot plan" hidden></section>
     <div id="ideas-view">
     <div class="dump" id="plan-dump-box">
@@ -181,6 +184,10 @@ function plannerShellHTML() {
     <div class="board-head">
       <label class="check"><input type="checkbox" id="plan-hide-parked" ${plan.hideParked ? "checked" : ""}> Hide parked</label>
       <span class="muted small hide-mobile">Drag a card to another column to move it, or open it to change its arc.</span>
+      <div class="find-ideas">
+        <button class="btn" id="plan-find-ideas" title="Studio reads this project's footage of the last two weeks: new posts go in “From your footage”, and footage that fits a planned post is added to it. Runs on Studio.">${FOOTAGE_ICON}Find ideas in new footage</button>
+        <span class="muted small" id="find-ideas-status" aria-live="polite"></span>
+      </div>
     </div>
     <div class="board" id="plan-board"></div>
     </div>`;
@@ -228,9 +235,15 @@ export function renderPlanTop() {
   const r = job?.result || {};
   const newIds = Array.isArray(r.idea_ids) ? r.idea_ids : [];
   const drafts = newIds.map((id) => ({ id, job: jobView(b.develop.get(id)), idea: b.ideas.find((i) => i.id === id) }));
-  const sig = JSON.stringify([total, job, seen, drafts.map((d) => [d.job?.state, d.job?.error, d.idea?.title])]);
+  const news = footageNews(b);
+  const ideasJob = jobView(b.ideasJob);
+  const sig = JSON.stringify([total, job, seen, drafts.map((d) => [d.job?.state, d.job?.error, d.idea?.title]), news, ideasJob,
+    plan.ideasRefused === b.project.id, state.laptop?.last_seen ? Math.floor(Date.parse(state.laptop.last_seen) / 60e3) : 0,
+    state.laptop?.info?.footage_ideas?.waiting_clips || 0]);
   if (sig === plan.topSig) return;
   plan.topSig = sig;
+  renderFootageNews(news);
+  renderFindIdeas(ideasJob);
   $("#plan-progress").innerHTML = total.total
     ? `${pbarHTML(total)}<span><strong>${total.got}</strong> of ${total.total} shots filmed</span>`
     : `<span class="muted">No shots planned yet</span>`;
@@ -260,6 +273,122 @@ export function renderPlanTop() {
     }
   }
   $("#organise-result").innerHTML = html;
+}
+
+// ── Ideas from new footage ──────────────────────────────────────────────────
+// After a shoot day the Studio machine reads the new clips and suggests posts into the
+// project's "From your footage" arc (footage_ideas.py makes it). The board marks that arc,
+// says when new ones arrived since you last looked, and can ask for a look right now.
+
+const FOOTAGE_ARC = "from your footage";
+export const fromFootage = (a) => !!a && String(a.title || "").trim().toLowerCase() === FOOTAGE_ARC;
+const FOOTAGE_ICON = `<svg class="footage-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>`;
+const seenKey = (pid) => `studio.footageSeen.${pid}`;
+
+// "Saturday's footage", from the day the new ideas' clips were filmed.
+function footageWhen(day) {
+  const d = parseDay(day), t = parseDay(todayISO());
+  if (!d) return "your footage";
+  const days = Math.round((t - d) / 864e5);
+  if (days === 0) return "today's footage";
+  if (days === 1) return "yesterday's footage";
+  if (days > 1 && days < 7) return `${d.toLocaleDateString("en-GB", { weekday: "long" })}'s footage`;
+  return `the footage of ${dayLabel(day, { weekday: false })}`;
+}
+
+// Ideas in the footage arc that arrived since this device last looked (the last week, the first time).
+function footageNews(b) {
+  const arc = b.arcs.find(fromFootage);
+  if (!arc) return null;
+  const seen = Date.parse(recall(seenKey(b.project.id)) || "") || Date.now() - 7 * 864e5;
+  const fresh = b.ideas.filter((i) => i.arc_id === arc.id && Date.parse(i.created_at || "") > seen);
+  if (!fresh.length) return null;
+  const days = fresh.flatMap((i) => i.shots.flatMap((s) => s.takes.map((t) => dayOf(t.clips?.recorded_at)))).filter(Boolean).sort();
+  return { ids: fresh.map((i) => i.id), latest: fresh.map((i) => i.created_at).sort().pop(), when: footageWhen(days.pop()) };
+}
+
+function renderFootageNews(news) {
+  const box = $("#footage-news");
+  if (!box) return;
+  plan.footageNews = news;
+  box.innerHTML = news ? `<div class="footage-news" role="status">
+      ${FOOTAGE_ICON}<p><strong>${esc(plural(news.ids.length, "new idea"))}</strong> from ${esc(news.when)}.</p>
+      <button class="btn small" data-footage-show>See them</button>
+      <button class="icon-btn" data-footage-dismiss aria-label="Dismiss" title="Dismiss">×</button>
+    </div>` : "";
+}
+
+// Seen: the banner goes; the new cards keep a "New" chip until the page is reloaded.
+function footageSeen(news) {
+  if (!news || !plan.board) return;
+  store(seenKey(plan.board.project.id), news.latest || new Date().toISOString());
+  plan.footageFresh = new Set([...(plan.footageFresh || []), ...news.ids]);
+  plan.topSig = "";
+  plan.sig = "";
+}
+
+function showFootageColumn() {
+  const news = plan.footageNews;
+  footageSeen(news);
+  if (planMode() !== "ideas") { plan.mode = "ideas"; store("studio.planMode", "ideas"); }
+  renderPlanner(true);
+  const col = $(".col.from-footage");
+  if (!col) return;
+  col.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "start" });
+  col.classList.remove("flash");
+  void col.offsetWidth;
+  col.classList.add("flash");
+  $("#footage-col")?.focus({ preventScroll: true });
+}
+
+function renderFindIdeas(job) {
+  const btn = $("#plan-find-ideas"), status = $("#find-ideas-status");
+  if (!btn || !status) return;
+  const busy = jobActive(job);
+  // Studio does this by itself once a shoot day's uploads go quiet (laptop_status.info).
+  const waiting = Number(state.laptop?.info?.footage_ideas?.waiting_clips) || 0;
+  const soon = !busy && waiting ? ` <span class="find-soon">Studio will suggest ideas from ${esc(plural(waiting, "new clip"))} once uploads stop.</span>` : "";
+  btn.disabled = busy;
+  btn.lastChild.textContent = busy ? "Finding ideas…" : "Find ideas in new footage";
+  if (plan.ideasRefused === plan.pid && !job) {
+    status.innerHTML = `<span class="error-text">Needs a one-time update: run cloud_setup.py --update</span>`;
+    return;
+  }
+  if (!job) { status.innerHTML = soon.trim(); return; }
+  if (job.state === "queued") { status.innerHTML = `<span class="spin"></span> Asked Studio. ${esc(laptopWait())}`; return; }
+  if (job.state === "running") { status.innerHTML = `<span class="spin"></span> Studio is reading the new footage. A minute or two.`; return; }
+  if (job.state === "failed") { status.innerHTML = `<span class="error-text">Couldn't look: ${esc(job.error || "unknown error")}</span>${soon}`; return; }
+  const r = job.result || {};
+  const count = (v) => (Array.isArray(v) ? v.length : Number(v) || 0);
+  const n = count(r.new_ideas ?? r.ideas), clips = count(r.attached);
+  const when = job.updated_at ? ` (${esc(ago(job.updated_at))})` : "";
+  status.innerHTML = r.clips === 0 ? `Last look${when}: no new footage from the last two weeks.`
+    : n || clips ? `Last look${when}: ${esc(plural(n, "new idea"))}${clips ? `, and ${esc(plural(clips, "clip"))} added to planned posts` : ""}.`
+      : `Last look${when}: no new ideas in the footage this time.`;
+  status.innerHTML += soon;
+}
+
+async function findIdeas() {
+  const pid = plan.pid;
+  const { error } = await sb.from("jobs").insert({ kind: "ideas", runner: "laptop", project_id: pid, state: "queued", payload: {} });
+  if (error) {
+    // The kind (or who may ask for it) arrives with a database update.
+    if (/23514|42501|check constraint|row-level security|violates/i.test(`${error.code || ""} ${error.message || ""}`)) {
+      plan.ideasRefused = pid;
+      plan.topSig = "";
+      renderPlanTop();
+      toast("Needs a one-time update: run cloud_setup.py --update", 6000);
+      return;
+    }
+    throw new Error(error.message);
+  }
+  plan.ideasRefused = null;
+  if (plan.board?.project.id === pid) {
+    plan.board.ideasJob = { kind: "ideas", runner: "laptop", project_id: pid, state: "queued", created_at: new Date().toISOString() };
+    renderPlanTop();
+  }
+  toast("Asked Studio to look for ideas in the new footage.");
+  await refresh();
 }
 
 function boardBusy() {
@@ -297,6 +426,7 @@ export function renderPlanBoard(force = false, mine = false) {
 function columnHTML(c, arcCount) {
   const a = c.arc;
   const key = a ? String(a.id) : "";
+  const footage = fromFootage(a);
   let head;
   if (a && plan.editingArc === a.id) {
     head = `<div class="arc-form">
@@ -304,21 +434,22 @@ function columnHTML(c, arcCount) {
       <textarea id="arc-purpose" rows="2" maxlength="1000" placeholder="What this series is for" aria-label="What this series is for">${esc(a.purpose)}</textarea>
       <div class="row"><button class="btn small primary" data-arc-save="${esc(a.id)}">Save</button><button class="btn small" data-arc-cancel>Cancel</button></div></div>`;
   } else {
-    head = `<div class="col-title"><h3>${a ? esc(a.title) : "Unsorted"}</h3><span class="count">${c.ideas.length}</span>
+    head = `<div class="col-title"><h3${footage ? ` tabindex="-1" id="footage-col"` : ""}>${a ? esc(a.title) : "Unsorted"}</h3><span class="count">${c.ideas.length}</span>
       ${a ? `<details class="col-menu"><summary aria-label="Options for ${esc(a.title)}" title="Arc options">⋯</summary><div class="menu">
         <button data-arc-action="edit" data-arc-id="${esc(a.id)}">Rename or edit purpose</button>
         <button data-arc-action="left" data-arc-id="${esc(a.id)}" ${c.index === 0 ? "disabled" : ""}>Move left</button>
         <button data-arc-action="right" data-arc-id="${esc(a.id)}" ${c.index === arcCount - 1 ? "disabled" : ""}>Move right</button>
         <button data-arc-action="delete" data-arc-id="${esc(a.id)}" class="danger">Delete arc…</button></div></details>` : ""}</div>
+      ${footage ? `<p class="col-source">${FOOTAGE_ICON}Found in your footage</p>` : ""}
       ${a ? (a.purpose ? `<p class="col-purpose">${esc(a.purpose)}</p>` : "") : `<p class="col-purpose">Not in a series yet. Drag into an arc, or let Claude organise them.</p>`}`;
   }
-  return `<section class="col" data-arc="${esc(key)}" aria-label="${a ? esc(a.title) : "Unsorted"}">
+  return `<section class="col${footage ? " from-footage" : ""}" data-arc="${esc(key)}" aria-label="${a ? esc(a.title) : "Unsorted"}">
     <header class="col-head">${head}</header>
-    <div class="col-cards">${c.ideas.map(cardHTML).join("") || `<p class="muted small col-empty">Drop ideas here</p>`}</div>
+    <div class="col-cards">${c.ideas.map((i) => cardHTML(i, footage)).join("") || `<p class="muted small col-empty">${footage ? "Studio adds posts here when it finds them in new footage" : "Drop ideas here"}</p>`}</div>
   </section>`;
 }
 
-function cardHTML(i) {
+function cardHTML(i, footage = false) {
   const p = i.progress;
   const thumb = i.first ? stillUrl(...takePaths(i.first)) : "";
   const ups = i.votes.up.length, downs = i.votes.down.length;
@@ -331,7 +462,8 @@ function cardHTML(i) {
     i.comments ? `<span title="${esc(plural(i.comments, "comment"))}">💬 ${esc(i.comments)}</span>` : "",
   ].filter(Boolean).join("");
   const decision = { go: "Go", parked: "Parked", proposed: "Idea" }[i.decision] || "Idea";
-  const label = [i.title, decision, p.total ? `${filmed} of ${p.total} shots filmed` : "No shots yet", ups ? `${ups} keen` : ""].filter(Boolean).join(", ");
+  const fresh = footage && plan.footageFresh?.has(i.id);
+  const label = [i.title, decision, footage ? "found in your footage" : "", fresh ? "new" : "", p.total ? `${filmed} of ${p.total} shots filmed` : "No shots yet", ups ? `${ups} keen` : ""].filter(Boolean).join(", ");
   const folder = plan.folders?.get(i.id);
   const card = `<button class="card ${esc(i.decision)}" data-plan-idea="${esc(i.id)}" draggable="true" aria-label="${esc(label)}">
     ${thumb ? `<img class="card-thumb" src="${esc(thumb)}" alt="" loading="lazy">` : ""}
@@ -339,6 +471,7 @@ function cardHTML(i) {
       <span class="card-title">${esc(i.title)}</span>
       <span class="card-chips">
         <span class="chip ${esc(i.decision)}">${decision}</span>
+        ${footage ? `<span class="chip footage">${fresh ? "New · " : ""}From footage</span>` : ""}
         ${oneBrand ? "" : `<span class="chip ${esc(i.brand)}">${esc(BRAND[i.brand] || i.brand)}</span>`}
         ${i.status === "made" || prod ? `<span class="chip producing">${esc(prod ? PRODUCTION[prod] || prod : "In edit")}</span>` : ""}
         ${jobActive(dev) ? `<span class="chip drafting"><span class="spin"></span>Drafting storyboard…</span>` : ""}
@@ -475,7 +608,7 @@ export function openNewProject() {
         name, brand: $("#np-brand")?.value || ACCOUNTS[0], folder: folderName($("#np-folder").value) || folderName(name), brief: $("#np-brief").value.trim(),
       }).select("id").single());
     } catch (err) { return formError(err.message); }
-    closeModal();
+    await closeModal();
     await loadProjects();
     location.hash = `#/project/${row.id}`;
     toast(`${name} created.`);
@@ -540,6 +673,12 @@ $("#planner").addEventListener("click", async (e) => {
       else if (confirm(`Archive ${p.name}? It stays readable; its shots stop being matched to new footage.`)) {
         await saveProject({ status: "archived" }, `${p.name} archived.`);
       }
+    } else if (t.id === "plan-find-ideas") await findIdeas();
+    else if (ds.footageShow != null) showFootageColumn();
+    else if (ds.footageDismiss != null) {
+      footageSeen(plan.footageNews);
+      renderPlanTop();
+      $("#plan-board") && renderPlanBoard(true, true);
     } else if (ds.dismissOrganise) {
       store(`studio.organiseSeen.${plan.pid}`, ds.dismissOrganise);
       renderPlanTop();

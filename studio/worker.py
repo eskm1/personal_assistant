@@ -10,7 +10,9 @@ Watches the inbox folder the phone uploads into. For each new video:
   6. quality-checks it (quality.py), matches it to planned shots (plan.py),
      saves everything to the SQLite catalogue and pings Bryan on Telegram
 It also serves the review dashboard (dashboard.py) and runs the editor queue
-(editor.py: planned and sent-back productions become drafts) while it runs.
+(editor.py: planned and sent-back productions become drafts) while it runs, and
+once a burst of uploads has gone quiet, has Claude suggest posts from the new
+footage and add it to the posts already planned (footage_ideas.py).
 
 Usage (from the studio folder, inside its venv):
   python worker.py                 run forever (what the scheduled task does)
@@ -690,6 +692,10 @@ def main() -> int:
                 log.exception("Unexpected error on %s", path.name)
             cloud_sync.tick(conn)  # long batches still push takes and run jobs every ~30 s
         cloud_sync.tick(conn, force=args.once)
+        if not cloud_sync.enabled() and not args.once:
+            # Ideas from a shoot day's footage, once uploads are quiet (online, the sync does it).
+            import footage_ideas
+            footage_ideas.tick(conn)
         if args.once:
             notify.digest.flush(force=True)
             return 0

@@ -3,6 +3,8 @@
    Uses each page's colour variables (--bg, --surface, --line, --text, --muted, --accent, --good). */
 :root { --shell-top-h: 56px; --shell-tab-h: 0px; --shell-bottom: 0px; }
 
+/* The wrapper adds no box, so the top bar sticks to the top of the page (not of the wrapper). */
+.shell { display: contents; }
 .shell .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 /* ── Top bar ────────────────────────────────────────── */
@@ -124,12 +126,11 @@
   }
   .shell-tab:focus-visible { outline-offset: -3px; }
   .shell-tab .shell-badge { position: absolute; top: 5px; left: calc(50% + 6px); min-width: 18px; height: 18px; font-size: 11px; padding: 0 5px; }
-  /* Content scrolls clear of the bar; a full-screen viewer has its own controls, so the bar steps aside. */
+  /* Content scrolls clear of the bar. A post, draft or clip opens as a page under the top
+     bar (each app's style.css), so the tab bar stays: it's how you get anywhere else. */
   .shell ~ main { padding-bottom: calc(40px + var(--shell-bottom)); }
-  body:has(.viewer:not([hidden])) .shell-tabbar { display: none; }
   body.shell-sheet-open { overflow: hidden; }
   .toast { bottom: calc(16px + var(--shell-bottom)); max-width: calc(100vw - 32px); }
-  body:has(.viewer:not([hidden])) .toast { bottom: 24px; }
 }
 @media (min-width: 721px) {
   .shell-sheet { display: none !important; }

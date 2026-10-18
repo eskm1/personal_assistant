@@ -532,7 +532,8 @@ h2.cl-arc { margin: 22px 0 4px; }
 
 /* Phones: 44 px touch targets, no sideways scrolling outside the board. */
 @media (max-width: 860px) {
-  html, body { overflow-x: hidden; }
+  /* clip, not hidden: hidden would make the page a scroll box and the top bar stop sticking. */
+  html, body { overflow-x: clip; }
   .btn, a.btn { min-height: 44px; }
   .btn.small { min-height: 44px; padding: 8px 12px; }
   .plan-details summary { min-height: 44px; }
@@ -936,7 +937,6 @@ body.has-tray .toast { bottom: auto; top: 76px; }
   .shot-place { grid-template-columns: minmax(0, 1fr); }
   /* Just above the phone tab bar (shell.css), or at the bottom while a viewer has the screen. */
   .up-tray { right: 0; left: 0; bottom: var(--shell-bottom, 0px); width: auto; max-width: none; border-radius: 14px 14px 0 0; max-height: 50vh; }
-  body:has(.viewer:not([hidden])) .up-tray { bottom: 0; }
   .up-toggle { min-height: 44px; }
   body.has-tray .cl-body { padding-bottom: 160px; }
   body.has-tray main { padding-bottom: calc(160px + var(--shell-bottom, 0px)); }
@@ -947,3 +947,66 @@ body.has-tray .toast { bottom: auto; top: 76px; }
   .cl-item .cl-up .up-ctl { width: 100%; }
 }
 .up-ctl .btn { display: inline-flex; align-items: center; justify-content: center; }
+
+/* ── Ideas from new footage ─────────────────────────── */
+.footage-icon { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.col.from-footage { border-top: 2px solid rgba(106, 168, 255, .55); }
+.col.from-footage.flash { animation: flash 1.2s ease-out; }
+.col-source { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; font-size: 12px; font-weight: 700; color: var(--filmed); }
+.col-title h3:focus { outline: none; }
+.col-title h3:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.chip.footage { color: var(--filmed); }
+.footage-news {
+  position: relative; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; padding: 10px 52px 10px 12px; border-radius: 12px;
+  background: rgba(106, 168, 255, .1); border: 1px solid rgba(106, 168, 255, .4); color: var(--text);
+}
+.footage-news .footage-icon { color: var(--filmed); width: 20px; height: 20px; }
+.footage-news p { margin: 0; flex: 1 1 200px; line-height: 1.4; }
+.footage-news .icon-btn { position: absolute; top: 50%; right: 8px; transform: translateY(-50%); background: none; border-color: transparent; }
+@media (max-width: 720px) {
+  .footage-news { align-items: flex-start; }
+  .footage-news .icon-btn { top: 4px; transform: none; }
+  .footage-news p { flex-basis: calc(100% - 36px); }
+  .footage-news .btn { margin-left: 30px; }
+}
+.find-ideas { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.find-ideas .btn { display: inline-flex; align-items: center; gap: 6px; }
+.find-ideas .btn .footage-icon { color: var(--filmed); }
+#find-ideas-status { max-width: 420px; line-height: 1.4; }
+.thumb-badge {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 1px 0; text-align: center; font-size: 8px; font-weight: 800;
+  letter-spacing: .02em; background: var(--bad); color: #fff;
+}
+.nh-text .chip.verdict { align-self: flex-start; }
+
+/* ── Phones: a planned post is a page, not a pop-up ─── */
+.viewer-head { display: none; }
+.head-link {
+  min-height: 44px; display: inline-flex; align-items: center; background: none; border: 0; padding: 0 4px;
+  color: #b4b4bc; font-weight: 700; font-size: 14px; border-radius: 8px;
+}
+.head-link:hover:not(:disabled) { color: var(--text); }
+.head-link:disabled { opacity: .35; cursor: default; }
+.head-pos { color: #8e8e98; font-size: 13px; }
+@media (max-width: 720px) {
+  body.idea-page #main { display: none; }
+  body.idea-page .viewer {
+    position: static; inset: auto; overflow: visible; background: var(--bg);
+    min-height: calc(100vh - var(--shell-top-h)); padding-bottom: var(--shell-bottom);
+  }
+  body.idea-page .viewer .close, body.idea-page .viewer .nav { display: none; }
+  body.idea-page .viewer-head:not(:empty) {
+    display: flex; align-items: center; gap: 8px; position: sticky; top: var(--shell-top-h); z-index: 3;
+    padding: 4px 12px 4px 16px; background: rgba(11, 11, 13, .96); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line);
+  }
+  body.idea-page .viewer-head [data-back] { font-size: 15px; color: var(--text); padding-right: 12px; }
+  body.idea-page .viewer-head .head-pos { margin-left: auto; }
+  body.idea-page .viewer-head .head-next { min-width: 44px; justify-content: center; font-size: 20px; }
+  body.idea-page .viewer.plan-mode .player-frame { padding-top: 12px; }
+  body.idea-page .viewer .panel { overflow: visible; }
+  /* Make this sits just above the tab bar */
+  body.idea-page .viewer .decision { bottom: var(--shell-bottom); }
+  .find-ideas { margin-left: 0; width: 100%; justify-content: flex-start; }
+  .find-ideas .btn { flex: 1 1 100%; justify-content: center; }
+  #find-ideas-status { max-width: none; }
+}

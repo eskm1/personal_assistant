@@ -3,14 +3,15 @@
 import {
   $, cfg, BRAND, ACCOUNTS, oneBrand, FORMAT, PLAN_FORMATS, FRAMING, KIND, CAMERA, SHOT_STATE, DECISION, PRODUCTION,
   esc, sb, must, invoke, toast, options, ago, mmss, shortDate, plural, typingIn, keepDrafts, isOwner, ownerName,
-  nameOf, state, pbarHTML, prepShots, progress, bestTake, takeVerdict, takeFlags, verdictChip, signPaths, stillUrl,
+  nameOf, state, pbarHTML, prepShots, progress, bestTake, takeRetake, takeFlags, retakeBadge, signPaths, stillUrl,
   takePaths, jobView, jobActive, kickDevelop, laptopWait, httpUrl, httpsUrl, openModal, closeModal, syncInert,
-  missingTable, dayLabel, folderLineHTML,
+  missingTable, dayLabel, folderLineHTML, pageMode, PHONE,
 } from "./core.js";
 import { plan } from "./board.js";
 import { uploadButtonsHTML, rememberShot } from "./upload.js";
 
-const IDEA_SEL = "*,shots(*,takes(*,clips(id,title,verdict,flags,thumb_path,duration,recorded_at))),"
+// clips(*): its "flagged" column (needs a retake) comes with a database update.
+const IDEA_SEL = "*,shots(*,takes(*,clips(*))),"
   + "votes(user_id,vote),comments(id,author,author_name,body,created_at)";
 const JOB_COLS = "id,kind,runner,project_id,idea_id,state,result,error,payload,created_at,started_at,updated_at";
 
@@ -18,7 +19,17 @@ export const view = { id: null, d: null, storySig: "", panelSig: "", pending: fa
 const panel = () => $("#panel");
 export const viewerOpen = () => !$("#viewer").hidden;
 
-export async function openIdea(id) {
+// On a computer the post opens over the board (the page underneath stays still); on a
+// phone it's a page of its own under the top bar (core.js syncInert), and the board comes
+// back where it was.
+function syncLock() {
+  const lock = (viewerOpen() && !pageMode()) || !$("#checklist").hidden || !$("#modal").hidden;
+  document.body.classList.toggle("locked", lock);
+}
+
+// cameFrom: the address it was opened from (the board, the shoot plan, Today), so Back
+// can be the browser's own back (and the back gesture does the same).
+export async function openIdea(id, cameFrom = null) {
   id = Number(id);
   view.lastId = id;
   const fresh = view.id !== id;
@@ -30,40 +41,78 @@ export async function openIdea(id) {
     $("#player-frame").innerHTML = `<div class="placeholder"><span class="spin"></span> Loading the storyboard…</div>`;
     panel().innerHTML = "";
   }
-  if ($("#viewer").hidden) {
+  const opening = $("#viewer").hidden;
+  if (opening) {
     view.returnFocus = document.activeElement;
+    view.cameFrom = cameFrom;
+    view.scroll = { y: window.scrollY, x: $("#plan-board")?.scrollLeft || 0, pid: plan.pid };
     $("#viewer").hidden = false;
     syncInert();
-    document.body.classList.add("locked");
+    syncLock();
   }
+  if (pageMode() && fresh) window.scrollTo(0, 0);
+  renderHead();
   try {
     await loadIdea(true);
   } catch (err) {
     panel().innerHTML = `<p class="muted">Couldn't open this idea (${esc(err.message)}).</p>`;
   }
   updateArrows();
-  if (fresh) $("#close").focus({ preventScroll: true });
+  if (fresh) (pageMode() ? $("#viewer-head [data-back]") : $("#close"))?.focus({ preventScroll: true });
 }
 
 export function hideViewer() {
   if ($("#viewer").hidden) return;
   $("#viewer").hidden = true;
   syncInert();
+  syncLock();
   $("#player-frame").innerHTML = "";
   panel().innerHTML = "";
+  $("#viewer-head").innerHTML = "";
   view.id = null;
   view.d = null;
-  if ($("#checklist").hidden && $("#modal").hidden) document.body.classList.remove("locked");
   const back = view.returnFocus;
   view.returnFocus = null;
   view.lastClosed = view.lastId;
   if (back && document.contains(back)) back.focus({ preventScroll: true });
 }
 
+// Back to the board where it was: the browser's back when the post was opened from it.
 export function closeIdea() {
   const pid = view.d?.project_id || plan.pid;
+  if (view.cameFrom && history.length > 1) { history.back(); return; }
   location.hash = pid ? `#/project/${pid}` : "#/";
 }
+// After the board is drawn again: its scroll, as it was when the post opened.
+export function restoreBoardScroll() {
+  const s = view.scroll;
+  if (!s || s.pid !== plan.pid) return;
+  window.scrollTo(0, s.y);
+  const board = $("#plan-board");
+  if (board) board.scrollLeft = s.x;
+}
+export function forgetBoardScroll() { view.scroll = null; }
+
+// Phones: Back, where this post is on the board, and the next one, above the post.
+function renderHead() {
+  const head = $("#viewer-head");
+  if (!viewerOpen() || !pageMode()) { head.innerHTML = ""; return; }
+  const i = plan.order.indexOf(view.id);
+  const last = i < 0 || i >= plan.order.length - 1;
+  head.innerHTML = `<button type="button" class="head-link" data-back aria-label="Back to the plan">‹&nbsp;Back</button>
+    ${i >= 0 ? `<span class="head-pos">${i + 1} of ${plan.order.length}</span>` : ""}
+    <button type="button" class="head-link head-next" data-head-next ${last ? "disabled" : ""} aria-label="Next idea">›</button>`;
+}
+$("#viewer-head").addEventListener("click", (e) => {
+  if (e.target.closest("[data-back]")) closeIdea();
+  else if (e.target.closest("[data-head-next]")) step(1);
+});
+PHONE.addEventListener("change", () => {
+  if (!viewerOpen()) return;
+  syncInert();
+  syncLock();
+  renderHead();
+});
 
 export async function loadIdea(force = false) {
   const id = view.id;
@@ -161,7 +210,7 @@ function frameHTML(s, i) {
         ${s.on_screen ? `<span class="sb-caption">${esc(s.on_screen)}</span>` : ""}
         ${s.line ? `<span class="sb-line">“${esc(s.line)}”</span>` : ""}
       </button>`;
-  const flags = s.state === "retake" || takeVerdict(take) === "check" ? takeFlags(take) : [];
+  const flags = s.state === "retake" ? takeFlags(take) : [];
   return `<article class="sb-frame st-${esc(s.state)}" id="frame-${esc(s.id)}">
     <div class="sb-card">${media}
       <span class="sb-num">${i + 1}</span>
@@ -208,12 +257,12 @@ $("#player-frame").addEventListener("click", (e) => {
 
 function takeHTML(t) {
   const thumb = stillUrl(...takePaths(t));
-  const flags = takeFlags(t);
+  const flags = takeRetake(t) ? takeFlags(t) : [];
   const c = t.clips || {};
   return `<div class="take">
     <span class="take-thumb">${thumb ? `<img src="${esc(thumb)}" alt="">` : `<span class="take-none" aria-hidden="true">No still</span>`}</span>
     <div class="take-info">
-      <div class="row tight">${verdictChip(takeVerdict(t))}<span class="muted small">${t.source === "auto" ? "Matched automatically" : `Added by hand${t.created_by && nameOf(t.created_by) ? ` by ${esc(nameOf(t.created_by))}` : ""}`}</span></div>
+      <div class="row tight">${retakeBadge(t.clips)}<span class="muted small">${t.note ? esc(t.note) : t.source === "auto" ? "Matched automatically" : `Added by hand${t.created_by && nameOf(t.created_by) ? ` by ${esc(nameOf(t.created_by))}` : ""}`}</span></div>
       <div class="small">${esc(c.title || `Clip ${t.clip_id}`)} · ${t.start != null ? mmss(t.start) : "0:00"}–${t.end != null ? mmss(t.end) : "end"}</div>
       ${flags.length ? `<ul class="take-flags">${flags.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
     </div>
@@ -633,7 +682,7 @@ function openPicker(shotId) {
     closeModal();
     toast("Footage attached.");
     await loadIdea(true);
-  }, true);
+  }, true, "sheet");
   const search = () => loadPicker(d.project_id, s).catch((err) => { if ($("#picker-results")) $("#picker-results").innerHTML = `<p class="error-text">${esc(err.message)}</p>`; });
   $("#picker-q").addEventListener("input", () => { clearTimeout(pickerTimer); pickerTimer = setTimeout(search, 250); });
   search();
@@ -658,7 +707,7 @@ async function loadPicker(projectId, shot) {
     const thumb = stillUrl(c.thumb_path);
     return `<button class="pick" data-pick-clip="${esc(c.id)}" ${attached.has(c.id) ? "disabled" : ""} aria-label="${esc(c.title || `Clip ${c.id}`)}${attached.has(c.id) ? " (attached)" : ""}">
     ${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : `<span class="pick-none">No still yet</span>`}
-    <span class="pick-chips">${c.verdict ? verdictChip(c.verdict) : ""}${attached.has(c.id) ? `<span class="chip">Attached</span>` : ""}</span>
+    <span class="pick-chips">${retakeBadge(c)}${attached.has(c.id) ? `<span class="chip">Attached</span>` : ""}</span>
     <span class="pick-text"><span class="pick-title">${esc(c.title || `Clip ${c.id}`)}</span>
       <span class="pick-meta">${c.duration ? esc(mmss(c.duration)) : ""}${c.recorded_at ? ` · ${esc(shortDate(c.recorded_at))}` : ""}</span></span>
   </button>`;
@@ -675,11 +724,15 @@ function updateArrows() {
   const i = plan.order.indexOf(view.id);
   $("#prev").disabled = i <= 0;
   $("#next").disabled = i < 0 || i >= plan.order.length - 1;
+  renderHead();
 }
+// The next post replaces this one in the history: Back still goes to the board.
 export function step(delta) {
-  const i = plan.order.indexOf(view.id);
+  // The address is ahead of the page while the next post loads (J pressed twice quickly).
+  const now = Number(location.hash.match(/^#\/idea\/(\d+)$/)?.[1]) || view.id;
+  const i = plan.order.indexOf(now);
   const next = i >= 0 ? plan.order[i + delta] : null;
-  if (next) location.hash = `#/idea/${next}`;
+  if (next) location.replace(`#/idea/${next}`);
 }
 $("#prev").addEventListener("click", () => step(-1));
 $("#next").addEventListener("click", () => step(1));

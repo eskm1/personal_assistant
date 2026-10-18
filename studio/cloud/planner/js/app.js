@@ -7,7 +7,7 @@ import {
 } from "./core.js";
 import { showAuth, hideAuth } from "./auth.js";
 import { plan, loadProjects, loadBoard, renderPlanner, selectProject, onBoardRefresh } from "./board.js";
-import { view, openIdea, hideViewer, closeIdea, loadIdea, viewerOpen, step, updateArrows } from "./idea.js";
+import { view, openIdea, hideViewer, closeIdea, loadIdea, viewerOpen, step, updateArrows, restoreBoardScroll, forgetBoardScroll } from "./idea.js";
 import { check, openChecklist, hideChecklist, loadChecklist, checklistOpen } from "./checklist.js";
 import { showTeam, hideTeam } from "./team.js";
 import { refsRoute, showRefs, hideRefs, resetRefs, refsOpen, loadRefs } from "./refs.js";
@@ -281,6 +281,8 @@ onBoardRefresh(async (force) => { await refreshBoard(force); });
 onShootRefresh(async () => { if (!$("#planner").hidden && !viewerOpen() && !checklistOpen()) await refreshBoard(true); });
 
 let routing = Promise.resolve();
+// The address before this one: a post opened from a page of the app goes back to it.
+const nav = { last: null };
 function route() {
   routing = routing.then(doRoute, doRoute).catch((err) => toast(`Couldn't load that: ${err.message}`));
   return routing;
@@ -295,6 +297,8 @@ function setSection(name) {
 async function doRoute() {
   if (!state.me) return;
   let h = location.hash;
+  const prev = nav.last;
+  nav.last = h;
   let m;
   const refRoute = refsRoute(h);
   if (refRoute) {
@@ -318,7 +322,8 @@ async function doRoute() {
     hideChecklist();
     hideTeam();
     $("#planner").hidden = false;
-    await openIdea(Number(m[1]));
+    const from = !viewerOpen() && prev != null && !/^#\/idea\//.test(prev) ? prev : viewerOpen() ? view.cameFrom : null;
+    await openIdea(Number(m[1]), from);
     const pid = view.d?.project_id;
     if (pid && (pid !== plan.pid || !plan.board)) {
       if (!plan.projects.length) await loadProjects();
@@ -356,8 +361,11 @@ async function doRoute() {
   if (plan.pid && location.hash !== `#/project/${plan.pid}`) history.replaceState(null, "", `#/project/${plan.pid}`);
   setSection("plan");
   renderPlanner(true);
+  restoreBoardScroll();
   await loadBoard();
   renderPlanner(true);
+  restoreBoardScroll();
+  forgetBoardScroll();
   // Back from an idea: keyboard focus returns to its card.
   if (view.lastClosed) {
     const card = document.querySelector(`.card[data-plan-idea="${Number(view.lastClosed)}"]`);

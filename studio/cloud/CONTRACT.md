@@ -54,6 +54,7 @@ progress.
 | develop | cloud | `plan-develop` function, or `plan-organise` (one per new idea) | `{request}` | `{changes}` |
 | music | laptop | any member (insert) | `{}` | the idea's `music` (also written to ideas.music) |
 | make | laptop | owner (insert) | `{caption?}` | `{production_id}` |
+| ideas | laptop | any member (insert) | `{}` (project_id set) | see "Ideas from new footage" |
 
 A `cloud` job still `running` 4 minutes after `started_at` died with its function (Supabase
 free plan: 150 s wall clock) and is shown as failed ("took too long, try again").
@@ -222,3 +223,46 @@ password; owners always may). `GET /api/nav` (dashboard cookie) returns `{review
 review>, studio: {on, last_sync}}` for the shared top bar's Review badge; the planner polls it about
 once a minute under /plan/ (401 there signs the planner out too). The top bar itself (`shell.js`,
 `shell.css`) lives in the planner's folder and is served to the dashboard as `/static/shell.*`.
+
+## Ideas from new footage (migration 20261019000000_footage_ideas.sql)
+
+Ideas live in ONE place, the planner. The Studio machine (`footage_ideas.py`, inside the sync, after
+clips are pushed) writes them there with the service key; the local mirror picks them up on the next pull.
+
+**Automatic.** When new tagged clips have arrived and then no clip has for `STUDIO_IDEAS_AFTER_MINUTES`
+(default 20; 0 = off), nothing is processing and the inbox is empty, the new clips are grouped by project
+(the clip's project; clips outside any project go to the standing project named **Everyday posts**, folder
+`Everyday posts`, made if missing). One Claude call per project (effort medium) gets the brief, its open
+ideas (`status = 'new'`, `decision in (proposed, go)`) with their shots and takes, the new clips (title,
+summary, moments, transcript excerpt, quality, duration) and up to 30 earlier clips of the project. It writes:
+
+| What | Rows |
+|---|---|
+| new footage for a planned shot | `takes` (`source 'auto'`, `note 'Found in new footage'`, start/end inside the clip) |
+| new footage that needs a new shot of a planned idea | `shots` (appended, next position) + its take |
+| up to 3 new ideas | `arcs` titled **From your footage** (made once per project, `position` before the others), `ideas` in it (`decision 'proposed'`, `status 'new'`, `created_by` null), their `shots` (positions 1..n), and a take for each shot that has footage; shots with no take are still to film |
+
+Unusable clips are skipped. Each run is recorded on the Studio machine (catalog `idea_runs`, `clips.ideas_run`),
+so a clip is read once; a failed run is retried at the next quiet period, at most 3 times per clip.
+`laptop_status.info.footage_ideas` = `{after_minutes, waiting_clips, last_run: {at, state, project, trigger,
+new_ideas, attached, error} | null}`.
+
+**Library ideas move once.** With planning online, Review has no ideas any more: `GET /api/board` returns no
+`kind: "idea"` items and no `ideas_job` (`ideas_online: true`); `POST /api/ideas/generate` and
+`POST /api/idea/<id>/adopt` answer `410 {"error": "Ideas live in the planner now"}`. Library ideas still
+`status 'new'` are written to the planner (project of their first clip, else Everyday posts; arc From your
+footage; segments -> shots with takes, `note 'From Suggest posts'`; wish list -> shots to film) and marked
+the planner's locally (`origin 'plan'`, `remote_id`).
+
+### Jobs
+
+| kind | runner | queued by | payload | result |
+|---|---|---|---|---|
+| ideas | laptop | any member (insert), `project_id` set | `{}` | `{new_ideas, attached, clips, idea_ids, notes}`: the project's usable clips of the last 14 days not yet read (all of them when none are new); fails with "No usable footage from the last 14 days in this project yet" |
+
+### Clip quality on cards
+
+`clips.verdict` stays `good | check | retake` and `clips.flags` `[{level, text, tip}]`. New: `clips.usable`
+(boolean, written by the Studio machine) and `clips.flagged` (generated: `verdict = 'retake'` or
+`usable = false`). Cards and thumbnails warn only when `flagged`; `check` and the tips belong in the
+detail view. The dashboard's board items carry the same `flagged`.

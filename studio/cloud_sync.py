@@ -14,7 +14,10 @@ STUDIO_CLOUD_SYNC_SECONDS (30 s) it:
   4. pushes a summary and a still of each library clip, and the takes the
      tagger matched (with a still near each take's start);
   5. runs the jobs only the laptop can do (music shortlists with the Epidemic
-     key, "Make this"), and keeps each made idea's production status current;
+     key, "Make this", "Ideas from footage"), and keeps each made idea's
+     production status current; moves Review's library ideas to the planner
+     once, and suggests ideas from new footage once uploads go quiet
+     (footage_ideas.py);
   6. reference reels (CONTRACT.md, "Reference guides"): registers videos dropped
      in Studio Inbox\\References\\Ours / \\Inspiration, analyses new references
      (two per tick at most), drafts a new style guide when a brand's set of
@@ -239,7 +242,7 @@ def _heartbeat(api: Client) -> None:
     api.insert("laptop_status", {
         "id": 1, "last_seen": _now(), "version": f"{v['commit']} {v['date'][:10]}".strip(),
         "info": {"subject": v.get("subject", ""), "sync": status.get("counts", {}), "note": status.get("note"),
-                 "dashboard_url": settings.DASHBOARD_URL},
+                 "dashboard_url": settings.DASHBOARD_URL, "footage_ideas": status.get("footage_ideas")},
     }, on_conflict="id", resolution="merge-duplicates", returning=False)
 
 
@@ -440,7 +443,8 @@ def _project_remote_ids(conn) -> dict[int, int]:
     return {r[0]: r[1] for r in conn.execute("SELECT id, remote_id FROM projects WHERE remote_id IS NOT NULL")}
 
 
-def _clip_summary(r, project_remote: dict[int, int], idea_remote: dict[int, int] | None = None) -> dict:
+def _clip_summary(r, project_remote: dict[int, int], idea_remote: dict[int, int] | None = None,
+                  usable: bool = False) -> dict:
     q = json.loads(r["quality"] or "{}")
     summary = {
         "id": r["id"], "title": (r["title"] or r["source_name"] or "")[:300], "recorded_at": _ts(r["recorded_at"]),
@@ -451,6 +455,8 @@ def _clip_summary(r, project_remote: dict[int, int], idea_remote: dict[int, int]
     }
     if idea_remote and idea_remote.get(r["idea_id"]):  # from a post folder (only then, so older clips aren't re-sent)
         summary["idea_id"] = idea_remote[r["idea_id"]]
+    if usable:  # the planner's clips.flagged = a retake, or not usable (migration 20261019000000)
+        summary["usable"] = None if r["usable"] is None else bool(r["usable"])
     return summary
 
 
@@ -465,7 +471,7 @@ def push_clips(api: Client, conn) -> int:
                    if _shoot_plan_online else None)
     batch = []
     for r in conn.execute("SELECT * FROM clips WHERE status IN ('tagged', 'transcribed') ORDER BY id").fetchall():
-        summary = _clip_summary(r, project_remote, idea_remote)
+        summary = _clip_summary(r, project_remote, idea_remote, _footage_online)
         frame = _middle_frame(r["clip_dir"])
         frame_key = _frame_key(frame)
         uploaded = r["cloud_thumb"]
@@ -563,7 +569,7 @@ def run_jobs(api: Client, conn, idea_map: dict[int, int]) -> list[str]:
     done = []
     for job in api.select("jobs", {"runner": "eq.laptop", "state": "eq.queued", "kind": "neq.style"}):
         local_id = idea_map.get(job["idea_id"])
-        if local_id is None and job["kind"] != "place":
+        if local_id is None and job["kind"] not in ("place", "ideas"):
             created = _ts(job["created_at"])
             young = created and datetime.fromisoformat(created) > datetime.now(timezone.utc) - timedelta(minutes=2)
             if young:
@@ -574,11 +580,17 @@ def run_jobs(api: Client, conn, idea_map: dict[int, int]) -> list[str]:
         if not claimed:
             continue
         log.info("Cloud job %s: %s for %s", job["id"], job["kind"],
-                 f"project {job['project_id']}" if job["kind"] == "place" else f"idea {job['idea_id']}")
+                 f"project {job['project_id']}" if job["kind"] in ("place", "ideas") else f"idea {job['idea_id']}")
         try:
             if job["kind"] == "place":
                 _finish(api, job, place_shots(api, job.get("project_id")))
                 done.append(f"place #{job['id']}: done")
+                continue
+            if job["kind"] == "ideas":  # ideas from the project's recent footage (footage_ideas.py)
+                import footage_ideas
+                result = footage_ideas.run_job(api, conn, job.get("project_id"))
+                _finish(api, job, result)
+                done.append(f"ideas #{job['id']}: {result['new_ideas']} new, {result['attached']} clips added")
                 continue
             if local_id is None:
                 raise RuntimeError("the laptop doesn't have this idea (was it deleted?)")
@@ -653,6 +665,26 @@ def check_shoot_plan(api: Client) -> bool:
         log.warning("%s (no shoot plan tables online yet: post folders and uploads wait)", NEEDS_UPDATE)
         status["note"] = NEEDS_UPDATE
     return _shoot_plan_online
+
+
+_footage_online = False       # migration 20261019000000 (clips.usable / flagged, the ideas job) is online
+_footage_checked = 0.0
+
+
+def check_footage_ideas(api: Client) -> bool:
+    """Is the footage-ideas migration online? Asked again every 10 minutes while it isn't."""
+    global _footage_online, _footage_checked
+    if _footage_online or time.time() - _footage_checked < SCHEMA_RECHECK_SECONDS:
+        return _footage_online
+    _footage_checked = time.time()
+    try:
+        api.request("GET", "/rest/v1/clips", params={"select": "usable,flagged", "limit": 1})
+        _footage_online = True
+    except CloudError as e:
+        if "HTTP 400" not in str(e) and not _missing_table(e):
+            raise
+        log.warning("%s (clips.flagged and the planner's \"ideas from footage\" button wait for it)", NEEDS_UPDATE)
+    return _footage_online
 
 
 def _post_folder_name(title: str, taken: set[str]) -> str:
@@ -1146,12 +1178,13 @@ def sync_once(conn, api: Client | None = None) -> dict:
     pulled = pull(api, conn)
     remote, maps = pulled["remote"], pulled["remote"]["maps"]
     shoot_plan = check_shoot_plan(api)
+    footage = check_footage_ideas(api)
     counts["pulled"] = pulled["stats"]
     counts["clips_pushed"] = push_clips(api, conn)
     new_takes = push_takes(api, conn)
     counts["takes_pushed"] = len(new_takes)
     counts["stills"] = push_take_stills(api, conn, remote["takes"] + new_takes)
-    problems = []
+    problems, previous = [], list(status.get("problems") or [])
     if shoot_plan:  # post folders and uploads: never stop the rest of the sync
         import uploads
         for name, fn in (("post folders", lambda: len(post_folders(api, conn, remote))),
@@ -1168,6 +1201,29 @@ def sync_once(conn, api: Client | None = None) -> dict:
     status["problems"] = problems
     jobs = run_jobs(api, conn, maps["ideas"])
     counts["jobs"] = len(jobs)
+    # Ideas live in the planner: library ideas move there once; then ideas from new
+    # footage, after the clips are pushed (takes point at them). Never stops the sync.
+    import footage_ideas
+    for name, fn in (("library ideas", lambda: footage_ideas.migrate_library(api, conn)),
+                     ("ideas from footage", lambda: footage_ideas.run_due(conn, api))):
+        try:
+            value = fn()
+            if value:
+                counts[name.replace(" ", "_")] = value
+                if isinstance(value, dict):
+                    jobs.append(f"ideas from footage: {value['new_ideas']} new, {value['attached']} clips added"
+                                + (f" ({len(value['failed'])} failed)" if value["failed"] else ""))
+        except Exception as e:
+            if isinstance(e, CloudError) and "can't reach" in str(e):
+                raise
+            message = f"{name}: {e if isinstance(e, CloudError) else f'{type(e).__name__}: {e}'}"[:300]
+            if message not in previous:  # logged once, retried every tick
+                log.warning("Cloud sync, %s", message)
+            problems.append(message)
+    try:
+        status["footage_ideas"] = footage_ideas.status(conn)
+    except Exception:
+        pass
     counts["productions"] = push_productions(api, conn, remote["ideas"])
     try:  # reference reels and the style guide: never stops the rest of the sync
         refs = sync_references(api, started)
@@ -1177,7 +1233,7 @@ def sync_once(conn, api: Client | None = None) -> dict:
             log.warning("Cloud sync, references failed (will retry): %s", message)
         status["ref_problems"] = [message]
         refs = {}
-    if not shoot_plan:
+    if not shoot_plan or not footage:
         status["note"] = NEEDS_UPDATE
     jobs += refs.pop("lines", [])
     counts["refs"] = {k: v for k, v in refs.items() if k != "skipped"}
@@ -1275,6 +1331,13 @@ def check(conn) -> int:
     clips = conn.execute("SELECT COUNT(*) FROM clips WHERE status IN ('tagged', 'transcribed')").fetchone()[0]
     pushed = conn.execute("SELECT COUNT(*) FROM clips WHERE cloud_hash IS NOT NULL").fetchone()[0]
     print(f"Clips       : {pushed} of {clips} library clips pushed (the next sync sends new or changed ones)")
+    import footage_ideas
+    fi = footage_ideas.status(conn)
+    last = fi["last_run"]
+    when = "off" if fi["after_minutes"] <= 0 else f"after {fi['after_minutes']} quiet minutes"
+    print(f"Footage ideas: {when}; {fi['waiting_clips']} clips waiting"
+          + (f"; last run {(last['at'] or '')[:16]} {last['project']}: {last['state']}, {last['new_ideas']} new, "
+             f"{last['attached']} added" if last else ""))
     local = _unsynced(conn)
     if any(local.values()):
         print("Local plan  : not online yet: " + ", ".join(f"{n} {t}" for t, n in local.items() if n)

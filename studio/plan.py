@@ -215,7 +215,7 @@ def takes_for(conn, shot_ids: list[int]) -> dict[int, list[dict]]:
         return {}
     rows = conn.execute(
         f"""SELECT t.*, c.title AS clip_title, c.source_name, c.quality, c.duration AS clip_duration,
-                   c.clip_dir, c.status AS clip_status
+                   c.clip_dir, c.status AS clip_status, c.usable AS clip_usable
             FROM takes t JOIN clips c ON c.id = t.clip_id
             WHERE t.shot_id IN ({','.join('?' * len(shot_ids))}) ORDER BY t.id""", shot_ids).fetchall()
     out: dict[int, list[dict]] = {}
@@ -224,6 +224,8 @@ def takes_for(conn, shot_ids: list[int]) -> dict[int, list[dict]]:
         out.setdefault(r["shot_id"], []).append({
             "id": r["id"], "clip_id": r["clip_id"], "start": r["start"], "end": r["end"], "source": r["source"],
             "note": r["note"], "title": r["clip_title"] or r["source_name"], "verdict": q.get("verdict"),
+            # Only a retake (or an unusable clip) is a warning; "check" isn't.
+            "flagged": q.get("verdict") == "retake" or r["clip_usable"] == 0,
             "flags": [f["text"] for f in q.get("flags", [])]})
     return out
 

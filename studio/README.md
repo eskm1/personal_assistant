@@ -160,7 +160,7 @@ It's laid out like Reels: a grid of tiles you can filter by account, with tabs f
 | --- | --- |
 | Plan | Projects, content arcs, storyboards and shot lists, planned before filming (section 12) |
 | To review | Edited drafts waiting for you |
-| Ideas | Posts Claude planned from your library, waiting for Make this or Dismiss |
+| Ideas | Posts Claude planned from your library, waiting for Make this or Dismiss (only without online planning: with it, ideas live in the planner, section 12) |
 | Being edited | Drafts in progress, including ones you sent back |
 | Library | Raw clips, tagged by Claude, each with a quality verdict (section 13) |
 | Ingesting | Clips being processed, or that failed and will be retried |
@@ -189,7 +189,8 @@ After a decision the next draft opens straight away while the editor revises the
 background. You also write or approve the post caption here. Keyboard: J / K for next and
 previous, Space to play, Esc to go back, Enter to add a note.
 
-**Ideas:** on the Ideas tab, press **Suggest posts** (optionally with a focus such as "kitchen
+**Ideas** (this tab is for when planning isn't online; with the online planner, ideas live only
+there and come from new footage by themselves, section 12): on the Ideas tab, press **Suggest posts** (optionally with a focus such as "kitchen
 projects this month"). Claude reads your tagged clips, their timestamped transcripts and best
 moments, `brands.md` and the playbook, and proposes posts built only from footage you have:
 a hook, why it works, the structure, the exact clip segments, and a draft caption. Open one
@@ -429,6 +430,25 @@ Ideas Claude suggests from existing footage (Ideas tab) can be moved onto a proj
 plan**: their footage becomes shots that are already filmed, and the shots the editor wished it
 had become shots to film.
 
+**Ideas from new footage (automatic).** After a shoot day's uploads, once no new clip has arrived
+for 20 minutes (`STUDIO_IDEAS_AFTER_MINUTES`; `0` turns it off), Studio has Claude read the new clips
+of each project (title, summary, best moments, transcript, quality, length) with the project's brief
+and the posts already planned for it, once per project (roughly 10 to 30 cents). It then:
+
+- adds the new footage to those posts: a take for the shot it films, or a new shot of that post when
+  nothing in the storyboard covers it (note *Found in new footage*);
+- suggests up to 3 new posts built from the footage, with the shots it already has and the shots
+  still to film, in the project's **From your footage** arc as *proposed* ideas for you to Go / Park.
+
+Clips outside any project folder go to a standing project, **Everyday posts** (its own inbox folder
+too). Clips that aren't usable are skipped, a clip is read once, and if Claude fails it tries again
+at the next quiet spell (three times at most). Telegram says what it did ("3 new post ideas and 4
+clips added to existing ideas from today's footage"). In the planner, a project's **Ideas from
+footage** button asks for it now, over the project's footage of the last 14 days. With online
+planning, the library ideas still waiting on Review's Ideas tab move to the planner once, into
+**From your footage** (their footage as shots with takes, their wish list as shots to film), and
+Review no longer has an Ideas tab.
+
 ### Planning online
 
 Planning can live on the online planner instead (a website on Netlify with its data in Supabase),
@@ -451,7 +471,9 @@ While the worker runs, it syncs about every 30 seconds:
   on a server it's made in the OneDrive inbox too). Clips dropped there are matched only against
   that post's shots. Folders deeper than project > post are folded into the file name;
 - it runs **Place by phase** (the planner's shoot plan): Claude puts each unplaced shot of the
-  project's Go and proposed ideas into the renovation phase whose work it shows.
+  project's Go and proposed ideas into the renovation phase whose work it shows;
+- it suggests **ideas from new footage** once uploads go quiet (above), writing them to the
+  planner, and runs the planner's **Ideas from footage** button.
 
 **One address, one login, one app.** The dashboard also serves the planner at **/plan/**, behind the
 dashboard's sign-in, and opens it signed in; https://studio.theurbanmakers.com/ opens on **Plan**
@@ -486,8 +508,9 @@ switch to the online planner, once (votes and comments stay here).
 ## 13. Quality checks
 
 Every clip gets a verdict as it's ingested: **Good**, **Check** (usable, with issues) or
-**Retake**, with what's wrong and a tip for next time. It shows on the Library tile and in the
-clip's panel; Telegram summaries count the retakes.
+**Retake**, with what's wrong and a tip for next time. Only a **Retake** (or a clip that isn't
+usable) is flagged on tiles and thumbnails; a usable clip isn't, and its tips stay in the clip's
+panel. Telegram summaries count the retakes.
 
 - Measured, no API cost: voice level, background noise between words, distortion, Whisper's
   confidence in the speech; exposure (too dark, blown windows, hazy); resolution, frame rate,
