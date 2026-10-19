@@ -1,0 +1,176 @@
+/* Studio's animated explainers (motion.py): the Urban Makers look on a 1080x1920 frame.
+   Paper, ink, sage and beige from the quotation tool and the mark; orange only for the one thing to
+   look at (a measurement, the highlighted corner, the ask). Barlow for headlines, IBM Plex Sans for
+   everything read, Plex Mono for measurements and small caps labels. Fonts are copied next to the page
+   (cloud/planner/fonts), so nothing is fetched. Sizes are px on the 1080-wide frame. */
+
+@font-face { font-family: "Barlow"; font-weight: 500; font-display: block; src: url("fonts/barlow-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 600; font-display: block; src: url("fonts/barlow-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 400; font-display: block; src: url("fonts/ibm-plex-sans-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 500; font-display: block; src: url("fonts/ibm-plex-sans-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 600; font-display: block; src: url("fonts/ibm-plex-sans-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 500; font-display: block; src: url("fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); }
+
+:root {
+  --paper: #FBFAF7; --paper-mid: #F3F1EA; --card: #FFFFFF; --line: #D8D5CC; --line-soft: #ECE9E1;
+  --ink: #1E2A32; --ink-soft: #4A5A64;
+  --sage: #A1A18B; --sage-deep: #6E6E58; --sage-tint: #E9E9E0;
+  --beige: #D0BAA2; --beige-deep: #8A6F55; --beige-tint: #F2EADF;
+  --orange: #E8630A; --orange-fill: #C35308; --orange-tint: #FFF1E2;
+  --display: "Barlow", "IBM Plex Sans", sans-serif;
+  --text: "IBM Plex Sans", sans-serif;
+  --mono: "IBM Plex Mono", monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 1080px; height: 1920px; overflow: hidden; background: var(--paper); }
+html:has(body.mode-panel), html:has(body.mode-cutaway), body.mode-panel, body.mode-cutaway { background: transparent; }
+#main { position: relative; width: 1080px; height: 1920px; overflow: hidden; color: var(--ink);
+  font-family: var(--text); -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision; }
+.mode-panel #main, .mode-cutaway #main { background: transparent; }
+svg { display: block; overflow: visible; }
+[data-a="draw"] { stroke-dasharray: 1; stroke-dashoffset: 0; }
+
+/* The ground: paper with a faint drafting grid that drifts slowly. */
+.bg { position: absolute; inset: 0; background: var(--paper); overflow: hidden; }
+.bg .grid { position: absolute; left: 0; right: 0; top: 0; height: 2100px;
+  background-image: radial-gradient(circle, var(--line) 1.6px, transparent 2px); background-size: 48px 48px;
+  background-position: 24px 24px; opacity: .55; }
+.defs { position: absolute; width: 0; height: 0; }
+
+/* The header: the mark and name, the kind of post, and one segment per scene. */
+.hdr { position: absolute; left: 96px; right: 96px; top: 168px; height: 92px; }
+.hdr .row { display: flex; align-items: center; justify-content: space-between; height: 52px; }
+.brand { display: flex; align-items: center; gap: 16px; font: 500 24px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; }
+.brand svg { height: 44px; width: auto; }
+.kind { font: 500 24px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-soft);
+  display: flex; align-items: center; gap: 12px; }
+.kind i { width: 12px; height: 12px; border-radius: 50%; background: var(--sage); display: block; }
+.segs { display: flex; gap: 8px; margin-top: 22px; }
+.seg { flex: 1; height: 4px; border-radius: 2px; background: var(--line-soft); overflow: hidden; }
+.seg b { display: block; height: 100%; background: var(--ink); transform-origin: left center; }
+
+/* A scene and its stage (the safe box its content lives in: STAGE in motion.py). */
+.scene { position: absolute; inset: 0; }
+.scene .inner { position: absolute; inset: 0; }
+.stage { position: absolute; left: var(--sx); top: var(--sy); width: var(--sw); height: var(--sh);
+  display: flex; flex-direction: column; justify-content: center; gap: 56px; overflow: hidden; }
+.head { flex: none; display: flex; flex-direction: column; gap: 18px; }
+.kicker { display: flex; align-items: center; gap: 16px; font: 500 24px/1 var(--mono); letter-spacing: .16em;
+  text-transform: uppercase; color: var(--sage-deep); }
+.kicker .kbar { display: block; width: 56px; height: 4px; border-radius: 2px; background: var(--sage); transform-origin: left center; }
+.title { font-family: var(--display); font-weight: 600; font-size: 76px; line-height: 1.04; letter-spacing: -.005em;
+  text-wrap: balance; overflow-wrap: break-word; }
+.body { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; justify-content: center; }
+.fig { flex: 0 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.fig > svg { width: 100%; height: auto; max-height: var(--figmax); }
+.note { font: 500 40px/1.3 var(--text); color: var(--ink-soft); text-wrap: balance; }
+
+/* Headline */
+.hl { font-family: var(--display); font-weight: 600; line-height: 1.02; letter-spacing: -.01em; text-wrap: balance; }
+.hl .w { display: inline-block; overflow: hidden; vertical-align: top; position: relative;
+  padding: 0 .02em .1em; margin-bottom: -.1em; }
+.hl .wi { display: inline-block; position: relative; }
+.hl .ln { white-space: nowrap; }
+.hl .em .mark { position: absolute; left: 0; right: 0; bottom: .1em; height: .36em; background: var(--beige);
+  opacity: .75; transform-origin: left center; border-radius: 3px; }
+.sub { font: 500 46px/1.3 var(--text); color: var(--ink-soft); margin-top: 40px; text-wrap: balance; }
+.photo { flex: none; width: 100%; border-radius: 16px; overflow: hidden; background: var(--paper-mid); }
+.photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+/* Steps / checklist */
+.steps { list-style: none; display: flex; flex-direction: column; gap: 64px; }
+.step { display: flex; align-items: center; gap: 36px; position: relative; }
+.num { flex: none; width: 104px; height: 104px; position: relative; display: flex; align-items: center; justify-content: center; }
+.num svg { position: absolute; inset: 0; width: 104px; height: 104px; }
+.num b { font: 500 44px/1 var(--mono); position: relative; }
+.step .link { position: absolute; left: 51px; top: 108px; width: 2px; height: calc(100% - 50px); background: var(--line);
+  transform-origin: top center; }
+.step .txt { font: 500 58px/1.16 var(--text); text-wrap: balance; overflow-wrap: break-word; min-width: 0; }
+
+/* Before / after */
+.pair { display: flex; flex-direction: column; gap: 32px; }
+.panel { background: var(--card); border: 2px solid var(--line-soft); border-radius: 16px; padding: 30px 34px 34px;
+  display: flex; flex-direction: column; gap: 20px; }
+.chip { align-self: flex-start; font: 500 26px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase;
+  padding: 10px 14px; border-radius: 6px; background: var(--paper-mid); color: var(--ink-soft); }
+.panel.after .chip { background: var(--sage-deep); color: var(--paper); }
+.panel .pfig { height: 300px; }
+.panel .pfig svg { width: 100%; height: 100%; }
+.panel .pfig.img { border-radius: 10px; overflow: hidden; }
+.panel .pfig.img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.panel .ptxt { font: 500 42px/1.22 var(--text); text-wrap: balance; }
+
+/* Compare */
+.cmp { position: relative; display: grid; grid-template-columns: 1.25fr 1fr 1fr; }
+.cmp .win { position: absolute; top: 0; bottom: 0; border-radius: 14px; background: var(--sage-tint); transform-origin: top center; }
+.cmp .ch { font: 600 44px/1.1 var(--display); text-align: center; padding: 26px 8px 22px; position: relative; }
+.cmp .rl { font: 500 38px/1.2 var(--text); padding: 30px 12px 30px 0; position: relative; display: flex; align-items: center; }
+.cmp .cell { position: relative; display: flex; align-items: center; justify-content: center; font: 500 30px/1.2 var(--mono);
+  text-align: center; padding: 18px 8px; }
+.cmp .cell svg { width: 60px; height: 60px; }
+.cmp .rule { grid-column: 1 / -1; height: 2px; background: var(--line-soft); transform-origin: left center; position: relative; }
+
+/* Stat / quote */
+.stat .val { font-family: var(--display); font-weight: 600; font-size: 250px; line-height: .9; letter-spacing: -.02em; }
+.stat .val small { font-size: .38em; letter-spacing: 0; margin-left: .12em; color: var(--ink-soft); }
+.stat .lbl { font: 500 52px/1.22 var(--text); margin-top: 44px; text-wrap: balance; }
+.stat .src, .quote .src { font: 500 24px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); margin-top: 40px; }
+.stat .rule { width: 120px; height: 6px; border-radius: 3px; background: var(--sage); margin-top: 48px; transform-origin: left center; }
+.quote .qm { font: 600 260px/0.8 var(--text); color: var(--beige); height: 140px; }
+.quote .qt { font: 500 72px/1.14 var(--display); letter-spacing: -.005em; text-wrap: balance; margin-top: 20px; }
+
+/* Timeline */
+.tl { position: relative; display: flex; flex-direction: column; gap: 46px; padding-left: 92px; }
+.tl .rail { position: absolute; left: 25px; width: 3px; background: var(--line); transform-origin: top center; }
+.ph { position: relative; }
+.ph .node { position: absolute; left: -82px; top: 8px; width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--ink);
+  background: var(--paper); }
+.ph.last .node { background: var(--sage); border-color: var(--sage-deep); }
+.ph .pl { font: 600 54px/1.08 var(--display); }
+.ph .pn { font: 500 26px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); margin-top: 10px; }
+
+/* Icon grid */
+.icons { display: flex; flex-direction: column; gap: 56px; }
+.icons.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 56px 40px; }
+.ic { display: flex; align-items: center; gap: 40px; }
+.icons.grid .ic { flex-direction: column; align-items: flex-start; gap: 22px; }
+.tile { flex: none; width: 210px; height: 210px; border-radius: 24px; background: var(--paper-mid); display: flex;
+  align-items: center; justify-content: center; }
+.tile svg { width: 140px; height: 140px; }
+.tile path, .tile circle, .tile rect { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ic .il { font: 600 64px/1.04 var(--display); text-wrap: balance; }
+.ic .in { font: 400 36px/1.3 var(--text); color: var(--ink-soft); margin-top: 10px; text-wrap: balance; }
+.ic .num-s { font: 500 28px/1 var(--mono); letter-spacing: .12em; color: var(--sage-deep); margin-bottom: 16px; }
+
+/* SVG figure text */
+.svl { font: 600 44px var(--text); fill: var(--ink); }
+.svn { font: 500 32px var(--mono); fill: var(--ink-soft); letter-spacing: .04em; }
+.svc { font: 500 28px var(--mono); fill: var(--ink-soft); letter-spacing: .12em; text-transform: uppercase; }
+.svv { font: 500 100px var(--mono); fill: var(--orange-fill); letter-spacing: -.02em; }
+.svt { font: 600 28px var(--text); fill: var(--paper); }
+.sv-s { font: 500 30px var(--text); fill: var(--ink); }
+.sv-m { font: 600 40px var(--text); fill: var(--ink); }
+.sv-l { font: 600 60px var(--display); fill: var(--ink); }
+
+/* End card */
+.end { position: absolute; inset: 0; background: var(--ink); color: var(--paper); }
+.end .stage { align-items: center; justify-content: center; text-align: center; gap: 0; }
+.end .mk svg { height: 200px; width: auto; }
+.end .nm { font: 500 26px/1 var(--mono); letter-spacing: .22em; text-transform: uppercase; color: var(--beige); margin-top: 34px; }
+.end .ln { font: 600 84px/1.06 var(--display); letter-spacing: -.005em; text-wrap: balance; margin-top: 96px; max-width: 860px; }
+.end .cta { display: inline-flex; align-items: center; gap: 22px; margin-top: 64px; padding: 30px 46px; border-radius: 999px;
+  background: var(--orange-fill); color: #fff; font: 600 46px/1 var(--text); }
+.end .cta svg { width: 40px; height: 26px; }
+.end .hd { font: 500 26px/1 var(--mono); letter-spacing: .14em; color: var(--sage); margin-top: 48px; }
+
+/* An insert over a talking-head Reel: the scene on a paper card above the caption band. */
+.pcard { position: absolute; left: 48px; right: 48px; top: 190px; height: 960px; border-radius: 28px; background: var(--paper);
+  box-shadow: 0 24px 60px -18px rgba(14, 22, 19, .55); overflow: hidden; }
+.pcard .grid { position: absolute; inset: 0; background-image: radial-gradient(circle, var(--line) 1.6px, transparent 2px);
+  background-size: 48px 48px; background-position: 24px 24px; opacity: .55; }
+.cut { position: absolute; inset: 0; background: var(--paper); overflow: hidden; }
+.cut .grid { position: absolute; inset: 0; background-image: radial-gradient(circle, var(--line) 1.6px, transparent 2px);
+  background-size: 48px 48px; background-position: 24px 24px; opacity: .55; }
+.mode-panel .stage, .mode-cutaway .stage { gap: 30px; }
+.mode-panel .title, .mode-cutaway .title { font-size: 64px; }

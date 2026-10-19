@@ -1,0 +1,151 @@
+{
+ "title": "3 ways to give an open-plan flat a quiet corner",
+ "kind": "ideas",
+ "scenes": [
+  {
+   "type": "headline",
+   "duration": 3.2,
+   "kicker": "Layout",
+   "text": "3 ways to give an open-plan flat a quiet corner",
+   "emphasis": [
+    "quiet",
+    "corner"
+   ]
+  },
+  {
+   "type": "plan",
+   "duration": 5.9,
+   "title": "Start with the right corner",
+   "size": {
+    "w": 100,
+    "h": 120
+   },
+   "rooms": [
+    {
+     "name": "Kitchen",
+     "x": 0,
+     "y": 0,
+     "w": 40,
+     "h": 36
+    },
+    {
+     "name": "Bath",
+     "x": 40,
+     "y": 0,
+     "w": 22,
+     "h": 36
+    },
+    {
+     "name": "Bedroom",
+     "x": 62,
+     "y": 0,
+     "w": 38,
+     "h": 36
+    },
+    {
+     "name": "Living and dining",
+     "x": 0,
+     "y": 36,
+     "w": 100,
+     "h": 84
+    }
+   ],
+   "items": [
+    {
+     "shape": "circle",
+     "x": 10,
+     "y": 48,
+     "w": 22,
+     "h": 16,
+     "label": "Dining"
+    },
+    {
+     "shape": "rect",
+     "x": 8,
+     "y": 96,
+     "w": 36,
+     "h": 12,
+     "label": "Sofa"
+    },
+    {
+     "shape": "rect",
+     "x": 8,
+     "y": 116,
+     "w": 36,
+     "h": 4
+    }
+   ],
+   "openings": [
+    {
+     "kind": "door",
+     "x": 46,
+     "y": 36,
+     "len": 9,
+     "along": "h"
+    },
+    {
+     "kind": "door",
+     "x": 66,
+     "y": 36,
+     "len": 10,
+     "along": "h"
+    },
+    {
+     "kind": "window",
+     "x": 68,
+     "y": 120,
+     "len": 26,
+     "along": "h"
+    },
+    {
+     "kind": "window",
+     "x": 100,
+     "y": 74,
+     "len": 24,
+     "along": "v"
+    },
+    {
+     "kind": "window",
+     "x": 0,
+     "y": 60,
+     "len": 22,
+     "along": "v"
+    }
+   ],
+   "highlight": {
+    "x": 66,
+    "y": 84,
+    "w": 34,
+    "h": 36,
+    "label": "Quiet corner"
+   },
+   "caption": "Away from the TV and the kitchen, near a window."
+  },
+  {
+   "type": "icons",
+   "duration": 5.6,
+   "title": "Then zone it softly",
+   "items": [
+    {
+     "icon": "rug",
+     "label": "Anchor it with a rug"
+    },
+    {
+     "icon": "shelf",
+     "label": "Screen it with a shelf"
+    },
+    {
+     "icon": "curtain",
+     "label": "Close it with a curtain"
+    }
+   ],
+   "numbered": true
+  },
+  {
+   "type": "end",
+   "duration": 3.5,
+   "line": "Want us to find your quiet corner?",
+   "ask": "Send us your floor plan"
+  }
+ ]
+}

@@ -1,0 +1,156 @@
+{
+ "title": "Uneven floor levels? Overlay or hack?",
+ "kind": "knowhow",
+ "scenes": [
+  {
+   "type": "headline",
+   "duration": 2.6,
+   "kicker": "Floors",
+   "text": "Uneven floor levels?\nOverlay or hack?",
+   "emphasis": [
+    "Overlay",
+    "hack"
+   ]
+  },
+  {
+   "type": "layers",
+   "duration": 4.4,
+   "title": "An overlay builds on top",
+   "layers": [
+    {
+     "label": "New tiles or vinyl",
+     "tone": "vinyl",
+     "size": "medium",
+     "tag": "New"
+    },
+    {
+     "label": "Adhesive",
+     "tone": "adhesive",
+     "size": "thin",
+     "tag": "New"
+    },
+    {
+     "label": "Existing tiles",
+     "note": "Stay in place",
+     "tone": "tile",
+     "size": "medium"
+    },
+    {
+     "label": "Screed",
+     "tone": "screed",
+     "size": "medium"
+    },
+    {
+     "label": "Concrete slab",
+     "tone": "concrete",
+     "size": "thick"
+    }
+   ]
+  },
+  {
+   "type": "measure",
+   "duration": 4.2,
+   "title": "At the next room",
+   "kind": "step",
+   "value": "15 mm",
+   "label": "A lip to trip on. Doors catch.",
+   "left": "Overlay",
+   "right": "Next room"
+  },
+  {
+   "type": "before_after",
+   "duration": 4.4,
+   "title": "Or hack it out",
+   "before": {
+    "label": "Overlay",
+    "text": "Quicker, but a step",
+    "paths": [
+     {
+      "d": "M0 260 H1000 V350 H0 Z",
+      "fill": "concrete",
+      "stroke": "ink",
+      "width": 3,
+      "draw": false
+     },
+     {
+      "d": "M0 200 H1000 V260 H0 Z",
+      "fill": "tile",
+      "stroke": "ink",
+      "width": 3,
+      "draw": false
+     },
+     {
+      "d": "M0 130 H460 V200 H0 Z",
+      "fill": "vinyl",
+      "stroke": "ink",
+      "width": 3,
+      "draw": false
+     },
+     {
+      "d": "M460 10 V130",
+      "stroke": "line",
+      "width": 4
+     },
+     {
+      "d": "M520 165 A60 60 0 1 1 400 165 A60 60 0 1 1 520 165",
+      "stroke": "orange",
+      "width": 6
+     }
+    ]
+   },
+   "after": {
+    "label": "Hack",
+    "text": "One level, door to door",
+    "paths": [
+     {
+      "d": "M0 260 H1000 V350 H0 Z",
+      "fill": "concrete",
+      "stroke": "ink",
+      "width": 3,
+      "draw": false
+     },
+     {
+      "d": "M0 190 H1000 V260 H0 Z",
+      "fill": "screed",
+      "stroke": "ink",
+      "width": 3,
+      "draw": false
+     },
+     {
+      "d": "M0 140 H1000 V190 H0 Z",
+      "fill": "tile",
+      "stroke": "ink",
+      "width": 3,
+      "draw": false
+     },
+     {
+      "d": "M460 10 V140",
+      "stroke": "line",
+      "width": 4
+     },
+     {
+      "d": "M60 100 H940",
+      "stroke": "sage-deep",
+      "width": 5
+     }
+    ]
+   }
+  },
+  {
+   "type": "steps",
+   "duration": 4.1,
+   "title": "Before you choose",
+   "items": [
+    "Tap-test for hollow tiles",
+    "Measure each doorway",
+    "Check your doors still clear"
+   ]
+  },
+  {
+   "type": "end",
+   "duration": 3.0,
+   "line": "Not sure which your floor needs?",
+   "ask": "Book a site visit"
+  }
+ ]
+}

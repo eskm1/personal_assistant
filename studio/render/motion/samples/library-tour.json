@@ -1,0 +1,142 @@
+{
+ "title": "Library tour: the other scene types",
+ "kind": "knowhow",
+ "scenes": [
+  {
+   "type": "compare",
+   "duration": 5.0,
+   "title": "Overlay or hack?",
+   "columns": [
+    "Overlay",
+    "Hack"
+   ],
+   "rows": [
+    {
+     "label": "Keeps the old tiles",
+     "a": true,
+     "b": false
+    },
+    {
+     "label": "Floor stays level",
+     "a": false,
+     "b": true
+    },
+    {
+     "label": "Less dust and noise",
+     "a": true,
+     "b": false
+    },
+    {
+     "label": "Fixes hollow tiles",
+     "a": false,
+     "b": true
+    }
+   ],
+   "winner": 1
+  },
+  {
+   "type": "stat",
+   "duration": 3.2,
+   "value": "15",
+   "unit": "mm",
+   "label": "The lip an overlay can leave at a doorway"
+  },
+  {
+   "type": "timeline",
+   "duration": 6.8,
+   "title": "How a floor redo runs",
+   "phases": [
+    {
+     "label": "Site visit",
+     "note": "Measure and check"
+    },
+    {
+     "label": "Protect and prepare",
+     "note": "Cover and clear"
+    },
+    {
+     "label": "Hack or overlay",
+     "note": "The main works"
+    },
+    {
+     "label": "Finish and clean",
+     "note": "Skirting, sealing"
+    }
+   ]
+  },
+  {
+   "type": "freeform",
+   "duration": 4.7,
+   "title": "Doors may need trimming",
+   "paths": [
+    {
+     "d": "M250 120 H750 V880",
+     "stroke": "ink",
+     "width": 8
+    },
+    {
+     "d": "M250 120 V880",
+     "stroke": "ink",
+     "width": 8
+    },
+    {
+     "d": "M290 160 H710 V840 H290 Z",
+     "fill": "beige-tint",
+     "stroke": "ink-soft",
+     "width": 4
+    },
+    {
+     "d": "M640 500 H680",
+     "stroke": "ink",
+     "width": 8
+    },
+    {
+     "d": "M80 880 H920",
+     "stroke": "ink",
+     "width": 6
+    },
+    {
+     "d": "M80 852 H920",
+     "stroke": "sage-deep",
+     "width": 6
+    },
+    {
+     "d": "M330 852 A20 20 0 1 1 330 853",
+     "stroke": "orange",
+     "width": 5
+    }
+   ],
+   "labels": [
+    {
+     "text": "New level",
+     "x": 770,
+     "y": 830,
+     "size": "s",
+     "anchor": "start",
+     "colour": "sage-deep"
+    },
+    {
+     "text": "The door catches here",
+     "x": 360,
+     "y": 960,
+     "size": "m",
+     "anchor": "start",
+     "colour": "orange-fill"
+    }
+   ],
+   "caption": "Overlay a floor and it rises under the doors."
+  },
+  {
+   "type": "stat",
+   "duration": 3.4,
+   "quote": "Measure every doorway before the floor goes down.",
+   "by": "Site rule"
+  },
+  {
+   "type": "end",
+   "duration": 3.0,
+   "line": "Planning a floor redo?",
+   "ask": "Book a free consultation"
+  }
+ ]
+}
