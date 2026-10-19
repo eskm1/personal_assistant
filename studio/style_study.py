@@ -138,7 +138,13 @@ def download_post(url: str, out_dir: Path) -> tuple[Path, dict]:
             info = ydl.extract_info(url, download=True)
             path = Path(ydl.prepare_filename(info)).with_suffix(".mp4")
     except Exception as e:  # yt-dlp's DownloadError and friends: say what to do about it
-        raise DownloadFailed(download_problem(url, str(e), browser), problem_of(str(e))) from None
+        first = DownloadFailed(download_problem(url, str(e), browser), problem_of(str(e)))
+        if "instagram" not in url.lower() or first.problem in ("gone", "net"):
+            raise first from None
+        # Instagram often answers yt-dlp's video lookup with "HTTP Error 400" (most of Bryan's
+        # first 150 failed so): try gallery-dl, which reads reels another way, then yt-dlp
+        # without the sign-in (a public reel needs none).
+        return _instagram_fallback(url, out_dir, first)
     if not path.exists():
         found = sorted(p for p in out_dir.glob(f"*{info.get('id', '')}*") if p.suffix.lower() in VIDEO_EXTS)
         if not found:
@@ -147,13 +153,54 @@ def download_post(url: str, out_dir: Path) -> tuple[Path, dict]:
     return path, info
 
 
+def _instagram_fallback(url: str, out_dir: Path, first: "DownloadFailed") -> tuple[Path, dict]:
+    """A reel yt-dlp couldn't fetch: gallery-dl (video and metadata), then yt-dlp signed out.
+    Returns (video, info with "_source"); raises the clearest of the failures."""
+    import yt_dlp
+    gdl = out_dir / "gdl-video"
+    try:
+        result = _gallery_dl(["-D", str(gdl), "--write-metadata", "--range", "1", "--no-part", "--no-mtime", url])
+        videos = sorted(p for p in gdl.glob("*") if p.suffix.lower() in VIDEO_EXTS) if gdl.exists() else []
+        if videos:
+            meta = {}
+            for js in sorted(gdl.glob("*.json")):
+                try:
+                    meta = json.loads(js.read_text(encoding="utf-8"))
+                    break
+                except (OSError, ValueError):
+                    continue
+            meta = meta if isinstance(meta, dict) else {}
+            meta["_source"] = "gallery-dl"
+            return videos[0], meta
+        gdl_message = _gallery_error(result.stderr)
+    except (OSError, subprocess.SubprocessError) as e:
+        gdl_message = f"gallery-dl couldn't run: {type(e).__name__}"
+    if COOKIES_FILE.is_file() or settings._env("STUDIO_YTDLP_COOKIES_BROWSER"):
+        opts, _ = _ydl_opts(out_dir)
+        opts.pop("cookiefile", None)
+        opts.pop("cookiesfrombrowser", None)
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                path = Path(ydl.prepare_filename(info)).with_suffix(".mp4")
+            if path.exists():
+                return path, info
+        except Exception:
+            pass
+    problem = problem_of(gdl_message) if gdl_message else first.problem
+    if problem == "other":
+        problem = first.problem
+    raise DownloadFailed(f"{first} (gallery-dl: {gdl_message[:150]})" if gdl_message else str(first), problem)
+
+
 def problem_of(message: str) -> str:
     """What kind of download problem a message describes: login (Instagram wants a
     sign-in), rate (too many downloads: wait), gone (deleted, private or not a post),
     net (no internet: try later) or other."""
     low = re.sub(r"\x1b\[[0-9;]*m", "", str(message)).lower()
     if any(k in low for k in ("429", "too many requests", "please wait a few minutes", "try again later",
-                              "rate-limit reached or login", "rate limit reached")):
+                              "rate-limit reached or login", "rate limit reached",
+                              "http error 400", "bad request")):
         # yt-dlp's "rate-limit reached or login required" is either; with no sign-in it's a login.
         if "or login" in low and not (COOKIES_FILE.is_file() or settings._env("STUDIO_YTDLP_COOKIES_BROWSER")):
             return "login"
@@ -161,7 +208,7 @@ def problem_of(message: str) -> str:
     if any(k in low for k in ("login", "log in", "sign in", "cookies", "authenticat", "empty media response",
                               "401", "checkpoint", "challenge page", "credentials required")):
         return "login"
-    if any(k in low for k in ("private", "not available", "unavailable", "404", "removed", "deleted",
+    if any(k in low for k in ("private", "not available", "isn't available", "unavailable", "404", "removed", "deleted",
                               "could not be found", "not found", "registered users who follow", "unsupported url")):
         return "gone"
     if any(k in low for k in ("timed out", "getaddrinfo", "connection", "network", "resolve", "temporary failure")):
@@ -701,7 +748,7 @@ def analyse(source: str | Path, stills_dir: Path | None = None, *, download_dir:
             video.unlink(missing_ok=True)
     out = {"kind": "video", "measured": measured, "look": seen, "stills": [str(p) for _, p in frames]}
     if is_url:
-        out["engagement"] = engagement_of(info, "yt-dlp")
+        out["engagement"] = engagement_of(info, info.get("_source", "yt-dlp") if isinstance(info, dict) else "yt-dlp")
     return out
 
 

@@ -29,7 +29,7 @@ requests==2.34.2
 yt-dlp==2026.8.19
 # Reference library: the pictures of Instagram carousels and photo posts (with the cookies.txt
 # sign-in) and an account's follower count, when yt-dlp can't (ref_library.py, style_study.py)
-gallery-dl==1.32.15
+gallery-dl==1.32.17
 
 # NVIDIA GPU only — the CUDA libraries faster-whisper needs on Windows. Install with:
 #   pip install -r requirements-gpu.txt
