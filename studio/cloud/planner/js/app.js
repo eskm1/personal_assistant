@@ -15,6 +15,7 @@ import { refsRoute, showRefs, hideRefs, resetRefs, refsOpen, loadRefs } from "./
 import { shoot, onShootRefresh } from "./shoot.js";
 import { month, monthRoute, showMonth, hideMonth, monthOpen, loadMonthPage } from "./month.js";
 import { onUploadRow, renderTray } from "./upload.js";
+import { postingRoute, showPosting, hidePosting, postingOpen, loadPostingPage } from "./posting.js";
 
 const SET_PASSWORD = "studio.setPassword";
 const session = { started: false, channel: null };
@@ -135,13 +136,15 @@ function stop() {
   if (session.planChannel) sb.removeChannel(session.planChannel);
   if (session.topicChannel) sb.removeChannel(session.topicChannel);
   if (session.libChannel) sb.removeChannel(session.libChannel);
-  session.channel = session.refChannel = session.shootChannel = session.planChannel = session.topicChannel = session.libChannel = null;
+  if (session.postChannel) sb.removeChannel(session.postChannel);
+  session.channel = session.refChannel = session.shootChannel = session.planChannel = session.topicChannel = session.libChannel = session.postChannel = null;
   session.started = false;
   hideViewer();
   hideChecklist();
   closeModal();
   resetRefs();
   hideMonth();
+  hidePosting();
   Object.assign(month, { data: null, plan: null, loaded: false });
   $("#app").hidden = true;
   state.me = null;
@@ -322,6 +325,20 @@ async function doRoute() {
   let m;
   const refRoute = refsRoute(h);
   const planRoute = monthRoute(h);
+  const postRoute = postingRoute(h);
+  if (postRoute) {
+    hideViewer();
+    hideChecklist();
+    hideTeam();
+    hideRefs();
+    hideHome();
+    hideMonth();
+    $("#planner").hidden = true;
+    setSection(postRoute.page);
+    await showPosting(postRoute);
+    return;
+  }
+  hidePosting();
   if (planRoute) {
     hideViewer();
     hideChecklist();
@@ -442,6 +459,7 @@ const LIBRARY_TABLES = ["taste_reports", "reference_imports"];
 const SHOOT_TABLES = ["phases", "site_days", "shot_uploads"];
 const PLAN_TABLES = ["content_plan"];
 const TOPIC_TABLES = ["client_questions"];
+const POST_TABLES = ["posts", "post_results", "account_results"];
 let refreshTimer = null;
 let refreshing = false;
 let again = false;
@@ -492,6 +510,13 @@ function startRealtime() {
   }
   topicChannel.subscribe();
   session.topicChannel = topicChannel;
+  // Instagram posts and results (the Studio machine's copy), on their own channel for the same reason.
+  const postChannel = sb.channel("studio-posts");
+  for (const table of POST_TABLES) {
+    postChannel.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => onChange(table, payload));
+  }
+  postChannel.subscribe();
+  session.postChannel = postChannel;
 }
 
 function onChange(table, payload) {
@@ -523,6 +548,7 @@ async function refreshNow() {
     if (homeOpen()) tasks.push(loadHome().then(() => renderHome()));
     if (refsOpen()) tasks.push(loadRefs());
     if (monthOpen()) tasks.push(loadMonthPage());
+    if (postingOpen()) tasks.push(loadPostingPage());
     await Promise.all(tasks.map((t) => t.catch(() => {})));
   } finally {
     refreshing = false;

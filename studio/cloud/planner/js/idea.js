@@ -11,6 +11,7 @@ import {
 } from "./core.js";
 import { plan } from "./board.js";
 import { uploadButtonsHTML, rememberShot } from "./upload.js";
+import { openSchedule, canSchedule } from "./posting.js";
 import {
   prepSlides, slidePaths, slidesMainHTML, writeSlidesHTML, saveSlideField, slidesClick, slidesLocked,
   conceptsMakeLine,
@@ -143,10 +144,13 @@ export async function loadIdea(force = false) {
   }
   // Phases and site days (for "Phase" / "Day" on each shot) come with a database update.
   const optional = (q) => q.then(must).catch((err) => (missingTable(err) ? null : []));
-  const [arcs, phases, days] = await Promise.all([
+  const [arcs, phases, days, post] = await Promise.all([
     sb.from("arcs").select("id,title,position").eq("project_id", idea.project_id).order("position").order("id").then(must),
     optional(sb.from("phases").select("id,name,position").eq("project_id", idea.project_id).order("position").order("id")),
     optional(sb.from("site_days").select("id,day,phase_id").eq("project_id", idea.project_id).order("day")),
+    // Its Instagram post (the posting update): the newest that isn't cancelled.
+    optional(sb.from("posts").select("id,production_id,state,scheduled_at,posted_at,permalink,error").eq("idea_id", idea.id)
+      .neq("state", "cancelled").order("id", { ascending: false }).limit(1)),
   ]);
   if (stale()) {
     if (force && view.id === id) view.forceNext = true;
@@ -158,6 +162,7 @@ export async function loadIdea(force = false) {
   d.arcs = arcs;
   d.phases = phases;
   d.days = days;
+  d.post = (post || [])[0] || null;
   for (const s of d.shots) rememberShot(s.id, `${s.description} (for: ${d.title})`);
   const up = [], down = [];
   let mine = 0;
@@ -452,6 +457,7 @@ function makeHTML(d) {
     const label = prod?.status ? PRODUCTION[prod.status] || prod.status : carousel ? "Studio is laying it out" : "The editor is on it";
     const link = (studio || cfg.studioUrl === "") && prod?.id != null
       ? `<a class="btn" href="${esc(`${studio}/#/production/${encodeURIComponent(prod.id)}`)}" target="_blank" rel="noopener noreferrer" title="Opens the draft on the Studio dashboard">Open the draft ↗</a>` : "";
+    if (prod && ["approved", "posted"].includes(prod.status)) return postHTML(d, prod, link);
     return `<div class="decision row"><span><strong>In the edit.</strong> ${esc(label)}${prod?.version ? ` · v${esc(prod.version)}` : ""}${prod?.updated_at ? ` <span class="muted small">(${esc(ago(prod.updated_at))})</span>` : ""}</span>${link}</div>`;
   }
   if (carousel) return makeCarouselHTML(d, owner);
@@ -464,6 +470,22 @@ function makeHTML(d) {
       <span class="muted small">${d.canMake ? "Sends it to Studio's editor, cut from the best take of each shot." : "Needs footage for at least one shot."}</span>${failed}</div>`;
   }
   return `<div class="decision row"><span class="muted small">${esc(ownerName())} sends it to the editor once the footage is in.</span>${failed}</div>`;
+}
+
+// An approved draft: its Instagram post (scheduled, posted, couldn't post) or Schedule (Bryan).
+function postHTML(d, prod, link) {
+  const p = d.post, sp = window.StudioPost;
+  const when = (iso) => sp?.whenText(iso) || ago(iso);
+  let line;
+  if (p?.state === "posted") line = `<strong>Posted</strong> ${esc(when(p.posted_at))}.${p.permalink ? ` <a href="${esc(p.permalink)}" target="_blank" rel="noopener noreferrer">Open on Instagram ↗</a>` : ""}`;
+  else if (p?.state === "publishing") line = `<span class="spin"></span> <strong>Going out on Instagram now.</strong>`;
+  else if (p?.state === "scheduled") line = `<strong>Scheduled</strong> for ${esc(when(p.scheduled_at))}.`;
+  else if (p?.state === "failed") line = `<strong class="bad-text">Couldn't post.</strong> ${esc(p.error || "")}`;
+  else if (prod.status === "posted") line = `<strong>Posted.</strong>`;
+  else line = `<strong>Approved.</strong> Not scheduled yet.`;
+  const can = canSchedule() && prod.status === "approved" && p?.state !== "posted" && p?.state !== "publishing";
+  const btn = can ? `<button class="btn ${p?.state === "scheduled" ? "" : "act"}" data-post-schedule="${esc(prod.id)}">${p?.state === "scheduled" ? "Change" : p?.state === "failed" ? "Try again" : "Schedule"}</button>` : "";
+  return `<div class="decision row"><span>${line}</span>${btn}${link}</div>`;
 }
 
 // Make this, for a carousel: Studio lays the slides out (job kind 'carousel', the owner only).
@@ -722,6 +744,7 @@ inner().addEventListener("click", async (e) => {
   const d = view.d;
   if (!d) return;
   const ds = t.dataset;
+  if (ds.postSchedule) { openSchedule(Number(ds.postSchedule)); return; }
   const shotId = Number(t.closest("[data-shot]")?.dataset.shot);
   try {
     if (await slidesClick(t, d)) { await loadIdea(true); return; }

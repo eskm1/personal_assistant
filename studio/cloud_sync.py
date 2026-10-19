@@ -20,6 +20,8 @@ STUDIO_CLOUD_SYNC_SECONDS (30 s) it:
      (footage_ideas.py), gives older ideas their kind of post, a batch at
      a time (content_plan.py), and suggests topics for the month's gaps once
      a week, when the month falls behind, or on a "topics" job (topics.py);
+     mirrors Instagram posts and their results for the planner's calendar and
+     Results (posting.mirror, post_results.mirror);
   6. reference reels (CONTRACT.md, "Reference guides"): registers videos dropped
      in Studio Inbox\\References\\Ours / \\Inspiration, analyses new references
      (two per tick at most), drafts a new style guide when a brand's set of
@@ -250,8 +252,19 @@ def _heartbeat(api: Client) -> None:
                  "dashboard_url": settings.DASHBOARD_URL, "footage_ideas": status.get("footage_ideas"),
                  "topics": status.get("topics"), "references": _library_info(),
                  # Can Studio draw AI concept pictures (the image key is set)? Never the key itself.
-                 "concepts": concepts.info()},
+                 "concepts": concepts.info(),
+                 # Is Instagram connected, as whom, any problem (posting.py)? Never the token.
+                 "instagram": _instagram_info()},
     }, on_conflict="id", resolution="merge-duplicates", returning=False)
+
+
+def _instagram_info() -> dict | None:
+    try:
+        import posting
+        return posting.info()
+    except Exception as e:
+        log.debug("No Instagram info: %s", e)
+        return None
 
 
 def _library_info() -> dict | None:
@@ -1458,6 +1471,21 @@ def sync_once(conn, api: Client | None = None) -> dict:
     except Exception:
         pass
     counts["productions"] = push_productions(api, conn, remote["ideas"])
+    try:  # Instagram posts and their results, for the planner's calendar and Results (posting.py)
+        import post_results
+        import posting
+        if posting.online(api):
+            counts["posts"] = posting.mirror(api, conn, remote["ideas"])
+            counts["results"] = post_results.mirror(api, conn)
+        else:
+            status["note"] = NEEDS_UPDATE
+    except Exception as e:
+        if isinstance(e, CloudError) and "can't reach" in str(e):
+            raise
+        message = f"posts: {e if isinstance(e, CloudError) else f'{type(e).__name__}: {e}'}"[:300]
+        if message not in previous:
+            log.warning("Cloud sync, %s", message)
+        problems.append(message)
     try:  # reference reels and the style guide: never stops the rest of the sync
         refs = sync_references(api, started, conn=conn)
     except Exception as e:

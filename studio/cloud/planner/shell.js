@@ -5,7 +5,8 @@
 // <div id="shell" class="shell" data-half="plan|review"> is filled in when this script
 // runs, before the page's own script. The page then fills the status pill (#laptop-*)
 // and the account menu (#account-menu), and tells the shell where it is:
-//   StudioShell.setCurrent("plan" | "ideas" | "today" | "review" | "refs" | "style" | "content" | "questions" | "library" | "")
+//   StudioShell.setCurrent("plan" | "ideas" | "today" | "review" | "refs" | "style" | "content" | "questions" | "library"
+//                          | "calendar" | "results" | "instagram" | "")
 //   StudioShell.setLinks({ today: "#/today/3", ... })   ("" hides that item)
 //   StudioShell.setBadge(2)                              (drafts waiting for review)
 "use strict";
@@ -34,6 +35,9 @@ window.StudioShell = (() => {
     style: `${planner}#/style`,
     content: `${planner}#/content-plan`,
     questions: `${planner}#/questions`,
+    calendar: `${planner}#/calendar`,
+    results: `${planner}#/results`,
+    instagram: `${planner}#/instagram`,
     library: dash && `${dash}#/tab/library`,
   };
   if (half === "review") links.plan = "/plan/";
@@ -50,13 +54,17 @@ window.StudioShell = (() => {
     content: '<rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M8 16v-3M12 16V9M16 16v-5"/>',
     questions: '<path d="M4.5 5.5h15a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H10l-4.5 3.5v-3.5h-1a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"/><path d="M10.2 9.4a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.6-.8 1.1v.3M12 14.2v.1"/>',
     library: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M6 4h12M10 11l4 2.5-4 2.5z"/>',
+    calendar: '<rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4M8 14h2M12 14h2M16 14h.5M8 17h2M12 17h2"/>',
+    results: '<path d="M4 20h16M7 17v-5M12 17V7M17 17v-8"/>',
+    instagram: '<rect x="4" y="4" width="16" height="16" rx="4.5"/><circle cx="12" cy="12" r="3.6"/><circle cx="16.6" cy="7.4" r=".9"/>',
   };
   const icon = (name) => `<svg class="shell-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[name]}</svg>`;
   const badge = `<span class="shell-badge" data-badge hidden></span>`;
 
   // The sections behind More: on a computer a menu under More, on a phone the More sheet.
-  const MORE = [["refs", "References"], ["style", "Style guide"], ["content", "Content plan"], ["questions", "Client questions"],
-    ["today", "Today on site"], ["library", "Library"]];
+  const MORE = [["calendar", "Posting calendar"], ["results", "Results"], ["refs", "References"], ["style", "Style guide"],
+    ["content", "Content plan"], ["questions", "Client questions"], ["today", "Today on site"], ["library", "Library"],
+    ["instagram", "Instagram"]];
   root.innerHTML = `<header class="shell-top" id="shell-top">
       <a class="shell-mark" data-sec="plan" href="#" aria-label="Studio: Plan"><span class="wordmark">URBAN MAKERS</span><span class="studio-tag">Studio</span></a>
       <nav class="shell-nav" aria-label="Studio">
@@ -160,7 +168,8 @@ window.StudioShell = (() => {
   });
 
   // ── More (phones) ──────────────────────────────────────────────────────────
-  // References, Style guide, Content plan, Client questions, Today on site, Library and the account menu's items, as a sheet.
+  // Posting calendar, Results, References, Style guide, Content plan, Client questions, Today on site, Library, Instagram
+  // and the account menu's items, as a sheet.
   const sheet = $("#shell-sheet");
   let sheetReturn = null;
   function openSheet() {

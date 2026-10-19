@@ -861,3 +861,12 @@ button.concept-opt:disabled { opacity: .6; cursor: progress; }
   .sel-bar .btn { flex: 1 1 40%; }
   .sel-bar .sel-job .btn { flex: 0 0 auto; min-width: 72px; }
 }
+
+/* Instagram on an approved or posted draft (postingHTML) */
+.post-sec { padding: 14px 16px; border: 1px solid var(--um-line); border-radius: var(--um-radius); background: var(--um-card); }
+.post-sec h2 { margin: 0; }
+.post-line { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.post-line p { margin: 0; flex: 1 1 220px; line-height: 1.5; }
+.pr-cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; }
+.pr-cell { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; background: var(--um-paper); border-radius: var(--um-radius-sm); }
+.pr-cell strong { font-family: var(--um-mono); font-size: var(--um-fs-lead); font-weight: 500; }

@@ -537,8 +537,8 @@ Review no longer has an Ideas tab.
 get found), **On site** and **Finished homes** (to build trust) and **Work with us** (to get enquiries). On
 Plan, the month shows how it's going against your targets: a slot per post, "6 of 13 posts planned" and what's
 still to plan; tap a kind to see its posts and the ones waiting for your Go.
-A post counts once it's Go (until it's approved), or when it's approved that month; Studio never posts, so
-"ready" means approved. **Targets and offers** (on Plan, or under More) is where you set how many
+A post counts once it's Go (until it's approved), or when it's approved that month; once it's scheduled on
+Instagram it counts in the month it goes out, and the slots tick off what was posted (section 16). **Targets and offers** (on Plan, or under More) is where you set how many
 of each kind you want a month (it shows the total and about how many a week) and the offers people can take
 you up on (name, what's included, how a post words the ask). Michelle sees them but can't change them.
 Claude gives every idea it writes a kind, leans toward the kinds that are short this month, and uses only
@@ -831,6 +831,53 @@ there and retires the laptop's copy. After that:
   goes straight to the server;
 - updates and **Restart Studio** work as before (systemd restarts the worker);
 - checking on it: `ssh root@<server address> bash /root/studio-server/setup.sh status`.
+
+## 16. Posting to Instagram
+
+Studio can post to **@urbanmakers_sg** for you, but only what you approved and scheduled: it never posts on its own.
+Meta Business Suite stays for DMs and anything else.
+
+**Connect it once (about 20 minutes, on a computer).**
+
+1. In Meta's App Dashboard (developers.facebook.com), open your app > **Instagram** > **API setup with Instagram
+   login**. Under **Generate access tokens**, add @urbanmakers_sg (it must be a Business account and accepted as
+   an Instagram Tester while the app is in Development mode) and press **Generate token**. Copy the token.
+2. On the same page, copy the **Instagram app ID** and the **Instagram app secret** (Show).
+3. In Studio: account menu (top right) > **Instagram…** (or Plan > More > **Instagram**). Paste the three and press
+   **Connect**. It says "Connected as @urbanmakers_sg · token renews itself · added <date>".
+
+The three are kept only on the Studio server, never online and never shown again. The token lasts 60 days; Studio
+renews it by itself about every 10 days, and sends you a Telegram if it can't. **Replace** pastes a new one;
+**Disconnect** stops all posting until you connect again. The box also shows how many posts went out through Studio
+in the last 24 hours (Instagram allows 100).
+
+**Schedule a post.** Open an approved Reel or carousel in Review (Done, or the draft's page) and press **Schedule…**
+(or **Schedule** on its idea in Plan). Pick the day and time (Singapore time): it suggests the next free slot that
+keeps about 3 posts a week, spread out (the content plan's posts a week). Edit the caption (it counts characters and
+hashtags against Instagram's limits: 2,200 and 30), pick a Reel's cover (the first frame or a moment), keep "Also
+show it in the grid" on, add up to 3 collaborators, then **Schedule**, or **Post now** (it asks once). Until it's out
+you can change the time, the caption or cancel it (**Change or cancel**). A scheduled draft can't go back to review:
+cancel the post first.
+
+**At the time,** Studio prepares the files (a Reel as Instagram wants it; the slides as JPEGs), lets Instagram fetch
+them from a private link that works for two hours only while it posts, waits for Instagram to process them and
+publishes. Telegram: "Posted: <title> <link>", or "Couldn't post <title>: <why>". Passing problems (Instagram busy, a
+slow upload) are retried by itself; a refused file, a run-out connection or Instagram's daily limit fail with the
+reason, and **Try again** sends it again. Studio never posts the same draft twice, even after a restart mid-post.
+
+**The posting calendar** (Plan > More > **Posting calendar**) shows this month and next: posted in the kind's colour,
+scheduled in its tint, failed in red. Tap one to see it, its numbers, and to change it. Plan's home lists the next
+posts under Coming up, and posts that couldn't go out under Needs your call.
+
+**Results** (Plan > More > **Results**): every morning at 9 Studio reads every post of the last 90 days (also the
+ones you posted from your phone) and the account; a new post is read again about an hour after it goes out. You see
+followers, views, reach, saves and shares, then by kind of post, by format (Reel / carousel / photo), by month, and
+every post. A posted draft in Review shows its own numbers. These are what the next phases (learning, the weekly
+review) work from.
+
+Settings in `.env` (then **Restart Studio**): `STUDIO_POSTING=0` stops all posting; `STUDIO_POSTS_PER_WEEK` (blank =
+the content plan's); `STUDIO_POST_TIME` (19:30); `STUDIO_RESULTS_HOUR` (9); `STUDIO_PUBLIC_URL` (blank = the
+dashboard address; Instagram fetches the files from it, so it must be the https address).
 
 ## Day to day
 

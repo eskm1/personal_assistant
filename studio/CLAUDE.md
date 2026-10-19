@@ -1,6 +1,6 @@
 # Studio: context for Claude sessions
 
-Studio turns Urban Makers' raw footage into Instagram Reels. Owner: Bryan (Urban Makers, a
+Studio turns Urban Makers' raw footage into Instagram Reels and carousels, and posts the ones Bryan approved and scheduled. Owner: Bryan (Urban Makers, a
 Singapore renovation company). Team member: Michelle (marketing). Read README.md first, then
 `server/SERVER.md` (the server), `cloud/CONTRACT.md` (planner <-> Studio machine contract).
 
@@ -25,7 +25,8 @@ Singapore renovation company). Team member: Michelle (marketing). Read README.md
 - Branch `claude/sleepy-thompson-iewk09`. The server (and Netlify) deploy whatever is pushed, so never
   push half-built or untested code. No PRs unless asked. Never commit `.env` or secrets; never log keys.
 - Bryan decides: approving/rejecting drafts, Go/Park/Dismiss, spending (Make this), style guides.
-  Captions and posting stay his call; Studio never posts.
+  Captions and posting stay his call: Studio posts only what Bryan approved and scheduled (never on its own,
+  never twice; `posting.py`), and the Instagram token never leaves the Studio machine (`Studio/instagram.json`).
 - All content is Urban Makers for now (`STUDIO_BRANDS`, personal on hold). Epidemic Sound music is
   licensed for the Urban Makers account only.
 - Subtitles: English or Simplified Chinese only (`WHISPER_LANGUAGES=en,zh`, zhconv).
@@ -48,7 +49,8 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   `clips.usable`/`flagged`), 20261020000000_content_plan (+ the updated plan-organise / plan-develop functions),
   20261021000000_carousels (+ plan-develop's slide writing) and 20261022000000_topics (`client_questions`,
   `ideas.suggestion`, the `topics` job), 20261023000000_reference_library (imports, held analyses, taste
-  reports, the `refs`/`taste` jobs) and 20261024000000_cleanup (`clips.archived_at`). Re-run after any new migration.
+  reports, the `refs`/`taste` jobs), 20261024000000_cleanup (`clips.archived_at`) and 20261025000000_posting (posts,
+  results, the month counting posted posts). Re-run after any new migration.
   Until then the planner hides the month on Plan, carousels, suggested topics and Client questions, the server sends
   no `post_type`, and archived clips still show in the planner's footage pickers.
 - Content plan (Bryan approved the proposal 2026-10-18: https://claude.ai/artifact/UyGPCh6YJv3y334g6531Ke), built in
@@ -86,6 +88,22 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   "Original" toggle; downloads and Ready to post stay full quality. Range requests are handed to waitress's file
   wrapper (`dashboard._stream_ranges`) so a playing video no longer holds a thread; waitress threads 8 -> 16. Caddy
   unchanged.
+- Studio Director phase 1 built 2026-10-19 (plan approved by Bryan: posting, calendar, results; not yet proven against
+  the real Instagram API, only a local mock in Meta's documented shapes): `instagram.py` (connection: token + app ID +
+  secret pasted in Review's account menu > Instagram or the planner's More > Instagram, kept in `Studio/instagram.json`
+  0600; ig_exchange_token, renewal with ig_refresh_token every ~10 days, Telegram when it fails), `posting.py`
+  (catalog `posts`; Schedule / Post now / change / cancel on approved Reels and carousels; the publisher thread:
+  Reels checked or transcoded, slides to JPEG, `/public/media/<signed token>/<file>` for Instagram to fetch, two hours,
+  only while that post goes out; containers, FINISHED, media_publish, permalink; retries; never twice after a crash),
+  `post_results.py` (daily 9am SGT and ~1 h after a post: per-post insights for 90 days incl. phone posts, the
+  account), `posting_routes.py` (`/api/instagram...`, cookie or the planner's Bearer), migration
+  20261025000000_posting (`posts`, `post_results`, `account_results`, content_month() counts posted / scheduled in the
+  month they go out), the planner's Posting calendar / Results / Instagram pages (`js/posting.js`), the dialogs shared
+  with Review (`cloud/planner/post-ui.*`). What Bryan must do: (1) `cloud_setup.py --update` on the laptop (the
+  migration); (2) connect Instagram once (README section 16: Meta App Dashboard > Instagram > API setup with Instagram
+  login: generate the token for @urbanmakers_sg as Instagram Tester, copy app ID and secret, paste in Review's account
+  menu > Instagram); (3) schedule a first post and watch for the Telegram. Uncertain until the first real post: the
+  carousel limit (10, `STUDIO_INSTAGRAM_CAROUSEL_MAX`), insights metric availability, API version v25.0.
 - Ideas live only in the planner (footage_ideas.py proposes ideas from new footage into each project's
   "From your footage" arc after uploads go quiet; "Everyday posts" project for loose clips).
   Usable clips are never flagged on cards; only retakes.

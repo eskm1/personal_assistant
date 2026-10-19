@@ -80,7 +80,8 @@ def _close_db(_exc):
 
 
 # The app icons are public too: a phone fetches them for the home screen, sometimes signed out.
-_PUBLIC = ("/login", "/setup", "/invite/", "/healthz", "/static/", "/favicon.ico", "/apple-touch-icon",
+# /public/media/: what Instagram fetches while a post goes out (a signed two-hour link, posting.py).
+_PUBLIC = ("/login", "/setup", "/invite/", "/healthz", "/static/", "/favicon.ico", "/apple-touch-icon", "/public/media/",
            "/plan/favicon.ico", "/plan/apple-touch-icon.png", "/plan/icon-192.png", "/plan/icon-512.png")
 
 
@@ -91,6 +92,12 @@ def _auth():
         # The planner's upload API: a planner session (Bearer token) instead of the
         # dashboard cookie, from the planner's own address (CORS). uploads.guard()
         # refuses anything without a valid token.
+        import uploads
+        return uploads.guard()
+    if request.path.startswith("/api/instagram") and (
+            request.method == "OPTIONS" or request.headers.get("Authorization", "").lower().startswith("bearer ")):
+        # Posting from the planner (posting_routes.py): its Bearer token, like the upload API.
+        # Review calls the same routes with the dashboard cookie (below).
         import uploads
         return uploads.guard()
     if request.method == "POST":
@@ -116,7 +123,7 @@ def _auth():
 
 @app.after_request
 def _headers(response):
-    if request.path.startswith("/api/uploads"):
+    if request.path.startswith(("/api/uploads", "/api/instagram")):
         import uploads
         uploads.cors(response)
     response.headers.setdefault("X-Frame-Options", "DENY")
@@ -252,7 +259,8 @@ def busy() -> bool:
     import cleanup
     import draft_review
     import plan_routes
-    return (_ideas_job["running"] or draft_review.busy() or cleanup.busy() or any(j.get("state") == "building" for j in _resolve_jobs.values())
+    import posting
+    return (_ideas_job["running"] or posting.busy() or draft_review.busy() or cleanup.busy() or any(j.get("state") == "building" for j in _resolve_jobs.values())
             or any(j.get("state") == "running" for j in plan_routes._jobs.values()))
 
 
@@ -487,7 +495,7 @@ def _carousel_detail(row: sqlite3.Row) -> dict:
                  **_learning_detail(row, "carousel"),
                  "concepts": {"finished": finished, "per_image_usd": settings.IMAGE_COST_USD,
                               "options": len(concepts.OPTIONS), "why_not": concepts.available()},
-                 "music": None, "qa": None, "resolve": None, "slides": slides,
+                 "music": None, "qa": None, "resolve": None, "slides": slides, **_posting_detail(row),
                  "download": f"/api/production/{row['id']}/download" if pngs else None})
     clip_ids = json.loads(row["source_clips"] or "[]")
     if clip_ids:
@@ -585,10 +593,13 @@ def board():
     online = cloud_sync.enabled()
     ideas = [] if online else db().execute("""SELECT * FROM ideas WHERE status = 'new'
                                               AND COALESCE(origin, 'library') = 'library' ORDER BY id DESC""").fetchall()
+    # Each draft's Instagram post, for its tile ("Scheduled", "Couldn't post").
+    live_posts = {r["production_id"]: {"state": r["state"], "at": r["posted_at"] or r["scheduled_at"]} for r in db().execute(
+        "SELECT production_id, state, scheduled_at, posted_at FROM posts WHERE state <> 'cancelled' ORDER BY id")}
     out = {
         "items": [*_inbox_items(),
                   *(_clip_item(r, clip_notes) for r in clips),
-                  *(_production_item(r, production_notes) for r in productions),
+                  *({**_production_item(r, production_notes), "post": live_posts.get(r["id"])} for r in productions),
                   *(_idea_item(r) for r in ideas)],
         "ideas_online": online,
         "version": _version_commit(),
@@ -680,8 +691,22 @@ def production_detail(production_id: int):
                  **_learning_detail(row, "reel"),
                  "music": json.loads(row["music"]) if row["music"] else None,
                  "qa": json.loads(row["qa"]) if row["qa"] else None,
-                 "resolve": _resolve_state(dict(row)) if edl else None})
+                 "resolve": _resolve_state(dict(row)) if edl else None, **_posting_detail(row)})
     return jsonify(item)
+
+
+def _posting_detail(row: sqlite3.Row) -> dict:
+    """The draft's Instagram post (scheduled, going out, posted, failed) and, once it's out,
+    its latest numbers (posting.py, post_results.py)."""
+    import instagram
+    import post_results
+    import posting
+    post = posting.latest_for(db(), row["id"])
+    out = {"post": posting.view(post) if post else None, "connected": instagram.connected(),
+           "why_not": posting.can_post(db(), row) if row["status"] in ("approved", "posted") else None}
+    if post is not None and post["state"] == "posted":
+        out["results"] = post_results.for_post(db(), post["id"])
+    return {"posting": out}
 
 
 def _learning_detail(row: sqlite3.Row, scope: str) -> dict:
@@ -1026,6 +1051,11 @@ def decide(production_id: int):
             return jsonify({"error": "only an approved or rejected draft can go back to review"}), 400
         if row["removed_at"]:
             return jsonify({"error": "its files were removed in the clean-up, so it can't go back to review"}), 409
+        import posting
+        live = posting.active_for(db(), production_id)
+        if live is not None:
+            return jsonify({"error": "it's scheduled on Instagram: cancel the post first" if live["state"] != "posted"
+                            else "it's already on Instagram"}), 409
         catalog.set_production_status(db(), production_id, "ready", caption)
         db().execute("UPDATE productions SET archived_at = NULL WHERE id = ?", (production_id,))
         db().commit()
@@ -1174,12 +1204,14 @@ from planner_site import bp as _planner_bp  # noqa: E402 - the online planner at
 from uploads import bp as _uploads_bp  # noqa: E402 - footage uploaded from the planner to a shot
 from ig_signin import bp as _signin_bp  # noqa: E402 - the owner's Instagram sign-in for reference downloads
 from cleanup import bp as _cleanup_bp  # noqa: E402 - Review's clean-up: remove, archive, free up space
+from posting_routes import bp as _posting_bp  # noqa: E402 - Instagram: connect, schedule, results, public media
 
 app.register_blueprint(_plan_bp)
 app.register_blueprint(_planner_bp)
 app.register_blueprint(_uploads_bp)
 app.register_blueprint(_signin_bp)
 app.register_blueprint(_cleanup_bp)
+app.register_blueprint(_posting_bp)
 
 
 # ── Serve ─────────────────────────────────────────────────────────────────────

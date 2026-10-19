@@ -37,6 +37,10 @@ over that server's processor for minutes at a time and slow the website down.
   video straight to the server, which files it in the post's folder and attaches it to that shot.
 - **Approved reels** are copied to **Studio Ready to post** in OneDrive, so you can post them from
   your phone. Every draft also has a **Download video** button.
+- **Posting to Instagram** (README section 16): the server posts what you scheduled. Instagram fetches the video
+  and slides from `https://<your domain>/public/media/...` (a two-hour signed link, served through Caddy like the
+  rest; nothing to change). The Instagram token lives in `/home/studio/Studio/instagram.json` (readable by Studio
+  only); it is not part of the move and is never copied anywhere.
 - **DaVinci Resolve**: "Make Resolve project" now gives you a **Download (.zip)** with the project
   and the original clips. Unzip it on your computer and open it as before (the HOW TO OPEN.txt
   inside covers relinking the clips).

@@ -238,3 +238,28 @@ def ensure_folders() -> None:
 # writing taste reports (US$; about 0.05 a post). Nothing is spent until the owner presses
 # "Analyse" in the planner; past this, analysing pauses until next month.
 REFERENCE_BUDGET_USD = max(float(_env("STUDIO_REFERENCE_BUDGET_USD", "60")), 0.0)
+
+# ── Posting to Instagram (instagram.py, posting.py, post_results.py) ──────────
+# Studio posts only what Bryan approved and scheduled, through "Instagram API with Instagram
+# Login" (graph.instagram.com, no Facebook Page). The access token, app ID and app secret are
+# pasted once by the owner under More > Instagram and kept only on this machine,
+# in INSTAGRAM_FILE (readable by Studio only); never online, never logged.
+INSTAGRAM_FILE = ROOT / "instagram.json"
+INSTAGRAM_GRAPH_URL = _env("STUDIO_INSTAGRAM_GRAPH_URL", "https://graph.instagram.com").rstrip("/")
+INSTAGRAM_API_VERSION = _env("STUDIO_INSTAGRAM_API_VERSION", "v25.0")
+# Off = nothing is published (scheduled posts wait; "Post now" refuses). A kill switch.
+POSTING = _flag("STUDIO_POSTING", True)
+# Where Instagram fetches the video and slides from while a post goes out (a short-lived link
+# to this machine, /public/media/...). Blank = STUDIO_DASHBOARD_URL. Must be https on the server.
+PUBLIC_URL = (_env("STUDIO_PUBLIC_URL") or DASHBOARD_URL).rstrip("/")
+# Posts a week the schedule suggests slots for; 0 = the content plan's (Plan > Content plan, default 3).
+POSTS_PER_WEEK = min(max(int(_env("STUDIO_POSTS_PER_WEEK", "0")), 0), 21)
+# The time of day (Singapore) a suggested slot starts at.
+POST_TIME = _env("STUDIO_POST_TIME", "19:30")
+# Most slides Instagram takes in one carousel.
+INSTAGRAM_CAROUSEL_MAX = min(max(int(_env("STUDIO_INSTAGRAM_CAROUSEL_MAX", "10")), 2), 20)
+# The files of a post on its way to Instagram (the checked video, the slides as JPEGs).
+POSTING_DIR = ROOT / "Posting"
+# Results: every post of the last 90 days is read once a day at this hour (Singapore), and each
+# new post again about an hour after it went out.
+RESULTS_HOUR = min(max(int(_env("STUDIO_RESULTS_HOUR", "9")), 0), 23)

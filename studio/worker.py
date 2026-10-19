@@ -12,7 +12,9 @@ Watches the inbox folder the phone uploads into. For each new video:
 It also serves the review dashboard (dashboard.py) and runs the editor queue
 (editor.py: planned and sent-back productions become drafts) while it runs, and
 once a burst of uploads has gone quiet, has Claude suggest posts from the new
-footage and add it to the posts already planned (footage_ideas.py).
+footage and add it to the posts already planned (footage_ideas.py). Posts Bryan
+approved and scheduled go out to Instagram at their time (posting.py, a thread of
+its own), and their results are read daily (post_results.py).
 
 Usage (from the studio folder, inside its venv):
   python worker.py                 run forever (what the scheduled task does)
@@ -686,6 +688,9 @@ def main() -> int:
             threading.Thread(target=dashboard.run, name="dashboard", daemon=True).start()
         if not args.no_editor:
             threading.Thread(target=run_editor, name="editor", daemon=True).start()
+        # Posts Bryan scheduled go out at their time, the token is renewed, results are read (posting.py).
+        import posting
+        threading.Thread(target=posting.run_forever, name="publisher", daemon=True).start()
         if use_claude:  # drafts from before Studio's read get theirs (a few minutes, a few cents each)
             import draft_review
             threading.Thread(target=draft_review.backfill, name="review-backfill", daemon=True).start()
@@ -729,7 +734,8 @@ def main() -> int:
         notify.digest.flush(busy=busy)
         import updater
         import uploads
-        idle = not busy and not onedrive.busy() and not uploads.busy() \
+        import posting
+        idle = not busy and not onedrive.busy() and not uploads.busy() and not posting.busy() \
             and not (dashboard_busy() if not args.no_dashboard else False)
         updater.tick(idle=idle)
         import previews

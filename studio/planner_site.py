@@ -63,9 +63,11 @@ def here() -> bool:
 @bp.get("/static/shell.js")
 @bp.get("/static/shell.css")
 @bp.get("/static/theme.css")
+@bp.get("/static/post-ui.js")
+@bp.get("/static/post-ui.css")
 def shell_file():
-    """The top bar and phone tab bar shared by Review and Plan, and the look (theme.css):
-    one copy, in the planner's folder (Netlify serves it from there too)."""
+    """The top bar and phone tab bar shared by Review and Plan, the look (theme.css) and the
+    posting dialogs (post-ui.*): one copy, in the planner's folder (Netlify serves it from there too)."""
     return send_from_directory(PLANNER, Path(request.path).name, max_age=0)
 
 

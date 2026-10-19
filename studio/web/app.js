@@ -140,6 +140,24 @@ function toast(text) {
   toastTimer = setTimeout(() => { el.hidden = true; }, 2800);
 }
 
+// Posting to Instagram: the dialogs shared with Plan (/static/post-ui.js), with this page's cookie.
+async function apiCall(method, path, body) {
+  const res = await fetch(path, method === "GET" ? {} : {
+    method, headers: { "Content-Type": "application/json" }, body: body === undefined ? "{}" : JSON.stringify(body),
+  });
+  if (res.status === 401) {
+    location.href = `/login?next=${encodeURIComponent(`/${location.hash}`)}`;
+    throw new Error("signed out");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+window.StudioPost?.init({
+  api: apiCall, toast, isOwner: () => isOwner(),
+  onChange: async () => { if (state.current?.kind === "production") await loadDetail().catch(() => {}); sync(); },
+});
+
 // A missing thumbnail hides itself instead of showing a broken image.
 document.addEventListener("error", (e) => {
   if (e.target.tagName === "IMG") e.target.classList.add("broken");
@@ -168,6 +186,10 @@ function chips(item, short = false) {
   if (item.brand && !oneBrand()) out.push(`<span class="chip ${esc(item.brand)}">${esc(BRAND[item.brand] || item.brand)}</span>`);
   if (item.kind === "production" && item.version) out.push(`<span class="chip">v${esc(item.version)}</span>`);
   if (item.open_notes) out.push(`<span class="chip notes">${esc(item.open_notes)} note${item.open_notes > 1 ? "s" : ""}</span>`);
+  if (item.post?.state === "scheduled" || item.post?.state === "publishing") {
+    const when = window.StudioPost?.whenText(item.post.at) || "";
+    out.push(`<span class="chip wait" title="${esc(`On Instagram ${when}`)}">Scheduled${short ? "" : ` ${esc(when.split(",")[0])}`}</span>`);
+  } else if (item.post?.state === "failed") out.push(`<span class="chip failed">Couldn't post</span>`);
   const status = item.kind === "clip" && item.status === "tagged" ? (item.reviewed ? "Checked" : null)
     : (short && STATUS_SHORT[item.status]) || STATUS[item.status];
   if (item.kind === "clip" && item.usable === 0) out.push(`<span class="chip failed">Unusable</span>`);
@@ -221,6 +243,8 @@ function shellLinks() {
     content: online && `${online}/#/content-plan`, questions: online && `${online}/#/questions`,
     today: !state.cloud && plan.pid ? `#/checklist/${plan.pid}` : "#/tab/plan",
     refs: online && `${online}/#/references`, style: online && `${online}/#/style`,
+    calendar: online && `${online}/#/calendar`, results: online && `${online}/#/results`,
+    instagram: "#/instagram",  // without the planner here: the Instagram box opens over Review
   });
 }
 
@@ -2171,7 +2195,7 @@ function carouselPageHTML(d) {
   const statusBox = canDecide || d.status === "failed" ? "" : `<div class="box state-box"><p>${working
     ? "Studio is working on the slides. It comes back to To review when the new version is laid out."
     : `${esc(STATUS[d.status] || d.status)}.${d.status === "approved" ? " The slides and caption are in OneDrive, Studio Ready to post (on the server), and in the download below." : ""}`}</p>
-    ${owner && settled && !d.removed ? `<div class="row"><button class="btn" id="reopen" title="Move it back to To review so you can decide again">Back to review</button>${tidyDetailHTML(d)}</div>` : owner ? tidyDetailHTML(d, true) : ""}</div>`;
+    ${owner && settled && !d.removed ? `<div class="row"><button class="btn" id="reopen" title="Move it back to To review so you can decide again">Back to review</button>${tidyDetailHTML(d)}</div>` : owner ? tidyDetailHTML(d, true) : ""}</div>${postingHTML(d)}`;
   const sub = [d.version ? `v${d.version}` : "", n ? `${n} slides` : "", "carousel"].filter(Boolean).join(" · ");
   const notesNow = d.notes.filter((x) => x.status === "open").length;
   const words = (d.slides || []).map((x) => `<li><strong>${esc(x.n)}. ${esc(x.heading)}</strong>${x.body ? ` ${esc(x.body)}` : ""}
@@ -2207,6 +2231,44 @@ function carouselPageHTML(d) {
     <section class="folds">${folds}</section>`;
 }
 
+// Instagram, on an approved or posted draft: schedule it (Bryan), when it goes out, why it couldn't,
+// and once it's out, the link and its latest numbers (posting.py, post_results.py).
+const NUM = new Intl.NumberFormat("en");
+function postingHTML(d) {
+  const ps = d.posting;
+  if (!ps || !["approved", "posted"].includes(d.status)) return "";
+  const post = ps.post && ps.post.state !== "cancelled" ? ps.post : null;
+  const owner = isOwner();
+  const when = (iso) => window.StudioPost?.whenText(iso) || "";
+  let line = "", btns = "", extra = "";
+  if (!post) {
+    line = ps.why_not ? `<span class="bad-text">${esc(ps.why_not)}</span>` : "Not scheduled yet.";
+    if (!ps.connected) extra = `<p class="muted small">Instagram isn't connected yet${owner ? `: <button class="btn-link" data-ig-connect>connect it</button>` : ""}.</p>`;
+    btns = owner && !ps.why_not ? `<button class="btn act" data-post-schedule="${esc(d.id)}">Schedule…</button>` : "";
+  } else if (post.state === "scheduled") {
+    line = `<strong>Scheduled</strong> for ${esc(when(post.scheduled_at))}.`;
+    if (post.error) extra = `<p class="muted small">${esc(post.error)}</p>`;
+    btns = owner ? `<button class="btn" data-post-schedule="${esc(d.id)}">Change or cancel</button>` : "";
+  } else if (post.state === "publishing") {
+    line = `<span class="spin"></span> <strong>Going out now.</strong>`;
+  } else if (post.state === "failed") {
+    line = `<strong class="bad-text">Couldn't post.</strong> ${esc(post.error || "")}`;
+    btns = owner ? `<button class="btn act" data-post-schedule="${esc(d.id)}">Try again…</button>` : "";
+  } else {
+    line = `<strong class="good-text">Posted</strong> ${esc(when(post.posted_at))}.`;
+    btns = post.permalink ? `<a class="btn" href="${esc(post.permalink)}" target="_blank" rel="noopener noreferrer">Open on Instagram ↗</a>` : "";
+    const r = ps.results;
+    const cell = (label, v) => `<div class="pr-cell"><span class="um-label">${esc(label)}</span><strong>${v == null ? "–" : esc(NUM.format(v))}</strong></div>`;
+    extra = r ? `<div class="pr-cells">${cell("Views", r.views)}${cell("Reach", r.reach)}${cell("Likes", r.likes)}${cell("Comments", r.comments)}
+        ${cell("Saves", r.saves)}${cell("Shares", r.shares)}${r.avg_watch_ms != null ? `<div class="pr-cell"><span class="um-label">Watched</span><strong>${esc((r.avg_watch_ms / 1000).toFixed(1))} s</strong></div>` : ""}
+        ${r.follows != null ? cell("Follows", r.follows) : ""}</div>
+        <p class="muted small">Read ${esc(when(r.pulled_at))}. Updated every morning.</p>`
+      : `<p class="muted small">Its numbers arrive about an hour after it went out, then every morning.</p>`;
+  }
+  return `<section class="d-sec post-sec" aria-labelledby="post-sec-h"><h2 id="post-sec-h">Instagram</h2>
+    <div class="post-line"><p>${line}</p>${btns ? `<div class="row">${btns}</div>` : ""}</div>${extra}</section>`;
+}
+
 // The clean-up on a finished draft's page: Remove a rejected one's files; Archive an approved or posted one.
 function tidyDetailHTML(d, row = false) {
   let html = "";
@@ -2228,7 +2290,7 @@ function productionPageHTML(d) {
   const statusBox = canDecide || d.status === "failed" ? "" : `<div class="box state-box"><p>${working
     ? "The editor is working on this. It comes back to To review when the new version renders."
     : `${esc(STATUS[d.status] || d.status)}.`}</p>
-    ${owner && settled && !d.removed ? `<div class="row"><button class="btn" id="reopen" title="Move it back to To review so you can decide again">Back to review</button>${tidyDetailHTML(d)}</div>` : owner ? tidyDetailHTML(d, true) : ""}</div>`;
+    ${owner && settled && !d.removed ? `<div class="row"><button class="btn" id="reopen" title="Move it back to To review so you can decide again">Back to review</button>${tidyDetailHTML(d)}</div>` : owner ? tidyDetailHTML(d, true) : ""}</div>${postingHTML(d)}`;
   const sub = [d.version ? `v${d.version}` : "", d.duration ? mmss(d.duration) : "", d.video ? "tap to play" : ""].filter(Boolean).join(" · ");
   const notesNow = d.notes.filter((n) => n.status === "open").length;
 
@@ -2595,6 +2657,9 @@ async function detailClick(e) {
   const fixNote = e.target.closest("[data-fix-note]"), fixShot = e.target.closest("[data-fix-shot]");
   const pick = e.target.closest("[data-concept-pick]"), redraw = e.target.closest("[data-concept-redraw]");
   const forget = e.target.closest("[data-forget-rule]");
+  const sched = e.target.closest("[data-post-schedule]");
+  if (sched) { window.StudioPost?.openSchedule(Number(sched.dataset.postSchedule)); return; }
+  if (e.target.closest("[data-ig-connect]")) { window.StudioPost?.openConnect(); return; }
   try {
     if (forget) {
       if (await forgetRule(forget.dataset.forgetRule)) await loadDetail();
@@ -2656,7 +2721,7 @@ async function detailClick(e) {
       await nextForReview();
     } else if (id === "decide-approve") {
       await api(`/api/production/${d.id}/decision`, { decision: "approve", caption: $("#caption").value });
-      toast("Approved.");
+      toast("Approved. Schedule it on Instagram from its page in Done.");
       await nextForReview();
     } else if (id === "decide-reject") {
       if (!confirm("Reject this edit? It moves to Done and won't be revised.")) return;
@@ -3394,6 +3459,11 @@ async function routeFromHash() {
     if (state.stage !== "plan") store("studio.stage", state.stage);
     render();
     if (restore) backToList();
+    return;
+  }
+  if (hash === "#/instagram") {  // More > Instagram, without the planner here: the box as a dialog
+    history.replaceState(history.state, "", "#/tab/review");
+    if (isOwner()) window.StudioPost?.openConnect();
     return;
   }
   const project = hash.match(/^#\/plan\/(\d+)$/);

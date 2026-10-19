@@ -282,7 +282,8 @@ detail view. The dashboard's board items carry the same `flagged`.
 ## Content plan: kinds of post and the month's mix (migration 20261020000000_content_plan.sql)
 
 Every post has a job, its **kind** (`ideas.post_type`), and the month has a mix Bryan sets (how many of each
-kind). Studio never posts, so the month tracks what's planned and what's approved ("ready").
+kind). The month tracks what's planned and what's approved ("ready"); since the posting update, a post scheduled or
+posted on Instagram counts in the month it goes out ("Posting to Instagram", below).
 
 | value | label | stage | job | ask |
 |---|---|---|---|---|
@@ -622,3 +623,101 @@ Every delete is logged with the space freed (`logs/cleanup.jsonl`). Nothing in O
 `GET /api/board` items carry `archived`, `removed` (drafts) and `freed` (clips); a removed draft can't go back to
 review (409).
 
+
+## Posting to Instagram (migration 20261025000000_posting.sql)
+
+The Studio Director plan, phase 1 (Bryan approved 2026-10-19). **Studio posts only what Bryan approved and
+scheduled**, through "Instagram API with Instagram Login" (graph.instagram.com, a Business account, no Facebook
+Page). Account @urbanmakers_sg; the Meta app is in Development mode with the account as Instagram Tester.
+
+**The connection (Studio machine only; `instagram.py`).** The owner pastes the access token, the Instagram app ID
+and the app secret (Review: account menu > Instagram; the planner: More > Instagram). They live in
+`ROOT/instagram.json` (0600), never in Supabase, never logged (urllib3's request lines are redacted), never sent to a
+browser after saving. Connect: `GET /access_token?grant_type=ig_exchange_token&client_secret=..` swaps a short-lived
+token for a long-lived one (a long-lived token from Meta's dashboard is used as it is), `GET /<v>/me?fields=user_id,
+username,account_type` says who it is (Business or Creator only). The long-lived token (60 days) is renewed with
+`GET /refresh_access_token?grant_type=ig_refresh_token` once fewer than 50 days are left (so about every 10 days;
+Instagram needs it to be 24 h old); a failed renewal shows in the Instagram box and Telegrams Bryan (once a day; at
+once when it is a token problem or 7 days or less are left). `laptop_status.info.instagram` = `{connected, username,
+expired, problem, days_left, posting}` (no token). API version `STUDIO_INSTAGRAM_API_VERSION` (v25.0), base
+`STUDIO_INSTAGRAM_GRAPH_URL` (tests point it at a local mock).
+
+**Posts (catalog `posts` = source of truth; mirrored to Supabase `posts`, id = the Studio machine's id).**
+
+| Column | |
+|---|---|
+| production_id, idea_id | the draft; the planner idea it was made from (`ideas.production.id`) |
+| kind | `reel` \| `carousel` |
+| scheduled_at | UTC; Post now = the moment it was asked |
+| state | `scheduled` → `publishing` → `posted`; `failed` (with `error`, `problem`: token, limit, spec, media, transient, offline, other); `cancelled` |
+| stage | while publishing: preparing, uploading, processing, publishing |
+| next_try_at | after a passing problem (backoff 2, 5, 15, 30, 60 min; 5 tries; the posting limit waits an hour) |
+| caption, cover_ms, share_to_feed, collaborators | what goes out (Reels: the cover moment in ms, 0 = first frame) |
+| media_id, permalink, posted_at | once it is out |
+| thumb_path | `posts/<id>.jpg` in the thumbs bucket |
+
+One live post (scheduled, publishing or posted) per draft. RLS: members read; the owner may write (but the planner
+schedules through the Studio machine, below: a row changed online directly is overwritten when the post next changes
+there). Realtime on `posts`, `post_results`, `account_results`. Only `approved` drafts can be scheduled; a scheduled
+draft can't go Back to review (cancel the post first). Once posted, the production's status is `posted` (so
+`ideas.production.status` too).
+
+**The posting API (Studio machine; `posting_routes.py`).** Review calls it with the dashboard cookie; the planner with
+its Bearer token, like the upload API (same CORS). Reads: members; changes: the owner. Errors are `{error}`.
+
+| Request | Answer |
+|---|---|
+| `GET /api/instagram` | the connection's status (owner: `username, added_at, expires_at, days_left, next_refresh, problem, limit: {used, total, hours}` from `content_publishing_limit`; team: `connected, username`) |
+| `POST /api/instagram/connect {access_token, app_id, app_secret}` | the status; 400 `{error}` in plain words (the old connection stays) |
+| `POST /api/instagram/disconnect` | `{connected: false}` |
+| `GET /api/instagram/plan/<production_id>` | the Schedule dialog: `{production, why_not, post, suggested, suggested_text, per_week, taken, connected, posting_on, limits}` |
+| `POST /api/instagram/posts {production_id, when, caption, cover_ms, share_to_feed, collaborators}` | 201 `{post}`; `when` = ISO time (Singapore if it has no zone) or `"now"` |
+| `POST /api/instagram/posts/<id> {when, caption, ...}` | change or try again (scheduled or failed only; 409 while it goes out) |
+| `POST /api/instagram/posts/<id>/cancel` | `{post}` (409 once it's out) |
+| `GET /api/instagram/posts`, `GET /api/instagram/results` | the last 62 days of posts; results grouped (by kind, format, month) |
+| `GET /public/media/<token>/<file>` | no sign-in: the files of a post being published, for Instagram to fetch (below) |
+
+**Scheduling.** The suggested slot (`posting.suggest`): the next day that keeps about `posts_per_week` posts a week
+(`STUDIO_POSTS_PER_WEEK`, else the content plan's, else 3): no other post within `7 // n` days (2 for 3 a week), the
+week (Mon–Sun) not full, at `STUDIO_POST_TIME` (19:30 Singapore). Caption limits: 2,200 characters, 30 hashtags,
+20 @mentions; at most 3 collaborators; Reels 3 s to 15 min; carousels 2 to `STUDIO_INSTAGRAM_CAROUSEL_MAX` (10) slides.
+
+**Publishing (a worker thread, `posting.run_forever`, every 15 s).** For a due post: the files are made in
+`ROOT/Posting/post_<id>/` (a Reel: the full-quality draft copied with the moov atom first when it already fits
+Instagram's spec, else transcoded to H.264 high / yuv420p / 23–60 fps / AAC 48 kHz / ≤ 25 Mbps / ≤ 300 MB; a carousel:
+each PNG slide as a JPEG, ≤ 1440 wide, ≤ 8 MB, 4:5 to 1.91:1). Instagram fetches them from
+`STUDIO_PUBLIC_URL` (default `STUDIO_DASHBOARD_URL`, https) `/public/media/<signed token>/<file>`: signed with the
+session key, two hours, only the files of that post and only while its state is `publishing`, range requests and
+HEAD served. Then `POST /<v>/<ig-user-id>/media` (Reels: `media_type=REELS, video_url, caption, share_to_feed,
+thumb_offset, collaborators`; carousels: one `image_url` + `is_carousel_item=true` container per slide, then
+`media_type=CAROUSEL, children, caption, collaborators`), poll `GET /<v>/<container>?fields=status_code,status`
+(5–30 s apart, up to 20 min) for `FINISHED`, `POST /<v>/<ig-user-id>/media_publish {creation_id}`, `GET /<v>/<media>
+?fields=permalink,timestamp,...`. **Never twice:** `publish_at` is saved before media_publish; a post with
+`publish_at` and no media id (a crash, a lost answer) is first looked for on the account (its caption among the posts
+since 15 minutes before; its container `PUBLISHED`) and only published if it isn't there. Telegram: "Posted: <title>
+<permalink>" or "Couldn't post <title>: <reason>" (not for a passing problem that will be retried). `STUDIO_POSTING=0`
+stops everything going out.
+
+**Results (`post_results.py`, from the publisher thread).** Once a day at `STUDIO_RESULTS_HOUR` (9, Singapore) every
+post of the last 90 days (also posts made from the phone) and the account; each Studio post again ~1 h after it went
+out. `GET /<v>/<media>/insights?metric=...`: Reels `views, reach, likes, comments, saved, shares, total_interactions,
+ig_reels_avg_watch_time, ig_reels_video_view_total_time`; carousels and photos `views, reach, likes, comments, saved,
+shares, total_interactions, follows, profile_visits` (a metric Instagram refuses is dropped and the rest asked again).
+Account: `GET /<v>/<ig-user-id>/insights?metric=reach,views,total_interactions&period=day&metric_type=total_value
+&since&until` for yesterday, and `followers_count`. Catalog: `ig_media` (every post seen), `post_results` (one row per
+post per Singapore day, `raw` keeps Instagram's own names), `account_results` (per day). Supabase `post_results`: the
+latest numbers per post (`media_id`, `post_id`, `idea_id`, `format` reel/carousel/image, `post_type`, `title`,
+`permalink`, `posted_at`, `day`, views, reach, likes, comments, saves, shares, interactions, avg_watch_ms,
+total_watch_ms, follows, profile_visits); `account_results` (day, followers, reach, views, interactions). Members read;
+only the Studio machine writes.
+
+**content_month()** now counts an idea that has a post (not cancelled) in the month the post went (`posted_at`) or
+goes (`scheduled_at`) out, and returns `posted` and `scheduled` (in total and per kind). Ideas without a post count as
+before.
+
+**Planner.** More > Posting calendar (`#/calendar`: this month and next, posted = the kind's colour, scheduled = its
+tint, failed = red; tap a post for what, when, its numbers and (owner) Change; Coming up / Posted lists; phones show
+one month at a time), More > Results (`#/results`), More > Instagram (`#/instagram`). Plan's home: Coming up starts
+with the next scheduled posts, Needs your call lists posts that couldn't go out (Try again), the month's slots tick off
+what was posted. An approved idea shows its post and Schedule / Change. The dialogs (Schedule, the Instagram box) are
+`cloud/planner/post-ui.js` + `post-ui.css`, shared with Review (served as `/static/post-ui.*`).

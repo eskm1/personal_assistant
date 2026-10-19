@@ -1,0 +1,46 @@
+/* The posting dialogs both halves share (post-ui.js): Schedule on Instagram and the Instagram box.
+   Tokens and controls come from theme.css. */
+.sp-modal { z-index: 40; }
+.sp-card { max-width: 560px; }
+.sp-body .sr-only, .sp-connect .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sp-draft { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; }
+.sp-draft > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sp-draft strong { overflow-wrap: anywhere; }
+.sp-thumb { width: 44px; height: 56px; flex: none; object-fit: cover; border-radius: var(--um-radius-sm); background: var(--um-paper-mid); border: 1px solid var(--um-line); }
+.sp-thumb.none { display: inline-block; }
+.sp-note { margin: 0 0 12px; padding: 8px 12px; border-radius: var(--um-radius-sm); background: var(--um-info-tint); color: var(--um-ink); font-size: var(--um-fs-ui); line-height: 1.45; }
+.sp-note.bad { background: var(--um-danger-tint); color: var(--um-danger); }
+.sp-form { display: flex; flex-direction: column; gap: 12px; }
+.sp-form fieldset { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.sp-form legend { padding: 0; margin-bottom: 6px; }
+.sp-when-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sp-when-row input[type=date] { min-width: 150px; }
+.sp-when-row input[type=time] { min-width: 110px; }
+.sp-when-note { margin: 0; min-height: 1.4em; }
+.sp-field { display: flex; flex-direction: column; gap: 6px; }
+.sp-field input { width: 100%; }
+.sp-count { margin: -6px 0 0; color: var(--ink-soft); }
+.sp-cover-pick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.sp-cover-video { width: 72px; height: 128px; object-fit: cover; border-radius: var(--um-radius-sm); background: #000; border: 1px solid var(--um-line); }
+.sp-range { flex: 1 1 160px; display: flex; }
+.sp-range input { width: 100%; }
+.sp-form .sp-check { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 8px; font-size: var(--um-fs-ui); text-align: left; }
+.sp-form .seg { align-self: flex-start; }
+.sp-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.sp-gap { flex: 1 1 auto; }
+.sp-connected { display: flex; flex-direction: column; gap: 8px; }
+.sp-status { display: flex; align-items: center; gap: 8px; margin: 0; }
+.sp-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--um-success); }
+.sp-dot.bad { background: var(--um-danger); }
+.sp-connect-form { display: flex; flex-direction: column; gap: 12px; }
+.sp-connect-btns { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.sp-sure { flex-basis: 100%; }
+.sp-modal .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.sp-modal .row.end { justify-content: flex-end; }
+@media (max-width: 600px) {
+  .sp-modal { padding: 0; place-items: stretch; }
+  .sp-card { max-width: none; max-height: none; height: 100%; border-radius: 0; border: 0; }
+  .sp-actions .btn { flex: 1 1 auto; }
+  .sp-gap { display: none; }
+  .sp-actions [data-sp-cancel] { order: 3; flex-basis: 100%; }
+}

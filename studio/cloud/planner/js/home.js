@@ -12,6 +12,7 @@ import {
 import { plan, loadProjects, fromFootage, openQuickAdd, openNewProject } from "./board.js";
 import { month, loadMonth } from "./month.js";
 import { topics, suggestClick, jobLine, whenLine } from "./topics.js";
+import { loadPosts, upcoming, failedPosts, openSchedule, canSchedule } from "./posting.js";
 
 export const home = { data: null, sig: "", seq: 0 };
 const root = () => $("#home");
@@ -60,7 +61,7 @@ export async function loadHome() {
   await loadProjects();
   const active = plan.projects.filter((p) => p.status === "active");
   const ids = active.map((p) => p.id);
-  const [ideas, arcs, days, phases, guides, reports, dismissed, api] = await Promise.all([
+  const [ideas, arcs, days, phases, guides, reports, dismissed, api, , posts] = await Promise.all([
     ideasFor(ids),
     ids.length ? sb.from("arcs").select("id,project_id,title").in("project_id", ids).then(must) : [],
     ids.length ? maybe(sb.from("site_days").select("id,project_id,day,phase_id").in("project_id", ids).gte("day", todayISO()).order("day").limit(40)) : [],
@@ -71,9 +72,10 @@ export async function loadHome() {
       .is("production", null).then((r) => (r.error ? 0 : r.count || 0)) : 0,
     reviewQueue(),
     loadMonth().catch(() => null),
+    loadPosts().catch(() => []),
   ]);
   if (seq !== home.seq) return;
-  home.data = { active, ideas, arcs, days, phases, guides, reports, dismissed, api };
+  home.data = { active, ideas, arcs, days, phases, guides, reports, dismissed, api, posts };
 }
 
 // ── What needs a decision, what's coming up ─────────────────────────────────
@@ -132,6 +134,8 @@ function needs(d) {
     ? d.api.failed.map((f) => ({ ...f, idea: byProduction.get(Number(f.id)) }))
     : d.ideas.filter((i) => prodStatus(i) === "failed").map((i) => ({ id: i.production.id, title: i.title, error: "", idea: i }));
   for (const f of failed) out.push({ type: "failed", key: `x${f.id}`, title: f.title, error: f.error, href: reviewHref(f.id, f.idea?.id) });
+  // Posts that couldn't go out to Instagram: Try again (Bryan).
+  for (const p of failedPosts(d.posts || [])) out.push({ type: "postfail", key: `pf${p.id}`, post: p });
   for (const g of d.guides) out.push({ type: "guide", key: `g${g.id}`, version: g.version });
   for (const r of d.reports) out.push({ type: "taste", key: `t${r.id}`, version: r.version });
   return out;
@@ -161,7 +165,9 @@ function comingUp(d) {
     .filter((x) => x.total && x.filmed && x.filmed < x.total)
     .sort((a, b) => b.filmed / b.total - a.filmed / a.total)
     .map((x) => ({ type: "filming", key: `m${x.i.id}`, idea: x.i, filmed: x.filmed, total: x.total }));
-  return [...days.slice(0, 3), ...edits.slice(0, 3), ...filming.slice(0, 3)];
+  // The next posts going out on Instagram.
+  const out = upcoming(d.posts || []).slice(0, 3).map((p) => ({ type: "post", key: `p${p.id}`, post: p }));
+  return [...out, ...days.slice(0, 3), ...edits.slice(0, 3), ...filming.slice(0, 3)];
 }
 
 // ── Rendering ───────────────────────────────────────────────────────────────
@@ -172,7 +178,7 @@ export function renderHome(force = false) {
   if (!d) { el.innerHTML = `<div class="hm-wrap"><p class="muted"><span class="spin"></span> Loading…</p></div>`; return; }
   const list = needs(d);
   const next = comingUp(d);
-  const sig = JSON.stringify([list, next, month.data, topics.job, topics.openQuestions, d.active.map((p) => [p.id, p.name]),
+  const sig = JSON.stringify([list, next, month.data, d.posts, topics.job, topics.openQuestions, d.active.map((p) => [p.id, p.name]),
     d.ideas.length, d.dismissed, [...topics.busy], state.laptop?.info?.topics?.last_suggested]);
   if (!force && sig === home.sig && el.firstChild) return;
   home.sig = sig;
@@ -247,6 +253,16 @@ function needHTML(x) {
       <a class="btn hm-act" href="#/project/${esc(x.pid)}/footage">Look through</a>
     </article>`;
   }
+  if (x.type === "postfail") {
+    const p = x.post;
+    return `<article class="hm-row" data-need="${esc(x.key)}">
+      <div class="hm-text"><span class="hm-label bad-text">${kindDot(p.post_type)}Couldn't post to Instagram</span>
+        <span class="hm-name">${esc(p.title)}</span>
+        ${p.error ? `<span class="hm-sub">${esc(p.error)}</span>` : ""}</div>
+      ${canSchedule() ? `<button type="button" class="btn hm-act" data-post-retry="${esc(p.production_id)}">Try again</button>`
+        : `<a class="btn hm-act" href="#/calendar">Open</a>`}
+    </article>`;
+  }
   if (x.type === "failed") {
     return `<article class="hm-row" data-need="${esc(x.key)}">
       <div class="hm-text"><span class="hm-label bad-text">Edit failed</span>
@@ -265,6 +281,16 @@ function needHTML(x) {
 
 function nextHTML(next) {
   const rows = next.map((x) => {
+    if (x.type === "post") {
+      const p = x.post, sp = window.StudioPost;
+      const day = sp?.dayOf(p.scheduled_at) || "";
+      const when = day === todayISO() ? "Today" : dayLabel(day, { weekday: true }).split(" ").slice(0, 2).join(" ");
+      return `<div class="hm-next" data-next="${esc(x.key)}">
+        <span class="hm-when${day === todayISO() ? " soon" : ""}">${esc(when)}<br>${esc(sp?.timeOf(p.scheduled_at) || "")}</span>
+        <a class="hm-next-text" href="#/calendar"><span class="hm-next-name">${esc(p.title)}</span>
+          <span class="hm-sub">${kindDot(p.post_type)} ${esc([p.state === "publishing" ? "Going out now" : "On Instagram", POST_TYPE[p.post_type], p.kind === "carousel" ? "Carousel" : "Reel"].filter(Boolean).join(" · "))}</span></a>
+      </div>`;
+    }
     if (x.type === "day") {
       const when = x.day === todayISO() ? "Today" : dayLabel(x.day, { weekday: true }).split(" ").slice(0, 2).join(" ");
       const what = ["Site day", x.phase || projectName(x.pid)].join(" · ");
@@ -287,7 +313,8 @@ function nextHTML(next) {
   }).join("");
   return `<section class="hm-card hm-coming" aria-labelledby="hm-next">
     <h2 class="hm-card-head" id="hm-next">Coming up</h2>
-    ${rows || `<p class="hm-empty">No site days, edits or filming coming up.</p>`}
+    ${rows || `<p class="hm-empty">No posts, site days, edits or filming coming up.</p>`}
+    <div class="hm-foot"><a class="btn-link" href="#/calendar">Posting calendar</a></div>
   </section>`;
 }
 
@@ -301,8 +328,9 @@ function monthHTML() {
   let slots = "", total = 0, filled = 0;
   const left = [];
   for (const k of POST_TYPES) {
-    const t = Number(kinds[k]?.target) || 0, p = Number(kinds[k]?.planned) || 0;
-    for (let i = 0; i < t; i++) slots += `<span class="hm-slot ${k}${i < p ? " on" : ""}" data-kind="${k}" title="${esc(POST_TYPE[k])}"></span>`;
+    const t = Number(kinds[k]?.target) || 0, p = Number(kinds[k]?.planned) || 0, out = Number(kinds[k]?.posted) || 0;
+    // Posted first (solid with a tick), then planned (solid), then still to plan (a tint).
+    for (let i = 0; i < t; i++) slots += `<span class="hm-slot ${k}${i < out ? " on posted" : i < p ? " on" : ""}" data-kind="${k}" title="${esc(`${POST_TYPE[k]}${i < out ? ": posted" : i < p ? ": planned" : ""}`)}"></span>`;
     total += t;
     filled += Math.min(p, t);
     if (t > p) left.push(`<a href="#/month/${k}">${esc(`${t - p} ${POST_TYPE[k]}`)}</a>`);
@@ -312,7 +340,7 @@ function monthHTML() {
   const foot = topics.missing ? "" : jobLine() || esc(whenLine());
   return `<section class="hm-card hm-month" aria-labelledby="hm-month">
     <div class="hm-month-head"><h2 id="hm-month">${esc(name)}</h2>
-      <span class="hm-sub">${esc(`${d.planned ?? 0} of ${d.target ?? total} posts planned`)}${d.ready ? ` · ${esc(d.ready)} ready` : ""}</span></div>
+      <span class="hm-sub">${esc(`${d.planned ?? 0} of ${d.target ?? total} posts planned`)}${d.posted ? ` · ${esc(d.posted)} posted` : ""}${d.scheduled ? ` · ${esc(d.scheduled)} scheduled` : ""}${!d.posted && !d.scheduled && d.ready ? ` · ${esc(d.ready)} ready` : ""}</span></div>
     ${total ? `<div class="hm-slots" role="img" aria-label="${esc(`${total} post slots, ${filled} planned`)}">${slots}</div>` : ""}
     <p class="hm-still">${total ? (left.length ? `Still to plan: ${left.join(", ")}.` : "Every slot this month is planned.") : `No monthly targets yet.`}</p>
     ${untyped ? `<p class="hm-sub">${esc(plural(untyped, "planned post"))} ${untyped === 1 ? "has" : "have"} no kind yet: Studio sorts ${untyped === 1 ? "it" : "them"} soon.</p>` : ""}
@@ -383,6 +411,7 @@ root().addEventListener("click", async (e) => {
     if (t.id === "home-new-idea") openQuickAdd({ from: "home" });
     else if (t.id === "home-new-project") openNewProject();
     else if (t.matches("[data-clear-dismissed]")) await clearDismissed();
+    else if (t.matches("[data-post-retry]")) openSchedule(Number(t.dataset.postRetry));
     else if (t.matches(".hm-slot")) location.hash = `#/month/${t.dataset.kind}`;
     else if (t.matches("[data-sugg-act], [data-suggest-topics]")) {
       await suggestClick(t, () => renderHome(true));

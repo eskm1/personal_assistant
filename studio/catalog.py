@@ -22,6 +22,11 @@ The studio catalogue (SQLite), shared by the worker, the dashboard and the edito
   clips.ideas_run points at the run that read a clip, so it's read once. The
   suggested topics' runs are recorded here too (topics.py, trigger "topics:...").
 
+- posts / ig_media / post_results / account_results: Instagram (posting.py, post_results.py).
+  A post is an approved draft Bryan scheduled (scheduled -> publishing -> posted, or failed /
+  cancelled); ig_media every post on the account Studio reads results for; post_results their
+  numbers per day; account_results the account's day.
+
 The review contract between the dashboard and the editor:
   ready --(request changes)--> revising --(editor re-renders, version + 1,
   marks that version's notes addressed)--> ready --(approve)--> approved
@@ -214,6 +219,80 @@ CREATE TABLE IF NOT EXISTS idea_runs (       -- "ideas from new footage" (footag
     finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS posts (           -- an approved draft scheduled for Instagram (posting.py)
+    id            INTEGER PRIMARY KEY,
+    production_id INTEGER NOT NULL,
+    idea_remote   INTEGER,                 -- the planner idea it was made from, if any
+    kind          TEXT NOT NULL,           -- reel | carousel
+    title         TEXT,
+    caption       TEXT,
+    post_type     TEXT,                    -- the kind of post (knowhow, ideas, onsite, finished, offer), if known
+    version       INTEGER,                 -- the draft version that goes out
+    scheduled_at  TEXT NOT NULL,           -- UTC; "Post now" = the moment it was asked
+    cover_ms      INTEGER,                 -- a Reel's cover: this moment of the video (0 = the first frame)
+    share_to_feed INTEGER NOT NULL DEFAULT 1,
+    collaborators TEXT,                    -- JSON: Instagram usernames invited as collaborators
+    state         TEXT NOT NULL,           -- scheduled | publishing | posted | failed | cancelled
+    stage         TEXT,                    -- while publishing: preparing | uploading | processing | publishing
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    next_try_at   TEXT,                    -- after a passing problem, when it tries again
+    error         TEXT,                    -- why it failed or is waiting, in plain words
+    problem       TEXT,                    -- token | limit | spec | media | transient | other
+    containers    TEXT,                    -- JSON: {parent, children: [...]} Instagram's containers for it
+    publish_at    TEXT,                    -- when media_publish was first sent (never posts twice after a crash)
+    media_id      TEXT,
+    permalink     TEXT,
+    posted_at     TEXT,
+    created_by    TEXT,
+    cloud_hash    TEXT,                    -- what the planner was last sent (cloud_sync)
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS posts_state ON posts (state, scheduled_at);
+CREATE INDEX IF NOT EXISTS posts_production ON posts (production_id);
+
+CREATE TABLE IF NOT EXISTS ig_media (        -- every post on the account Studio reads results for (post_results.py)
+    media_id      TEXT PRIMARY KEY,
+    post_id       INTEGER,                 -- Studio's post, when Studio posted it
+    media_type    TEXT,                    -- VIDEO | CAROUSEL_ALBUM | IMAGE (Instagram's words)
+    product_type  TEXT,                    -- REELS | FEED | ...
+    permalink     TEXT,
+    caption       TEXT,
+    posted_at     TEXT,
+    seen_at       TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS post_results (    -- one post's numbers, as read on one day (Singapore)
+    media_id       TEXT NOT NULL,
+    day            TEXT NOT NULL,
+    post_id        INTEGER,
+    views          INTEGER,
+    reach          INTEGER,
+    likes          INTEGER,
+    comments       INTEGER,
+    saves          INTEGER,
+    shares         INTEGER,
+    interactions   INTEGER,
+    avg_watch_ms   INTEGER,                -- Reels: average time a view lasted
+    total_watch_ms INTEGER,                -- Reels: all viewing time, replays included
+    follows        INTEGER,
+    profile_visits INTEGER,
+    raw            TEXT,                   -- JSON: every metric Instagram answered, by its own name
+    pulled_at      TEXT NOT NULL,
+    PRIMARY KEY (media_id, day)
+);
+
+CREATE TABLE IF NOT EXISTS account_results ( -- the account, one row per day (Singapore)
+    day           TEXT PRIMARY KEY,
+    followers     INTEGER,
+    reach         INTEGER,
+    views         INTEGER,
+    interactions  INTEGER,
+    raw           TEXT,
+    pulled_at     TEXT NOT NULL,
+    cloud_hash    TEXT
+);
+
 CREATE TABLE IF NOT EXISTS votes (
     idea_id     INTEGER NOT NULL,
     user_id     INTEGER NOT NULL,
@@ -291,6 +370,7 @@ _ADDED_COLUMNS = {
     "projects": {"remote_id": "INTEGER"},
     "arcs": {"remote_id": "INTEGER"},
     "takes": {"remote_id": "INTEGER"},
+    "post_results": {"cloud_hash": "TEXT"},
     # 1 = this email is proven to be theirs in the planner (they signed in with the planner's
     # password), so the dashboard may open the planner for them (planner_site.py).
     "users": {"planner_ok": "INTEGER"},
