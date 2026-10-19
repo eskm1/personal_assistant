@@ -1,9 +1,10 @@
-// One planned post: the storyboard (left) and its plan (right). Ported from the
-// laptop dashboard's planned-idea viewer. Stills come from the private bucket.
+// One planned post: its shots (or a carousel's slides) as the main column, each with a small still
+// of its footage, and the post itself (title, kind, your call, hook, caption, Make this) beside them.
+// On a phone it's one page: the post, its shots, then the rest. Stills come from the private bucket.
 import {
   $, cfg, BRAND, ACCOUNTS, oneBrand, FORMAT, PLAN_FORMATS, FRAMING, KIND, CAMERA, SHOT_STATE, DECISION, PRODUCTION,
   esc, sb, must, invoke, toast, options, ago, mmss, shortDate, plural, typingIn, keepDrafts, isOwner, ownerName,
-  nameOf, state, pbarHTML, prepShots, progress, bestTake, takeRetake, takeFlags, retakeBadge, signPaths, stillUrl,
+  nameOf, state, prepShots, progress, bestTake, takeRetake, retakeBadge, signPaths, stillUrl,
   takePaths, jobView, jobActive, kickDevelop, laptopWait, httpUrl, httpsUrl, openModal, closeModal, syncInert,
   missingTable, dayLabel, folderLineHTML, pageMode, PHONE, POST_TYPES, POST_TYPE, KIND_INFO, kindDot, sentence,
   isCarousel, REEL_FORMATS, schema,
@@ -11,7 +12,7 @@ import {
 import { plan } from "./board.js";
 import { uploadButtonsHTML, rememberShot } from "./upload.js";
 import {
-  prepSlides, slidePaths, slidesStoryHTML, slidesFieldHTML, writeSlidesHTML, saveSlideField, slidesClick, slidesLocked,
+  prepSlides, slidePaths, slidesMainHTML, writeSlidesHTML, saveSlideField, slidesClick, slidesLocked,
   conceptsMakeLine,
 } from "./slides.js";
 
@@ -20,7 +21,7 @@ const IDEA_SEL = "*,shots(*,takes(*,clips(*))),"
   + "votes(user_id,vote),comments(id,author,author_name,body,created_at)";
 const JOB_COLS = "id,kind,runner,project_id,idea_id,state,result,error,payload,created_at,started_at,updated_at";
 
-export const view = { id: null, d: null, storySig: "", panelSig: "", pending: false };
+export const view = { id: null, d: null, panelSig: "", pending: false };
 const panel = () => $("#panel");
 export const viewerOpen = () => !$("#viewer").hidden;
 
@@ -41,9 +42,9 @@ export async function openIdea(id, cameFrom = null) {
   view.id = id;
   if (fresh) {
     view.d = null;
-    view.storySig = "";
     view.panelSig = "";
-    $("#player-frame").innerHTML = `<div class="placeholder"><span class="spin"></span> Loading the storyboard…</div>`;
+    $("#player-frame").hidden = false;
+    $("#player-frame").innerHTML = `<div class="placeholder"><span class="spin"></span> Loading the plan…</div>`;
     panel().innerHTML = "";
   }
   const opening = $("#viewer").hidden;
@@ -135,6 +136,7 @@ export async function loadIdea(force = false) {
   }
   if (!idea) {
     view.d = null;
+    $("#player-frame").hidden = false;
     $("#player-frame").innerHTML = `<div class="placeholder">This idea is gone.</div>`;
     panel().innerHTML = `<p class="muted">Someone deleted it, or it never existed.</p><p><a class="btn" href="#/">Back to the board</a></p>`;
     return;
@@ -189,146 +191,193 @@ export async function loadIdea(force = false) {
   render(force);
 }
 
+// Two columns (a computer, a wide tablet): the shots (or a carousel's slides) are the page, and the
+// post itself sits beside them. Narrower, it's one column with the shots in the middle of the plan.
+const WIDE = window.matchMedia("(min-width: 861px)");
+const twoCol = () => WIDE.matches;
+const inner = () => $("#viewer .viewer-inner");
+WIDE.addEventListener("change", () => { if (viewerOpen() && view.d) render(true); });
+
 // Re-render what changed; never under someone's unsaved typing.
 function render(force = false) {
   const d = view.d;
   if (!d) return;
   const jobs = Object.fromEntries(Object.entries(d.jobs).map(([k, j]) => [k, jobView(j)]));
-  const shotsSig = JSON.stringify([d.shots, d.title, d.format, d.slides, jobs.develop?.state, d.shots.map((s) => s.takes.map((t) => stillUrl(...takePaths(t)))),
-    d.slides.map((x) => stillUrl(x.image?.thumb_path))]);
-  if (force || shotsSig !== view.storySig) {
-    if (isCarousel(d)) {
-      const scroll = $("#player-frame").scrollTop;
-      $("#player-frame").innerHTML = slidesStoryHTML(d);
-      $("#player-frame").scrollTop = scroll;
-    } else renderStoryboard();
-    view.storySig = shotsSig;
-  }
+  // The stills' addresses too: they're signed again now and then.
   const sig = JSON.stringify([d, jobs, state.laptop?.last_seen ? Math.floor(Date.parse(state.laptop.last_seen) / 60e3) : 0,
-    state.laptop?.info?.concepts?.on === true]);
+    state.laptop?.info?.concepts?.on === true, twoCol(),
+    d.shots.map((s) => s.takes.map((t) => stillUrl(...takePaths(t)))), d.slides.map((x) => stillUrl(x.image?.thumb_path))]);
   if (!force && sig === view.panelSig) return;
-  if (!force && typingIn(panel())) { view.pending = true; return; }
+  if (!force && typingIn(inner())) { view.pending = true; return; }
   renderPanel();
   view.panelSig = sig;
   view.pending = false;
 }
 
-// ── Storyboard ──────────────────────────────────────────────────────────────
-
-function frameHTML(s, i) {
-  const take = bestTake(s);
-  const thumb = take ? stillUrl(...takePaths(take)) : "";
-  const tags = [CAMERA[s.camera] && s.camera !== "any" ? CAMERA[s.camera] : "", FRAMING[s.framing] || ""].filter(Boolean).join(" · ");
-  const media = thumb
-    ? `<button class="sb-media has-take" data-goto-shot="${esc(s.id)}" aria-label="Shot ${i + 1}: ${esc(s.description)}. Go to its details">
-        <img src="${esc(thumb)}" alt="" loading="lazy"></button>`
-    : `<button class="sb-media sb-placeholder" data-goto-shot="${esc(s.id)}" aria-label="Shot ${i + 1}: ${esc(s.description)}. Edit it">
-        <span class="sb-camera">${esc(CAMERA[s.camera] || CAMERA.any)}</span>
-        <span class="sb-framing">${esc((FRAMING[s.framing] || "Shot").toUpperCase())}</span>
-        ${s.kind ? `<span class="sb-kind">${esc(KIND[s.kind] || s.kind)}</span>` : ""}
-        <span class="sb-desc">${esc(s.description)}</span>
-        ${s.on_screen ? `<span class="sb-caption">${esc(s.on_screen)}</span>` : ""}
-        ${s.line ? `<span class="sb-line">“${esc(s.line)}”</span>` : ""}
-      </button>`;
-  const flags = s.state === "retake" ? takeFlags(take) : [];
-  return `<article class="sb-frame st-${esc(s.state)}" id="frame-${esc(s.id)}">
-    <div class="sb-card">${media}
-      <span class="sb-num">${i + 1}</span>
-      ${s.seconds ? `<span class="sb-secs">${esc(Math.round(s.seconds * 10) / 10)}s</span>` : ""}
-      <span class="sb-badge st-${esc(s.state)}">${esc(SHOT_STATE[s.state] || s.state)}</span>
-    </div>
-    ${thumb ? `<p class="sb-under">${tags ? `<strong>${esc(tags)}</strong> ` : ""}${esc(s.description)}</p>` : ""}
-    ${flags.length ? `<ul class="sb-flags">${flags.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
-  </article>`;
-}
-
-function renderStoryboard() {
-  const d = view.d;
-  const p = d.progress;
-  const secs = d.shots.reduce((sum, s) => sum + (Number(s.seconds) || 0), 0);
-  const dev = jobView(d.jobs.develop);
-  const drafting = jobActive(dev);
-  const scroll = $("#player-frame").scrollTop;
-  $("#player-frame").innerHTML = `<div class="storyboard">
-    <div class="sb-head"><h2 id="sb-title">Storyboard</h2>
-      <span class="muted">${plural(d.shots.length, "shot")}${secs ? ` · about ${Math.round(secs)}s` : ""}</span>
-      ${p.total ? `<span class="sb-progress">${pbarHTML(p)} ${esc(p.got)}/${esc(p.total)} got</span>` : ""}
-      ${drafting && d.shots.length ? `<span class="sb-drafting"><span class="spin"></span> Claude is reworking it…</span>` : ""}</div>
-    ${d.shots.length ? `<div class="sb-strip">${d.shots.map(frameHTML).join("")}</div>`
-      : drafting ? `<div class="sb-empty"><p><span class="spin"></span> The storyboard is being drafted…</p><p class="muted">Claude is writing the shots. About a minute; it appears here by itself.</p></div>`
-        : `<div class="sb-empty"><p>No shots planned yet.</p><p class="muted">Add shots on the right, or use Refine with Claude to storyboard it.</p></div>`}
-  </div>`;
-  $("#player-frame").scrollTop = scroll;
-}
-
-$("#player-frame").addEventListener("click", (e) => {
+// The numbers along the top of the shots, and a slide's preview: go to that shot or slide.
+inner().addEventListener("click", (e) => {
   const go = e.target.closest("[data-goto-shot], [data-goto-slide]");
   if (!go) return;
   const row = go.dataset.gotoSlide ? document.getElementById(`slide-${go.dataset.gotoSlide}`)
     : document.getElementById(`shot-${Number(go.dataset.gotoShot)}`);
   if (!row) return;
-  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (!row.contains(go)) row.scrollIntoView({ behavior: "smooth", block: "center" });
   row.classList.remove("flash");
   void row.offsetWidth;
   row.classList.add("flash");
-  row.querySelector("textarea")?.focus({ preventScroll: true });
+  if (go.dataset.gotoSlide) row.querySelector("input, textarea")?.focus({ preventScroll: true });
 });
 
-// ── Panel ───────────────────────────────────────────────────────────────────
+// ── Quality notes on a take ─────────────────────────────────────────────────
 
-function takeHTML(t) {
+// The moment a note is about, from its words ("~145-155s", "2:25–2:35", "at 2:25", "around 150s"),
+// as [from, to] seconds; null when it's about the whole clip (a quiet voice, noise, the resolution).
+const SPANS = [/(\d{1,3}:\d{2})\s*(?:-|–|—|to)\s*(\d{1,3}:\d{2})/,
+  /(\d+(?:\.\d+)?)\s*s?\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)\s*(?:s|secs?|seconds)\b/i];
+const POINTS = [/\b(\d{1,3}:\d{2})\b/, /(?:~\s*|\b(?:at|around|near|about)\s+~?)(\d+(?:\.\d+)?)\s*(?:s|secs?|seconds)\b/i];
+const toSecs = (x) => (x.includes(":") ? Number(x.split(":")[0]) * 60 + Number(x.split(":")[1]) : Number(x));
+export function noteSpan(text) {
+  for (const re of SPANS) {
+    const m = re.exec(text);
+    if (m && toSecs(m[2]) >= toSecs(m[1])) return [toSecs(m[1]), toSecs(m[2])];
+  }
+  for (const re of POINTS) {
+    const m = re.exec(text);
+    if (m) return [toSecs(m[1]), toSecs(m[1])];
+  }
+  return null;
+}
+const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
+const spanText = ([a, b]) => (a === b ? mmss(a) : `${mmss(a)}–${mmss(b)}`);
+
+// Only for a clip that needs a retake ("usable clips are never flagged"): a note about one moment
+// when this take covers it (a second either side), the notes about the whole clip once, folded.
+function takeNotesHTML(t) {
+  if (!takeRetake(t)) return "";
+  const flags = (Array.isArray(t.clips?.flags) ? t.clips.flags : [])
+    .map((f) => (typeof f === "string" ? { text: f } : f)).filter((f) => f?.text);
+  const from = Number(t.start) || 0;
+  const to = t.end != null ? Number(t.end) : Number(t.clips?.duration) || Infinity;
+  const here = [], whole = [], elsewhere = [];
+  for (const f of flags) {
+    const span = noteSpan(f.text);
+    if (!span) whole.push(f);
+    else if (span[0] - 1 <= to && span[1] + 1 >= from) here.push(f);
+    else elsewhere.push(span);
+  }
+  let html = here.map((f) => `<p class="take-note">${esc(cap(f.text))}${f.tip ? ` <span class="muted">${esc(f.tip)}</span>` : ""}</p>`).join("");
+  if (whole.length) {
+    html += `<details class="take-notes"><summary>Whole clip: ${esc(whole.map((f) => f.text).join(" · "))}</summary>
+      <ul>${whole.map((f) => `<li>${esc(cap(f.text))}${f.tip ? `. <span class="muted">${esc(f.tip)}</span>` : ""}</li>`).join("")}</ul></details>`;
+  }
+  if (!html && elsewhere.length) {
+    html = `<p class="muted small">The problem in this clip is at ${esc(elsewhere.map(spanText).join(", "))}, not in this take.</p>`;
+  }
+  return html;
+}
+
+// ── The shots ───────────────────────────────────────────────────────────────
+
+function takeHTML(t, many) {
   const thumb = stillUrl(...takePaths(t));
-  const flags = takeRetake(t) ? takeFlags(t) : [];
   const c = t.clips || {};
-  return `<div class="take">
-    <span class="take-thumb">${thumb ? `<img src="${esc(thumb)}" alt="">` : `<span class="take-none" aria-hidden="true">No still</span>`}</span>
+  const title = c.title || `Clip ${t.clip_id}`;
+  const how = t.note ? esc(t.note) : t.source === "auto" ? "Matched automatically"
+    : `Added by hand${t.created_by && nameOf(t.created_by) ? ` by ${esc(nameOf(t.created_by))}` : ""}`;
+  return `<div class="take${takeRetake(t) ? " retake" : ""}">
+    ${many ? `<button type="button" class="take-thumb" data-take="${esc(t.id)}" data-take-shot="${esc(t.shot_id)}" aria-label="See the footage: ${esc(title)}">${thumb ? `<img src="${esc(thumb)}" alt="">` : `<span class="take-none" aria-hidden="true">No still</span>`}</button>` : ""}
     <div class="take-info">
-      <div class="row tight">${retakeBadge(t.clips)}<span class="muted small">${t.note ? esc(t.note) : t.source === "auto" ? "Matched automatically" : `Added by hand${t.created_by && nameOf(t.created_by) ? ` by ${esc(nameOf(t.created_by))}` : ""}`}</span></div>
-      <div class="small">${esc(c.title || `Clip ${t.clip_id}`)} · ${t.start != null ? mmss(t.start) : "0:00"}–${t.end != null ? mmss(t.end) : "end"}</div>
-      ${flags.length ? `<ul class="take-flags">${flags.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
+      <div class="take-line"><span class="take-title">${esc(title)}</span>
+        <span class="take-time">${t.start != null ? mmss(t.start) : "0:00"}–${t.end != null ? mmss(t.end) : "end"}</span>${retakeBadge(c)}</div>
+      <span class="muted small">${how}</span>
+      ${takeNotesHTML(t)}
     </div>
-    <button class="btn small ghost" data-take="${esc(t.id)}" data-take-shot="${esc(t.shot_id)}" aria-label="Move take ${esc(c.title || "")} to another shot">Move</button>
-    <button class="icon-btn danger" data-take-remove="${esc(t.id)}" title="Remove this take" aria-label="Remove take ${esc(c.title || "")}">×</button>
+    <span class="take-btns">
+      <button class="btn small ghost" data-take="${esc(t.id)}" data-take-shot="${esc(t.shot_id)}" aria-label="Move take ${esc(c.title || "")} to another shot">Move</button>
+      <button class="icon-btn danger" data-take-remove="${esc(t.id)}" title="Remove this take" aria-label="Remove take ${esc(c.title || "")}">×</button>
+    </span>
   </div>`;
 }
 
+// The shot's best take as a small still on the left (tap: see the footage, move or remove it).
+function shotThumbHTML(s, i) {
+  const take = bestTake(s);
+  if (!take) {
+    return `<span class="shot-thumb empty" aria-hidden="true"><span>${esc(s.state === "filmed" ? "Filmed" : FRAMING[s.framing] || "Shot")}</span>
+      <span class="shot-thumb-sub">${s.state === "filmed" ? "Not uploaded yet" : "No footage yet"}</span></span>`;
+  }
+  const thumb = stillUrl(...takePaths(take));
+  return `<button type="button" class="shot-thumb" data-take="${esc(take.id)}" data-take-shot="${esc(s.id)}" aria-label="Shot ${i + 1}: see its footage">
+    ${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : `<span class="take-none">No still yet</span>`}</button>`;
+}
+
 function shotRowHTML(s, i, n) {
-  const field = (key, label, ph, max) => `<label class="inline-field"><span>${label}</span><input data-shot-field="${key}" maxlength="${max}" value="${esc(s[key])}" data-orig="${esc(s[key])}" placeholder="${esc(ph)}"></label>`;
   const d = view.d;
-  const place = d.phases ? `<div class="shot-place">
-      <label class="inline-field"><span>Phase</span><select data-shot-field="phase_id" aria-label="Phase of shot ${i + 1}"><option value="">No phase</option>${d.phases.map((p) => `<option value="${esc(p.id)}" ${p.id === s.phase_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
-      <label class="inline-field"><span>Day</span><select data-shot-field="shoot_on" aria-label="Site day for shot ${i + 1}"><option value="">Any day in its phase</option>${(d.days || []).map((x) => `<option value="${esc(x.day)}" ${x.day === s.shoot_on ? "selected" : ""}>${esc(dayLabel(x.day))}</option>`).join("")}
-        ${s.shoot_on && !(d.days || []).some((x) => x.day === s.shoot_on) ? `<option value="${esc(s.shoot_on)}" selected>${esc(dayLabel(s.shoot_on))} (not a site day)</option>` : ""}</select></label>
-    </div>` : "";
+  const line = (key, label, ph, max) => `<label class="inline-field"><span>${label}</span><input data-shot-field="${key}" maxlength="${max}" value="${esc(s[key])}" data-orig="${esc(s[key])}" placeholder="${esc(ph)}"></label>`;
+  const pick = (cls, label, control) => `<label class="pick-field ${cls}"><span>${label}</span>${control}</label>`;
+  const days = d.days || [];
+  const place = d.phases ? pick("f-phase", "Phase", `<select data-shot-field="phase_id" aria-label="Phase of shot ${i + 1}"><option value="">No phase</option>${d.phases.map((p) => `<option value="${esc(p.id)}" ${p.id === s.phase_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>`)
+    + pick("f-day", "Day", `<select data-shot-field="shoot_on" aria-label="Site day for shot ${i + 1}"><option value="">Any day in its phase</option>${days.map((x) => `<option value="${esc(x.day)}" ${x.day === s.shoot_on ? "selected" : ""}>${esc(dayLabel(x.day))}</option>`).join("")}
+        ${s.shoot_on && !days.some((x) => x.day === s.shoot_on) ? `<option value="${esc(s.shoot_on)}" selected>${esc(dayLabel(s.shoot_on))} (not a site day)</option>` : ""}</select>`) : "";
   return `<li class="shot-row st-${esc(s.state)}" id="shot-${esc(s.id)}" data-shot="${esc(s.id)}" data-drop-shot="${esc(s.id)}" data-saved-scope>
-    <div class="shot-top">
-      <span class="shot-num" aria-hidden="true">${i + 1}</span>
-      <label class="filmed-toggle" title="Tick when it's been filmed on site"><input type="checkbox" data-shot-filmed ${s.filmed_at ? "checked" : ""} aria-label="Shot ${i + 1} filmed"><span>Filmed</span></label>
-      <span class="badge st-${esc(s.state)}">${esc(SHOT_STATE[s.state] || s.state)}</span>
-      <span class="saved" aria-live="polite"></span>
-      <span class="shot-tools">
-        <button class="icon-btn" data-shot-move="-1" ${i === 0 ? "disabled" : ""} title="Move up" aria-label="Move shot ${i + 1} up">↑</button>
-        <button class="icon-btn" data-shot-move="1" ${i === n - 1 ? "disabled" : ""} title="Move down" aria-label="Move shot ${i + 1} down">↓</button>
-        <button class="icon-btn danger" data-shot-delete title="Delete shot" aria-label="Delete shot ${i + 1}">×</button>
-      </span>
+    <div class="shot-media">${shotThumbHTML(s, i)}</div>
+    <div class="shot-body">
+      <div class="shot-top">
+        <span class="shot-num" aria-hidden="true">${i + 1}</span>
+        <label class="filmed-toggle" title="Tick when it's been filmed on site"><input type="checkbox" data-shot-filmed ${s.filmed_at ? "checked" : ""} aria-label="Shot ${i + 1} filmed"><span>Filmed</span></label>
+        <span class="badge st-${esc(s.state)}">${esc(SHOT_STATE[s.state] || s.state)}</span>
+        ${s.filmed_at ? `<span class="muted small shot-ticked">Ticked${s.filmed_by && nameOf(s.filmed_by) ? ` by ${esc(nameOf(s.filmed_by))}` : ""} ${esc(ago(s.filmed_at))}</span>` : ""}
+        <span class="saved" aria-live="polite"></span>
+        <span class="shot-tools">
+          <button class="icon-btn" data-shot-move="-1" ${i === 0 ? "disabled" : ""} title="Move up" aria-label="Move shot ${i + 1} up">↑</button>
+          <button class="icon-btn" data-shot-move="1" ${i === n - 1 ? "disabled" : ""} title="Move down" aria-label="Move shot ${i + 1} down">↓</button>
+          <button class="icon-btn danger" data-shot-delete title="Delete shot" aria-label="Delete shot ${i + 1}">×</button>
+        </span>
+      </div>
+      <textarea class="shot-desc" data-shot-field="description" rows="2" maxlength="1000" data-orig="${esc(s.description)}" aria-label="Shot ${i + 1}: what the camera sees">${esc(s.description)}</textarea>
+      <div class="shot-fields">
+        ${pick("f-camera", "Camera", `<select data-shot-field="camera" aria-label="Camera">${options(Object.keys(CAMERA), CAMERA, s.camera, "Not set")}</select>`)}
+        ${pick("f-framing", "Framing", `<select data-shot-field="framing" aria-label="Framing">${options(Object.keys(FRAMING), FRAMING, s.framing, "Not set")}</select>`)}
+        ${pick("f-kind", "Kind of shot", `<select data-shot-field="kind" aria-label="Kind of shot">${options(Object.keys(KIND), KIND, s.kind, "Not set")}</select>`)}
+        ${pick("f-secs", "Length", `<span class="num-field"><input type="number" min="0.5" max="120" step="0.5" data-shot-field="seconds" value="${esc(s.seconds ?? "")}" data-orig="${esc(s.seconds ?? "")}" aria-label="Seconds in the cut"> s</span>`)}
+        ${place}
+      </div>
+      <div class="shot-lines">
+        ${line("line", "Says", "Spoken line (optional)", 1000)}
+        ${line("on_screen", "On screen", "Text on screen (optional)", 300)}
+        ${line("why", "Why", "What this shot does for the story", 500)}
+      </div>
+      <div class="takes">${s.takes.map((t) => takeHTML(t, s.takes.length > 1)).join("")}
+        <div class="row tight take-add"><button class="btn small" data-attach>${s.takes.length ? "Attach more footage" : "Attach footage"}</button>
+          ${uploadButtonsHTML(s.id, `shot ${i + 1}`)}</div></div>
     </div>
-    ${s.filmed_at ? `<p class="muted small">Ticked${s.filmed_by && nameOf(s.filmed_by) ? ` by ${esc(nameOf(s.filmed_by))}` : ""} ${esc(ago(s.filmed_at))}</p>` : ""}
-    <textarea data-shot-field="description" rows="2" maxlength="1000" data-orig="${esc(s.description)}" aria-label="Shot ${i + 1}: what the camera sees">${esc(s.description)}</textarea>
-    <div class="shot-selects">
-      <select data-shot-field="camera" aria-label="Camera">${options(Object.keys(CAMERA), CAMERA, s.camera, "Camera…")}</select>
-      <select data-shot-field="framing" aria-label="Framing">${options(Object.keys(FRAMING), FRAMING, s.framing, "Framing…")}</select>
-      <select data-shot-field="kind" aria-label="Kind of shot">${options(Object.keys(KIND), KIND, s.kind, "Kind…")}</select>
-      <span class="num-field"><input type="number" min="0.5" max="120" step="0.5" data-shot-field="seconds" value="${esc(s.seconds ?? "")}" data-orig="${esc(s.seconds ?? "")}" aria-label="Seconds in the cut"> s</span>
-    </div>
-    ${field("line", "Says", "Spoken line (optional)", 1000)}
-    ${field("on_screen", "On screen", "Text on screen (optional)", 300)}
-    ${field("why", "Why", "What this shot does for the story", 500)}
-    ${place}
-    <div class="takes">${s.takes.map(takeHTML).join("")}
-      <div class="row tight"><button class="btn small" data-attach>${s.takes.length ? "Attach more footage" : "Attach footage"}</button>
-        ${uploadButtonsHTML(s.id, `shot ${i + 1}`)}</div></div>
   </li>`;
 }
+
+// The shots: the main column on a computer, the middle of the plan on a phone.
+function shotsMainHTML(d) {
+  const p = d.progress;
+  const n = d.shots.length;
+  const secs = d.shots.reduce((sum, s) => sum + (Number(s.seconds) || 0), 0);
+  const drafting = jobActive(jobView(d.jobs.develop));
+  const dots = n ? `<ol class="shot-dots" aria-label="The shots at a glance">${d.shots.map((s, i) => {
+    const what = `Shot ${i + 1}: ${SHOT_STATE[s.state] || s.state}`;
+    return `<li><button type="button" class="shot-dot st-${esc(s.state)}" data-goto-shot="${esc(s.id)}" title="${esc(what)}" aria-label="${esc(what)}. Go to it">${i + 1}</button></li>`;
+  }).join("")}</ol>` : "";
+  const sum = [n ? `${p.got}/${p.total} got` : "", secs ? `about ${Math.round(secs)}s` : ""].filter(Boolean).join(" · ");
+  return `<section class="idea-main" aria-labelledby="sb-title">
+    <div class="main-head"><h2 id="sb-title">Shots</h2>${dots}
+      ${sum ? `<span class="main-sum">${esc(sum)}${p.retake ? ` · <span class="bad-text">${esc(p.retake)} to retake</span>` : ""}</span>` : ""}
+      ${drafting && n ? `<span class="sb-drafting"><span class="spin"></span> Claude is reworking it…</span>` : ""}</div>
+    ${n ? `<ol class="shot-list">${d.shots.map((s, i) => shotRowHTML(s, i, n)).join("")}</ol>`
+      : drafting ? `<div class="sb-empty"><p><span class="spin"></span> The storyboard is being drafted…</p><p class="muted">Claude is writing the shots. About a minute; they appear here by themselves.</p></div>`
+        : `<div class="sb-empty"><p>No shots planned yet.</p><p class="muted">Add one below, or use Refine with Claude to storyboard it.</p></div>`}
+    <div class="row add-shot"><label class="sr-only" for="shot-new">New shot</label><input id="shot-new" data-draft class="grow" maxlength="1000" placeholder="Describe a new shot, e.g. Close-up: grout going into the corner">
+      <button class="btn" id="shot-add">+ Add shot</button></div>
+  </section>`;
+}
+
+// ── The post ────────────────────────────────────────────────────────────────
 
 function musicHTML(d) {
   const m = d.music || {};
@@ -470,24 +519,22 @@ function renderPanel() {
           : `<button class="btn small ghost danger" data-plan-decision="dismissed" title="Take it off the board">Dismiss…</button>`}</div>`
     : `<p><span class="chip ${esc(d.decision)}">${esc(DECISION[d.decision] || d.decision)}</span> <span class="muted small">${esc(ownerName())} decides Go or Park. Vote to tell him what you think.</span></p>`;
   const by = nameOf(d.created_by);
-  const scroll = panel().scrollTop;
-  keepDrafts(panel(), () => {
-    panel().innerHTML = `
+  const top = `
       ${dismissed ? `<div class="box bad-box"><p><strong>Dismissed.</strong> It's off the board${owner ? "" : `; ${esc(ownerName())} can put it back`}.</p></div>` : ""}
       ${suggestedHTML(d)}
       <div class="field" data-saved-scope>
         <h3><label for="f-title">Planned post</label> <span class="saved" aria-live="polite"></span></h3>
-        <input class="title-input" id="f-title" data-idea-field="title" maxlength="300" value="${esc(d.title)}" data-orig="${esc(d.title)}">
+        <textarea class="title-input" id="f-title" data-idea-field="title" rows="1" maxlength="300" data-orig="${esc(d.title)}">${esc(d.title)}</textarea>
         <p class="muted small mt6">${by ? `Added by ${esc(by)} · ` : ""}updated ${esc(ago(d.updated_at))} · Changes save when you click away.</p>
         ${folderLineHTML(plan.projects.find((p) => p.id === d.project_id), d)}
       </div>
       <div class="meta-grid" data-saved-scope>
-        <label>Arc<select data-idea-field="arc_id">${`<option value="">Unsorted</option>` + d.arcs.map((a) => `<option value="${esc(a.id)}" ${a.id === d.arc_id ? "selected" : ""}>${esc(a.title)}</option>`).join("")}</select></label>
-        ${oneBrand ? "" : `<label>Account<select data-idea-field="brand">${options(ACCOUNTS, BRAND, d.brand)}</select></label>`}
-        ${"post_type" in d ? `<label class="kind-pick">Kind of post<span class="kind-select">${kindDot(d.post_type)}<select data-idea-field="post_type" aria-describedby="kind-hint">${options(POST_TYPES, POST_TYPE, d.post_type || "", "Not set: Studio picks one")}</select></span></label>` : ""}
+        <label class="span2">Arc<select data-idea-field="arc_id">${`<option value="">Unsorted</option>` + d.arcs.map((a) => `<option value="${esc(a.id)}" ${a.id === d.arc_id ? "selected" : ""}>${esc(a.title)}</option>`).join("")}</select></label>
+        ${oneBrand ? "" : `<label class="span2">Account<select data-idea-field="brand">${options(ACCOUNTS, BRAND, d.brand)}</select></label>`}
+        ${"post_type" in d ? `<label class="kind-pick span2">Kind of post<span class="kind-select">${kindDot(d.post_type)}<select data-idea-field="post_type" aria-describedby="kind-hint">${options(POST_TYPES, POST_TYPE, d.post_type || "", "Not set: Studio picks one")}</select></span></label>` : ""}
+        ${"post_type" in d ? `<p class="kind-hint muted small" id="kind-hint">${kindHint(d.post_type)}</p>` : ""}
         <label>Format<select data-idea-field="format" ${carousel && slidesLocked(d) ? "disabled" : ""}>${options(formats, FORMAT, d.format)}</select></label>
         ${carousel ? `<label>Slides<span class="num-field">${esc(d.slides.length)} slides</span></label>` : `<label>Length<span class="num-field"><input type="number" min="3" max="180" step="1" data-idea-field="est_seconds" value="${esc(Math.round(d.est_seconds || 30))}" data-orig="${esc(Math.round(d.est_seconds || 30))}"> s</span></label>`}
-        ${"post_type" in d ? `<p class="kind-hint muted small" id="kind-hint">${kindHint(d.post_type)}</p>` : ""}
         <span class="saved" aria-live="polite"></span>
       </div>
       <div class="box"><h3>${owner ? "Your call" : `${esc(ownerName())}'s call`}</h3>${decision}
@@ -496,24 +543,40 @@ function renderPanel() {
           <button class="vote${v.mine === -1 ? " on down" : ""}" data-vote="-1" aria-pressed="${v.mine === -1}" title="Not worth it" aria-label="Not worth it, ${v.down.length} so far">👎 ${v.down.length}</button>
           <span class="muted small">${esc(voters)}</span>
         </div></div>
-      ${carousel ? `${field("purpose", "Who it's for and why", "Who should swipe, and what they should do after")}
-      ${slidesFieldHTML(d)}
-      ${writeSlidesHTML(d)}` : `${field("hook", "Hook (first 3 seconds)", "The line or moment that stops the scroll")}
+      ${carousel ? field("purpose", "Who it's for and why", "Who should swipe, and what they should do after")
+    : `${field("hook", "Hook (first 3 seconds)", "The line or moment that stops the scroll")}
       ${field("purpose", "Who it's for and why", "Who should watch, and what they should think, feel or do after")}
-      ${field("cta", "Call to action", "e.g. Save this for your reno", 1, 500)}
-      <div class="field"><h3>Shots · ${esc(d.progress.got)}/${esc(d.progress.total)} got</h3>
-        ${d.shots.length ? `<ol class="shot-list">${d.shots.map((s, i) => shotRowHTML(s, i, d.shots.length)).join("")}</ol>` : `<p class="muted">No shots yet.</p>`}
-        <div class="row add-shot"><label class="sr-only" for="shot-new">New shot</label><input id="shot-new" data-draft class="grow" maxlength="1000" placeholder="Describe a new shot, e.g. Close-up: grout going into the corner">
-          <button class="btn" id="shot-add">+ Add shot</button></div>
-      </div>
-      ${refineHTML(d)}
+      ${field("cta", "Call to action", "e.g. Save this for your reno", 1, 500)}`}`;
+  const main = carousel ? slidesMainHTML(d) : shotsMainHTML(d);
+  const rest = `
+      ${carousel ? writeSlidesHTML(d) : `${refineHTML(d)}
       ${musicHTML(d)}`}
       ${field("caption", "Caption", "The Instagram caption, with hashtags", 4, 5000)}
       ${commentsHTML(d.notes)}
       ${makeHTML(d)}`;
+  // Two columns: the shots on the left, the post on the right. One column: the shots after the
+  // post's details and before Refine, as they always were.
+  const wide = twoCol();
+  const frame = $("#player-frame");
+  const scroll = [frame.scrollTop, panel().scrollTop];
+  keepDrafts(inner(), () => {
+    frame.hidden = !wide;
+    frame.innerHTML = wide ? main : "";
+    panel().innerHTML = wide ? top + rest : top + main + rest;
   });
-  panel().scrollTop = scroll;
+  [frame.scrollTop, panel().scrollTop] = scroll;
+  fitTitle();
 }
+
+// The title and a slide's words: as tall as what's written, so nothing hides behind a scrollbar.
+const FIT = "#f-title, .slide-row textarea";
+function fit(t) {
+  t.style.height = "auto";
+  t.style.height = `${t.scrollHeight + 2}px`;
+}
+function fitTitle() { for (const t of inner().querySelectorAll(FIT)) fit(t); }
+inner().addEventListener("input", (e) => { if (e.target.matches(FIT)) fit(e.target); });
+window.addEventListener("resize", () => { if (viewerOpen()) fitTitle(); });
 
 // What a kind of post is for, under the picker.
 function kindHint(k) {
@@ -543,7 +606,7 @@ async function saveIdeaField(el) {
     value = Number(value);
     if (!(value >= 3 && value <= 180)) { toast("Length must be between 3 and 180 seconds."); el.value = el.dataset.orig; return; }
   } else if (key === "title") {
-    value = value.trim();
+    value = value.replace(/\s+/g, " ").trim();
     if (!value) { el.value = d.title; toast("The title can't be empty."); return; }
   }
   must(await sb.from("ideas").update({ [key]: value }).eq("id", d.id));
@@ -576,7 +639,7 @@ async function saveShotField(el) {
 }
 
 // Text saves when you click away; selects and ticks save straight away.
-panel().addEventListener("focusout", async (e) => {
+inner().addEventListener("focusout", async (e) => {
   const el = e.target;
   if (isTextField(el) && el.dataset.slideField && el.value !== el.dataset.orig && view.d) {
     try {
@@ -590,10 +653,10 @@ panel().addEventListener("focusout", async (e) => {
     } catch (err) { toast(`Couldn't save: ${err.message}`); }
   }
   // Catch up on changes held back while typing.
-  setTimeout(() => { if (view.pending && !typingIn(panel())) render(); }, 0);
+  setTimeout(() => { if (view.pending && !typingIn(inner())) render(); }, 0);
 });
 const isTextField = (el) => el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && el.type !== "checkbox");
-panel().addEventListener("change", async (e) => {
+inner().addEventListener("change", async (e) => {
   const el = e.target;
   if (isTextField(el)) return;
   try {
@@ -653,7 +716,7 @@ async function moveShot(shotId, delta) {
   }));
 }
 
-panel().addEventListener("click", async (e) => {
+inner().addEventListener("click", async (e) => {
   const t = e.target.closest("button");
   if (!t) return;
   const d = view.d;
@@ -723,7 +786,7 @@ panel().addEventListener("click", async (e) => {
   }
 });
 
-panel().addEventListener("keydown", (e) => {
+inner().addEventListener("keydown", (e) => {
   const ctrlEnter = e.key === "Enter" && (e.ctrlKey || e.metaKey);
   if (e.target.id === "comment-body" && ctrlEnter) {
     e.preventDefault();
@@ -734,7 +797,8 @@ panel().addEventListener("keydown", (e) => {
   } else if (e.target.id === "refine-request" && ctrlEnter) {
     e.preventDefault();
     startRefine();
-  } else if (e.key === "Enter" && e.target.matches("input[data-idea-field], input[data-shot-field], input[data-slide-field]")) {
+  } else if (e.key === "Enter" && e.target.matches("input[data-idea-field], input[data-shot-field], input[data-slide-field], #f-title")) {
+    e.preventDefault();
     e.target.blur();
   }
 });

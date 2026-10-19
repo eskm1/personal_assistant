@@ -1,6 +1,6 @@
-// A carousel's slides on the idea page (CONTRACT "Carousels"): a preview of every slide on the
-// left, and on the right the slides line by line (edit the words, reorder, add, delete, and pick
-// each slide's picture), "Write slides" (Claude, plan-develop) and Make this. Pictures come from
+// A carousel's slides on the idea page (CONTRACT "Carousels"): the slides as the main column, each
+// with a small preview of how it reads on its left (edit the words, reorder, add, delete, and pick
+// each slide's picture); "Write slides" (Claude, plan-develop) and Make this sit with the post. Pictures come from
 // Urban Makers' own footage (a still Studio takes from a clip), photos uploaded from the phone, or
 // an AI concept picture Studio draws when Bryan presses Make this (only when the Studio machine has
 // the image key, laptop_status.info.concepts; never in a Finished homes post; marked "Concept").
@@ -39,11 +39,11 @@ function conceptCost() {
 // Made (or being made): the slides change in Review now, with notes.
 export const slidesLocked = (d) => d.status === "made" || !!d.production;
 
-// ── The preview (left) ───────────────────────────────────────────────────────
+// ── A slide's preview ────────────────────────────────────────────────────────
 
 function miniHTML(s, i, n) {
   const thumb = stillUrl(s.image?.thumb_path);
-  return `<button class="cs-mini ${esc(s.role)}${thumb ? " has-pic" : ""}" data-goto-slide="${esc(s.key)}" aria-label="Slide ${i + 1}: ${esc(s.heading || "no heading")}. Edit it">
+  return `<button type="button" class="cs-mini ${esc(s.role)}${thumb ? " has-pic" : ""}" data-goto-slide="${esc(s.key)}" aria-label="Slide ${i + 1}: ${esc(s.heading || "no heading")}. Edit it">
     ${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : ""}
     <span class="cs-num">${i + 1}/${n}</span>
     ${isConcept(s) ? `<span class="cs-concept">Concept</span>` : ""}
@@ -52,22 +52,7 @@ function miniHTML(s, i, n) {
   </button>`;
 }
 
-export function slidesStoryHTML(d) {
-  const job = jobView(d.jobs.develop);
-  const writing = jobActive(job);
-  const n = d.slides.length;
-  const pics = d.slides.filter(pictured).length;
-  return `<div class="storyboard carousel-board">
-    <div class="sb-head"><h2 id="sb-title">Slides</h2>
-      <span class="muted">${n ? `${plural(n, "slide")}${pics ? ` · ${plural(pics, "picture")}` : ""}` : "Carousel"}</span>
-      ${writing && n ? `<span class="sb-drafting"><span class="spin"></span> Claude is rewriting them…</span>` : ""}</div>
-    ${n ? `<div class="cs-strip">${d.slides.map((s, i) => miniHTML(s, i, n)).join("")}</div>`
-      : writing ? `<div class="sb-empty"><p><span class="spin"></span> The slides are being written…</p><p class="muted">Claude is writing the cover, the points and the ask. About a minute; they appear here by themselves.</p></div>`
-        : `<div class="sb-empty"><p>No slides yet.</p><p class="muted">Use Write slides on the right, or add them yourself.</p></div>`}
-  </div>`;
-}
-
-// ── The editor (right) ───────────────────────────────────────────────────────
+// ── The editor ───────────────────────────────────────────────────────────────
 
 function pictureLine(s, d) {
   const img = s.image || {};
@@ -105,48 +90,58 @@ function conceptButtonHTML(s, i, d) {
 
 function slideRowHTML(s, i, d, locked) {
   const n = d.slides.length;
-  const thumb = stillUrl(s.image?.thumb_path);
   const id = (f) => `sl-${esc(s.key)}-${f}`;
   const dis = locked ? "disabled" : "";
-  return `<li class="slide-row ${esc(s.role)}" id="slide-${esc(s.key)}" data-slide-key="${esc(s.key)}" data-saved-scope>
-    <div class="shot-top">
-      <span class="shot-num" aria-hidden="true">${i + 1}</span>
-      <label class="sr-only" for="${id("role")}">Slide ${i + 1} is the</label>
-      <select id="${id("role")}" data-slide-field="role" ${dis}>${ROLES.map((r) => `<option value="${r}" ${r === s.role ? "selected" : ""}>${SLIDE_ROLE[r]}</option>`).join("")}</select>
-      <span class="saved" aria-live="polite"></span>
-      ${locked ? "" : `<span class="shot-tools">
-        <button class="icon-btn" data-slide-move="-1" ${i === 0 ? "disabled" : ""} title="Move up" aria-label="Move slide ${i + 1} up">↑</button>
-        <button class="icon-btn" data-slide-move="1" ${i === n - 1 ? "disabled" : ""} title="Move down" aria-label="Move slide ${i + 1} down">↓</button>
-        <button class="icon-btn danger" data-slide-delete title="Delete slide" aria-label="Delete slide ${i + 1}">×</button></span>`}
-    </div>
-    <label class="sr-only" for="${id("heading")}">Slide ${i + 1} heading</label>
-    <input class="slide-heading" id="${id("heading")}" data-slide-field="heading" maxlength="200" value="${esc(s.heading)}" data-orig="${esc(s.heading)}" placeholder="${s.role === "cover" ? "The hook: what makes someone swipe" : s.role === "ask" ? "The ask, e.g. Planning a reno?" : "One idea, in a few words"}" ${dis}>
-    <label class="sr-only" for="${id("body")}">Slide ${i + 1} words</label>
-    <textarea id="${id("body")}" data-slide-field="body" rows="${Math.min(6, Math.max(2, Math.ceil(s.body.length / 38)))}" maxlength="800" data-orig="${esc(s.body)}" placeholder="The words under it (optional)" ${dis}>${esc(s.body)}</textarea>
-    <div class="slide-pic">
-      <span class="slide-thumb">${thumb ? `<img src="${esc(thumb)}" alt="">` : `<span class="slide-none">${isConcept(s) ? "Drawn at Make this" : pictured(s) ? "Preview soon" : "Text"}</span>`}</span>
-      <div class="slide-pic-info">
-        <span class="small">${esc(pictureLine(s, d))}</span>
-        ${s.image?.note && !isConcept(s) ? `<span class="muted small">Picture idea: ${esc(s.image.note)}</span>` : ""}
-        ${locked ? "" : `<span class="row tight slide-pic-btns">
-          <button type="button" class="btn small" data-slide-pic="clip" aria-label="Slide ${i + 1}: a still from your footage">From footage</button>
-          <button type="button" class="btn small" data-slide-pic="photo" aria-label="Slide ${i + 1}: upload a photo">Photo</button>
-          ${conceptButtonHTML(s, i, d)}
-          ${pictured(s) ? `<button type="button" class="btn small ghost" data-slide-pic="text" aria-label="Slide ${i + 1}: text only">Text only</button>` : ""}
-        </span>`}
+  return `<li class="shot-row slide-row ${esc(s.role)}" id="slide-${esc(s.key)}" data-slide-key="${esc(s.key)}" data-saved-scope>
+    <div class="shot-media">${miniHTML(s, i, n)}</div>
+    <div class="shot-body">
+      <div class="shot-top">
+        <span class="shot-num" aria-hidden="true">${i + 1}</span>
+        <label class="sr-only" for="${id("role")}">Slide ${i + 1} is the</label>
+        <select id="${id("role")}" data-slide-field="role" ${dis}>${ROLES.map((r) => `<option value="${r}" ${r === s.role ? "selected" : ""}>${SLIDE_ROLE[r]}</option>`).join("")}</select>
+        <span class="saved" aria-live="polite"></span>
+        ${locked ? "" : `<span class="shot-tools">
+          <button class="icon-btn" data-slide-move="-1" ${i === 0 ? "disabled" : ""} title="Move up" aria-label="Move slide ${i + 1} up">↑</button>
+          <button class="icon-btn" data-slide-move="1" ${i === n - 1 ? "disabled" : ""} title="Move down" aria-label="Move slide ${i + 1} down">↓</button>
+          <button class="icon-btn danger" data-slide-delete title="Delete slide" aria-label="Delete slide ${i + 1}">×</button></span>`}
       </div>
+      <label class="sr-only" for="${id("heading")}">Slide ${i + 1} heading</label>
+      <input class="slide-heading" id="${id("heading")}" data-slide-field="heading" maxlength="200" value="${esc(s.heading)}" data-orig="${esc(s.heading)}" placeholder="${s.role === "cover" ? "The hook: what makes someone swipe" : s.role === "ask" ? "The ask, e.g. Planning a reno?" : "One idea, in a few words"}" ${dis}>
+      <label class="sr-only" for="${id("body")}">Slide ${i + 1} words</label>
+      <textarea id="${id("body")}" data-slide-field="body" rows="${Math.min(6, Math.max(2, Math.ceil(s.body.length / 70)))}" maxlength="800" data-orig="${esc(s.body)}" placeholder="The words under it (optional)" ${dis}>${esc(s.body)}</textarea>
+      <div class="slide-pic">
+        <div class="slide-pic-info">
+          <span class="small"><span class="muted">Picture:</span> ${esc(pictureLine(s, d))}</span>
+          ${s.image?.note && !isConcept(s) ? `<span class="muted small">Picture idea: ${esc(s.image.note)}</span>` : ""}
+          ${locked ? "" : `<span class="row tight slide-pic-btns">
+            <button type="button" class="btn small" data-slide-pic="clip" aria-label="Slide ${i + 1}: a still from your footage">From footage</button>
+            <button type="button" class="btn small" data-slide-pic="photo" aria-label="Slide ${i + 1}: upload a photo">Photo</button>
+            ${conceptButtonHTML(s, i, d)}
+            ${pictured(s) ? `<button type="button" class="btn small ghost" data-slide-pic="text" aria-label="Slide ${i + 1}: text only">Text only</button>` : ""}
+          </span>`}
+        </div>
+      </div>
+      ${conceptHTML(s, i, d, locked)}
     </div>
-    ${conceptHTML(s, i, d, locked)}
   </li>`;
 }
 
-export function slidesFieldHTML(d) {
+// The slides: the main column on a computer, the middle of the plan on a phone.
+export function slidesMainHTML(d) {
   const locked = slidesLocked(d);
-  return `<div class="field"><h3>Slides · ${esc(d.slides.length)}</h3>
-    ${locked ? `<p class="muted small">These slides are in Review now. To change them, send the draft back with notes there.</p>` : `<p class="muted small">A cover, 4 to 8 points and the ask. Changes save when you click away.</p>`}
-    ${d.slides.length ? `<ol class="shot-list slide-list">${d.slides.map((s, i) => slideRowHTML(s, i, d, locked)).join("")}</ol>` : `<p class="muted">No slides yet.</p>`}
-    ${locked || d.slides.length >= MAX_SLIDES ? "" : `<div class="row add-shot"><button class="btn" id="slide-add">+ Add slide</button></div>`}
-  </div>`;
+  const writing = jobActive(jobView(d.jobs.develop));
+  const n = d.slides.length;
+  const pics = d.slides.filter(pictured).length;
+  return `<section class="idea-main" aria-labelledby="sb-title">
+    <div class="main-head"><h2 id="sb-title">Slides</h2>
+      <span class="main-sum">${n ? `${esc(plural(n, "slide"))}${pics ? ` · ${esc(plural(pics, "picture"))}` : ""}` : "Carousel"}</span>
+      ${writing && n ? `<span class="sb-drafting"><span class="spin"></span> Claude is rewriting them…</span>` : ""}</div>
+    <p class="muted small main-note">${locked ? "These slides are in Review now. To change them, send the draft back with notes there." : "A cover, 4 to 8 points and the ask. Changes save when you click away."}</p>
+    ${n ? `<ol class="shot-list slide-list">${d.slides.map((s, i) => slideRowHTML(s, i, d, locked)).join("")}</ol>`
+      : writing ? `<div class="sb-empty"><p><span class="spin"></span> The slides are being written…</p><p class="muted">Claude is writing the cover, the points and the ask. About a minute; they appear here by themselves.</p></div>`
+        : `<div class="sb-empty"><p>No slides yet.</p><p class="muted">Use Write slides with Claude, or add them yourself.</p></div>`}
+    ${locked || n >= MAX_SLIDES ? "" : `<div class="row add-shot"><button class="btn" id="slide-add">+ Add slide</button></div>`}
+  </section>`;
 }
 
 // For Make this: what the concept slides will cost, or why they'll be text.

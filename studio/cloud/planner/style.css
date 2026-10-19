@@ -135,9 +135,9 @@ img.broken { visibility: hidden; }
   display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
   background: var(--line); color: var(--text); white-space: nowrap;
 }
-.st-got.badge, .sb-badge.st-got { background: var(--good); color: #062; }
-.st-filmed.badge, .sb-badge.st-filmed { background: var(--filmed); color: #021a3a; }
-.st-retake.badge, .sb-badge.st-retake { background: var(--bad); color: #fff; }
+.st-got.badge { background: var(--good); color: #062; }
+.st-filmed.badge { background: var(--filmed); color: #021a3a; }
+.st-retake.badge { background: var(--bad); color: #fff; }
 
 /* ── Menus (the account menu and the status pill's are in shell.css) ── */
 .menu {
@@ -255,64 +255,43 @@ code { background: var(--surface-2); border-radius: 4px; padding: 1px 5px; font-
 .card-meta { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
 
 /* ── Planned idea viewer ────────────────────────────── */
-.viewer.plan-mode .viewer-inner { grid-template-columns: minmax(0, 1fr) minmax(360px, 500px); }
+/* A computer: the shots (or slides) are the page on the left, the post itself on the right. */
+.viewer.plan-mode .viewer-inner { grid-template-columns: minmax(0, 1fr) clamp(360px, 28vw, 460px); }
 .viewer.plan-mode .player-col { display: block; padding: 0; overflow: hidden; }
 .viewer.plan-mode { background: var(--bg); }
 .viewer.plan-mode .player-frame {
-  display: block; place-items: normal; height: 100vh; width: 100%; max-width: none; aspect-ratio: auto; overflow-y: auto; padding: 24px 76px 40px;
+  display: block; place-items: normal; height: 100vh; width: 100%; max-width: none; aspect-ratio: auto; overflow-y: auto; padding: 0 32px 48px;
 }
 .viewer.plan-mode .player-frame > .placeholder { padding-top: 40vh; text-align: center; }
-.sb-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
-.sb-head h2 { margin: 0; font-size: 18px; }
-.sb-progress { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
-.sb-progress .pbar { width: 120px; }
-.sb-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 18px; }
-.sb-frame { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.sb-card {
-  position: relative; aspect-ratio: 9 / 16; border-radius: var(--radius); overflow: hidden;
-  background: var(--surface); border: 1px solid var(--line);
+/* Previous / next idea: small, top right of the shots, next to Close. */
+.viewer.plan-mode .nav { top: 14px; transform: none; width: 36px; height: 36px; font-size: 22px; z-index: 3; }
+.viewer.plan-mode .nav.prev { left: auto; right: 74px; }
+.viewer.plan-mode .nav.next { right: 30px; }
+.idea-main { display: flex; flex-direction: column; gap: 12px; }
+.idea-main > :not(.main-head) { width: 100%; max-width: 1180px; margin-left: auto; margin-right: auto; }
+.main-head { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.main-head h2 { margin: 0; font-size: 18px; }
+.player-frame .main-head {
+  position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line);
+  padding: 16px max(110px, (100% - 1180px) / 2) 12px max(0px, (100% - 1180px) / 2);
 }
-.sb-frame.st-retake .sb-card { border-color: var(--bad); }
-.sb-frame.st-got .sb-card { border-color: rgba(60, 207, 142, .5); }
-.sb-media { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: none; text-align: left; }
-.sb-media img, .sb-media video { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; }
-.sb-media.playing video { object-fit: contain; }
-.sb-media .play, .take-thumb .play {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 44px; height: 44px; border-radius: 50%;
-  display: grid; place-items: center; background: rgba(0, 0, 0, .55); color: #fff; font-size: 16px; opacity: .85;
+.main-sum { color: var(--muted); font-size: 13px; }
+.main-note { margin: 0; }
+/* The shots at a glance: one number each, coloured only when it needs a look (or is done). */
+.shot-dots { list-style: none; margin: 0; padding: 0; display: flex; gap: 6px; flex-wrap: wrap; }
+.shot-dot {
+  width: 26px; height: 26px; padding: 0; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700;
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--muted);
 }
-.sb-frame.st-retake .sb-media img { opacity: .6; }
-.sb-placeholder {
-  display: flex; flex-direction: column; gap: 8px; padding: 40px 12px 44px; color: var(--text); overflow: hidden;
-  background: repeating-linear-gradient(135deg, var(--surface) 0 12px, #1a1a1f 12px 24px);
-}
-.sb-placeholder:hover { background: repeating-linear-gradient(135deg, var(--surface-2) 0 12px, #23232a 12px 24px); }
-.sb-camera { align-self: flex-start; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: var(--line); color: #d6d6dd; }
-.sb-framing { font-size: 22px; font-weight: 800; letter-spacing: .04em; line-height: 1.05; color: #fff; overflow-wrap: anywhere; }
-.sb-kind { font-size: 12px; color: var(--muted); font-weight: 600; }
-.sb-desc { font-size: 13px; line-height: 1.4; color: #d6d6dd; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
-.sb-caption {
-  align-self: center; text-align: center; margin-top: auto; background: #fff; color: #000; font-weight: 800; font-size: 13px;
-  padding: 4px 8px; border-radius: 6px; line-height: 1.25; max-width: 100%; overflow-wrap: anywhere;
-}
-.sb-line { font-size: 12px; font-style: italic; color: #cfcfd6; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.sb-caption + .sb-line { margin-top: 0; }
-.sb-num {
-  position: absolute; top: 8px; left: 8px; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
-  font-size: 12px; font-weight: 800; background: rgba(0, 0, 0, .7); border: 1px solid rgba(255, 255, 255, .2); pointer-events: none;
-}
-.sb-secs { position: absolute; top: 10px; right: 8px; font-size: 11px; font-weight: 700; background: rgba(0, 0, 0, .7); padding: 2px 6px; border-radius: 6px; pointer-events: none; }
-.sb-badge {
-  position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 4px 8px; border-radius: 8px; text-align: center;
-  font-size: 11px; font-weight: 700; background: rgba(0, 0, 0, .75); border: 1px solid rgba(255, 255, 255, .15); pointer-events: none;
-}
-.sb-media.playing ~ .sb-badge, .sb-media.playing ~ .sb-num, .sb-media.playing ~ .sb-secs { display: none; }
-.sb-under { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.sb-under strong { color: var(--text); }
-.sb-flags, .take-flags { margin: 0; padding-left: 16px; font-size: 12px; color: #ffb3b3; line-height: 1.4; }
-.sb-empty { text-align: center; padding: 30vh 0 0; }
+.shot-dot:hover { border-color: var(--muted); color: var(--text); }
+.shot-dot.st-got { color: var(--good); border-color: rgba(60, 207, 142, .45); background: rgba(60, 207, 142, .08); }
+.shot-dot.st-filmed { color: var(--filmed); border-color: rgba(106, 168, 255, .45); }
+.shot-dot.st-retake { color: #fff; background: var(--bad); border-color: var(--bad); }
+.sb-drafting { color: var(--filmed); font-size: 13px; font-weight: 600; }
+.sb-empty { text-align: center; padding: 32px 0; }
 .sb-empty p { margin: 4px 0; }
 .title-input { width: 100%; font-size: 18px; font-weight: 700; padding: 8px 10px; }
+textarea.title-input { min-height: 0; resize: none; line-height: 1.3; }
 .field h3 { display: flex; align-items: center; gap: 8px; }
 .saved { font-size: 11px; color: var(--good); text-transform: none; letter-spacing: 0; opacity: 0; transition: opacity .2s; }
 .saved.show { opacity: 1; }
@@ -320,6 +299,7 @@ code { background: var(--surface-2); border-radius: 4px; padding: 1px 5px; font-
 .meta-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
 .meta-grid select { width: 100%; color: var(--text); }
 .meta-grid .saved { grid-column: 1 / -1; margin-top: -4px; }
+.meta-grid .span2 { grid-column: 1 / -1; }
 .num-field { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
 .num-field input { width: 64px; color: var(--text); }
 .decision-seg { flex: 1 1 auto; }
@@ -329,36 +309,74 @@ code { background: var(--surface-2); border-radius: 4px; padding: 1px 5px; font-
 .vote { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 5px 12px; font-weight: 600; }
 .vote.on { border-color: var(--good); background: rgba(60, 207, 142, .15); }
 .vote.on.down { border-color: var(--bad); background: rgba(255, 92, 92, .15); }
-.shot-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.shot-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+/* A shot: its footage small on the left, everything about it on the right. */
 .shot-row {
-  background: var(--surface-2); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px;
+  background: var(--surface-2); border-radius: 12px; padding: 12px; display: flex; gap: 14px; align-items: flex-start;
   border-left: 3px solid #3a3a44; scroll-margin: 80px;
 }
-.shot-row.st-got { border-left-color: var(--good); }
-.shot-row.st-filmed { border-left-color: var(--filmed); }
+.player-frame .shot-row { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid #3a3a44; padding: 14px 16px; gap: 16px; }
+.shot-row.st-got { border-left-color: rgba(60, 207, 142, .6); }
+.shot-row.st-filmed { border-left-color: rgba(106, 168, 255, .6); }
 .shot-row.st-retake { border-left-color: var(--bad); }
 .shot-row.flash { animation: flash 1.2s ease-out; }
 @keyframes flash { from { box-shadow: 0 0 0 2px var(--accent); } to { box-shadow: 0 0 0 2px transparent; } }
 .shot-row p { margin: 0; }
+.shot-media { flex: none; width: 72px; }
+.player-frame .shot-media { width: 88px; }
+.shot-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.shot-thumb {
+  position: relative; display: block; width: 100%; aspect-ratio: 9 / 16; padding: 0; border-radius: 8px; overflow: hidden;
+  background: #000; border: 1px solid var(--line);
+}
+.shot-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+button.shot-thumb:hover { border-color: var(--muted); }
+.shot-row.st-retake .shot-thumb { border-color: rgba(255, 92, 92, .6); }
+.shot-thumb.empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 4px; text-align: center;
+  background: repeating-linear-gradient(135deg, var(--surface-2) 0 10px, #1b1b21 10px 20px);
+  color: #c4c4cc; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; overflow-wrap: anywhere;
+}
+.shot-thumb-sub { color: var(--muted); font-size: 10px; font-weight: 500; text-transform: none; letter-spacing: 0; }
 .shot-row textarea { min-height: 52px; }
 .shot-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .shot-num { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--line); font-size: 12px; font-weight: 700; }
+/* Calm states: only a retake is loud. */
+.shot-row .badge { background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+.shot-row .badge.st-got { background: rgba(60, 207, 142, .1); color: var(--good); border-color: transparent; }
+.shot-row .badge.st-filmed { background: rgba(106, 168, 255, .1); color: var(--filmed); border-color: transparent; }
+.shot-row .badge.st-retake { background: var(--bad); color: #fff; border-color: transparent; }
 .filmed-toggle {
   display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 6px; border-radius: 8px; cursor: pointer;
-  background: var(--surface); border: 1px solid var(--line); font-weight: 600; font-size: 13px;
+  background: var(--bg); border: 1px solid var(--line); font-weight: 600; font-size: 13px;
 }
 .filmed-toggle input { width: 20px; height: 20px; accent-color: var(--filmed); margin: 0; }
 .shot-tools { margin-left: auto; display: flex; gap: 4px; }
-.shot-selects { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 6px; }
-.shot-selects select { min-width: 0; color: var(--text); }
-.inline-field { display: grid; grid-template-columns: 68px minmax(0, 1fr); align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+/* Camera, framing, kind, length (and phase, day): each with its name, wide enough for its value. */
+.shot-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 10px; }
+.pick-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; color: var(--muted); }
+.pick-field select { width: 100%; min-width: 0; color: var(--text); }
+.pick-field .num-field input { width: 76px; }
+.shot-lines { display: flex; flex-direction: column; gap: 6px; }
+.inline-field { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 .inline-field input { width: 100%; color: var(--text); }
-.takes { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
-.take { display: flex; gap: 8px; align-items: flex-start; width: 100%; background: var(--surface); border-radius: 8px; padding: 6px; }
-.take-thumb { position: relative; flex: none; width: 44px; aspect-ratio: 9 / 16; border: 0; padding: 0; border-radius: 6px; overflow: hidden; background: #000; }
+.takes { display: flex; flex-direction: column; gap: 8px; }
+.take { display: flex; gap: 10px; align-items: flex-start; width: 100%; background: rgba(255, 255, 255, .025); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.take-thumb { position: relative; flex: none; width: 32px; aspect-ratio: 9 / 16; border: 0; padding: 0; border-radius: 5px; overflow: hidden; background: #000; }
 .take-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.take-thumb .play { width: 22px; height: 22px; font-size: 10px; }
 .take-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; overflow-wrap: anywhere; }
+.take-line { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; }
+.take-title { font-weight: 600; }
+.take-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.take-line .chip { font-size: 11px; padding: 1px 8px; }
+.take-btns { flex: none; display: flex; gap: 6px; align-items: center; }
+/* Quality notes: a problem in this take's part of the clip in red; the whole clip's notes folded, once. */
+.take-note { margin: 2px 0 0 !important; font-size: 13px; line-height: 1.4; color: #ffb3b3; }
+.take-note .muted { font-size: 12px; }
+.take-notes { font-size: 12px; color: var(--muted); }
+.take-notes summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.take-notes[open] summary { white-space: normal; }
+.take-notes ul { margin: 6px 0 2px; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; line-height: 1.45; color: #d6d6dd; }
 .add-shot { margin-top: 10px; }
 .refine-result { margin-top: 10px !important; padding: 8px 10px; border-radius: 8px; background: var(--surface); line-height: 1.45; }
 .box .muted.small { margin-top: 8px; }
@@ -451,12 +469,8 @@ code { background: var(--surface-2); border-radius: 4px; padding: 1px 5px; font-
   .viewer.plan-mode .player-col { overflow: visible; }
   .viewer.plan-mode .player-frame { height: auto; overflow: visible; padding: 56px 16px 8px; }
   .viewer.plan-mode .player-frame > .placeholder { padding-top: 30vh; }
-  .sb-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-  .sb-framing { font-size: 17px; }
-  .sb-placeholder { padding: 36px 10px 40px; gap: 6px; }
-  .sb-desc { -webkit-line-clamp: 4; }
-  .sb-empty { padding: 20px 0; }
-  .shot-selects { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* One column: the post first, then its shots (the panel has them), with room for Close. */
+  .viewer.plan-mode .panel { padding-top: 64px; }
   .modal { padding: 8px; align-items: end; }
   .modal-card { max-height: calc(100vh - 16px); padding: 18px 16px 16px; }
   .picker-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
@@ -498,7 +512,6 @@ main { padding: 16px 24px 48px; }
 .plan-details-body input, .plan-details-body select, .plan-details-body textarea { color: var(--text); }
 
 /* Idea viewer extras */
-.sb-drafting { color: var(--filmed); font-size: 13px; font-weight: 600; }
 .sb-empty .spin { width: 16px; height: 16px; }
 .take-thumb { display: block; }
 .take-none, .pick-none { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font-size: 9px; color: var(--muted); padding: 2px; }
@@ -555,8 +568,6 @@ h2.cl-arc { margin: 22px 0 4px; }
   .cl-cams button { min-height: 44px; }
   .cl-filters { gap: 8px; }
   .shot-tools { gap: 6px; }
-  .shot-selects { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .shot-selects .num-field { grid-column: span 2; }
   .meta-grid { gap: 8px; }
   .decision { flex-wrap: wrap; }
   .team-wrap .people li { flex-wrap: wrap; }
@@ -838,13 +849,8 @@ h2.cl-arc { margin: 22px 0 4px; }
 .ps-shot .muted { grid-column: 2; }
 .ps-desc { overflow-wrap: anywhere; line-height: 1.4; }
 .take-detail { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
-.take-big { width: 90px; aspect-ratio: 9 / 16; object-fit: cover; border-radius: 8px; background: #000; }
+.take-big { width: min(160px, 36vw); aspect-ratio: 9 / 16; object-fit: cover; border-radius: 8px; background: #000; }
 .form .row.two > label { flex: 1 1 140px; }
-.shot-place { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-.shot-place select { width: 100%; min-width: 0; color: var(--text); }
-.shot-place .inline-field { grid-template-columns: 40px minmax(0, 1fr); }
-.takes .row.tight { width: 100%; }
-.take .btn.small { flex: none; }
 
 /* Ideas cards (decision, filmed of shots, votes) and post folders */
 .chip.proposed { color: #d6d6dd; }
@@ -908,6 +914,11 @@ h2.cl-arc { margin: 22px 0 4px; }
 .up-item.bad .up-state, .up-item.failed .up-state { color: #ffb3b3; }
 .up-item.paused .up-state { color: var(--warn); }
 body.has-tray .toast { bottom: auto; top: 76px; }
+/* A computer with a post open: the tray sits over the bottom left of the shots (Make this stays clear). */
+@media (min-width: 861px) {
+  body:has(#viewer:not([hidden])) .up-tray { right: auto; left: 16px; }
+  body.has-tray .viewer.plan-mode .player-frame { padding-bottom: 50vh; }
+}
 
 @media (min-width: 861px) {
   .sp-shot { grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; }
@@ -934,7 +945,6 @@ body.has-tray .toast { bottom: auto; top: 76px; }
   .sp-meta, .sp-actions { padding-left: 0; }
   .sp-thumb { width: 44px; }
   .sp-thumbs { grid-row: 1; }
-  .shot-place { grid-template-columns: minmax(0, 1fr); }
   /* Just above the phone tab bar (shell.css), or at the bottom while a viewer has the screen. */
   .up-tray { right: 0; left: 0; bottom: var(--shell-bottom, 0px); width: auto; max-width: none; border-radius: 14px 14px 0 0; max-height: 50vh; }
   .up-toggle { min-height: 44px; }
@@ -1003,7 +1013,7 @@ body.has-tray .toast { bottom: auto; top: 76px; }
   body.idea-page .viewer-head .head-pos { margin-left: auto; }
   body.idea-page .viewer-head .head-next { min-width: 44px; justify-content: center; font-size: 20px; }
   body.idea-page .viewer.plan-mode .player-frame { padding-top: 12px; }
-  body.idea-page .viewer .panel { overflow: visible; }
+  body.idea-page .viewer .panel { overflow: visible; padding-top: 12px; }
   /* Make this sits just above the tab bar */
   body.idea-page .viewer .decision { bottom: var(--shell-bottom); }
   .find-ideas { margin-left: 0; width: 100%; justify-content: flex-start; }
@@ -1125,9 +1135,8 @@ body.has-tray .toast { bottom: auto; top: 76px; }
 .kind-select select { flex: 1; min-width: 0; }
 .meta-grid .kind-hint { grid-column: 1 / -1; margin: -2px 0 0; line-height: 1.45; }
 
-/* ── Carousels: the slides preview (left) and the slides editor (right) ── */
+/* ── Carousels: the slides as the main column, each with a small preview of how it reads ── */
 .chip.carousel { color: #f6f4ee; background: #22302c; border-color: #3b5048; }
-.cs-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; }
 .cs-mini {
   position: relative; aspect-ratio: 4 / 5; border-radius: 10px; overflow: hidden; padding: 0; text-align: left;
   border: 1px solid #3b5048; background: #22302c; color: #f6f4ee; display: flex; flex-direction: column; justify-content: center;
@@ -1153,10 +1162,17 @@ body.has-tray .toast { bottom: auto; top: 76px; }
 .slide-row select { color: var(--text); }
 .slide-heading { width: 100%; font-weight: 700; }
 .slide-row textarea { min-height: 52px; width: 100%; }
-.slide-pic { display: flex; gap: 10px; align-items: flex-start; background: var(--surface); border-radius: 8px; padding: 6px; }
-.slide-thumb { position: relative; flex: none; width: 56px; aspect-ratio: 4 / 5; border-radius: 6px; overflow: hidden; background: #22302c; }
-.slide-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.slide-none { position: absolute; inset: 0; display: grid; place-items: center; font-size: 10px; color: #c9d1cc; text-align: center; padding: 2px; }
+.slide-pic { display: flex; gap: 10px; align-items: flex-start; background: rgba(255, 255, 255, .025); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+/* The small preview on a slide's left: the same slide, scaled down. */
+.slide-row .shot-media { width: 96px; }
+.player-frame .slide-row .shot-media { width: 120px; }
+.shot-media .cs-mini { width: 100%; border-radius: 8px; }
+.shot-media .cs-text { padding: 7px; gap: 2px; }
+.shot-media .cs-h { font-size: 10px; }
+.shot-media .cs-mini.cover:not(.has-pic) .cs-h { font-size: 11px; }
+.shot-media .cs-b { font-size: 8px; }
+.shot-media .cs-num { top: 4px; right: 4px; font-size: 9px; padding: 1px 4px; }
+.shot-media .cs-concept, .shot-media .cs-pic-wait { top: 4px; left: 4px; font-size: 8px; padding: 2px 4px; letter-spacing: .04em; }
 .slide-pic-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .slide-pic-btns { flex-wrap: wrap; }
 /* A concept slide: what the picture should show (drawn at Make this; marked "Concept"). */
@@ -1171,10 +1187,36 @@ body.has-tray .toast { bottom: auto; top: 76px; }
 .moment-list li { display: flex; gap: 8px; align-items: baseline; }
 .frames-grid .pick { aspect-ratio: 9 / 16; }
 @media (max-width: 720px) {
-  .cs-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .cs-h { font-size: 13px; }
   .slide-pic-btns .btn { min-height: 40px; }
   .qa-format .radio { min-height: 40px; }
+}
+
+/* The shots (and slides) inside the plan: the section heading like the others, no sticky bar. */
+.panel .main-head h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.panel .main-sum { font-size: 12px; }
+/* Phones: a shot's still sits beside what the camera sees; the rest uses the card's full width. */
+@media (max-width: 720px) {
+  .shot-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; padding: 10px; }
+  .slide-row { grid-template-columns: 88px minmax(0, 1fr); }
+  .shot-body { display: contents; }
+  .shot-row .shot-top { grid-row: 1; grid-column: 1 / -1; }
+  .shot-row .shot-media { grid-row: 2; grid-column: 1; width: auto; }
+  .shot-row .shot-body > :not(.shot-top) { grid-column: 1 / -1; }
+  .shot-row .shot-body > .shot-desc { grid-row: 2; grid-column: 2; }
+  .slide-row .shot-media { grid-row: 2 / span 2; }
+  .slide-row .shot-body > .slide-heading { grid-row: 2; grid-column: 2; }
+  .slide-row .shot-body > textarea[data-slide-field] { grid-row: 3; grid-column: 2; }
+  .shot-row .shot-body > .shot-desc { height: 100%; min-height: 0; }
+  /* Camera | Framing, Kind | Length, then Phase and Day: each wide enough for its longest value. */
+  .shot-fields { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .shot-fields .f-camera, .shot-fields .f-framing { grid-column: span 3; }
+  .shot-fields .f-kind { grid-column: span 4; }
+  .shot-fields .f-secs { grid-column: span 2; }
+  .shot-fields .f-phase, .shot-fields .f-day { grid-column: 1 / -1; }
+  .shot-fields .f-secs .num-field input { width: 64px; }
+  .shot-dot { width: 34px; height: 34px; font-size: 13px; }
+  .take { flex-wrap: wrap; }
+  .take-btns { margin-left: auto; }
 }
 
 /* ── Suggested topics: "Studio suggests" under the meters, and the Client questions page ── */
