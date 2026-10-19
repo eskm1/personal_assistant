@@ -29,6 +29,7 @@ import html
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -53,6 +54,7 @@ RENDERS = settings.ROOT / "Renders"
 HERE = render.RENDER_DIR / "carousel"
 FONTS = {"display": HERE / "fonts" / "BricolageGrotesque-latin.woff2", "text": HERE / "fonts" / "Figtree-latin.woff2"}
 SHOOT = HERE / "shoot.mjs"
+LOGO = HERE / "um-mark.svg"
 # The Urban Makers look: the green Bryan approved in the content plan, warm white, and the
 # amber accent Studio's Reels graphics use.
 COLOURS = {"bg": "#22302c", "deep": "#18231f", "ink": "#f6f4ee", "soft": "#d6ddd8", "accent": "#f5a524"}
@@ -288,7 +290,7 @@ html,body{width:1080px;background:#000}
 .top{position:absolute;left:84px;right:84px;top:64px;height:40px;display:flex;align-items:center;
   justify-content:space-between;z-index:3}
 .mark{display:flex;align-items:center;gap:14px;font:800 25px/1 "UM Text";letter-spacing:.16em;text-transform:uppercase}
-.mark i{display:block;width:20px;height:20px;border-radius:5px;background:var(--accent)}
+.mark svg{display:block;height:34px;width:auto}
 .num{font:700 27px/1 "UM Text";letter-spacing:.06em;font-variant-numeric:tabular-nums}
 .tag{position:absolute;left:84px;top:132px;z-index:3;font:800 22px/1 "UM Text";letter-spacing:.12em;
   text-transform:uppercase;color:var(--accent);background:rgba(10,16,14,.74);padding:10px 14px;border-radius:8px}
@@ -314,7 +316,7 @@ html,body{width:1080px;background:#000}
 .ask.photo .panel{background:var(--deep)}
 .sign{position:absolute;left:84px;right:84px;bottom:92px;display:flex;align-items:center;gap:18px;z-index:2;
   font:800 34px/1 "UM Text";letter-spacing:.16em;text-transform:uppercase}
-.sign i{display:block;width:30px;height:30px;border-radius:7px;background:var(--accent)}
+.sign svg{display:block;height:64px;width:auto}
 """
 
 _FIT = """
@@ -365,6 +367,13 @@ def _lines(text: str) -> str:
     return "<br>".join(html.escape(line) for line in text.split("\n"))
 
 
+def _logo() -> str:
+    """The Urban Makers mark (render/carousel/um-mark.svg, from Bryan), inline so the page
+    needs nothing from outside."""
+    svg = LOGO.read_text(encoding="utf-8")
+    return re.sub(r'\s(width|height)="[^"]*"', "", svg, count=2).replace("<svg", '<svg aria-hidden="true"', 1)
+
+
 def slide_html(n: int, total: int, slide: dict, picture: Path | None, mark: str = "") -> str:
     """One slide as a section of the page (layout by role, and whether it has a picture)."""
     role = slide["role"]
@@ -377,7 +386,7 @@ def slide_html(n: int, total: int, slide: dict, picture: Path | None, mark: str 
         parts.append(f'<img class="pic" src="{html.escape(picture.resolve().as_uri())}" alt="">')
         parts.append('<div class="shade-top"></div>')
         parts.append('<div class="panel"></div>' if split else '<div class="shade"></div>')
-    top_mark = '<span class="mark"><i></i>Urban Makers</span>' if role != "ask" else "<span></span>"
+    top_mark = f'<span class="mark">{_logo()}Urban Makers</span>' if role != "ask" else "<span></span>"
     parts.append(f'<div class="top">{top_mark}<span class="num">{n}/{total}</span></div>')
     if mark:
         parts.append(f'<span class="tag">{html.escape(mark)}</span>')
@@ -392,7 +401,7 @@ def slide_html(n: int, total: int, slide: dict, picture: Path | None, mark: str 
     if role == "cover" and total > 1:
         parts.append(f'<div class="swipe">Swipe{_ARROW}</div>')
     if role == "ask" and not picture:
-        parts.append('<div class="sign"><i></i>Urban Makers</div>')
+        parts.append(f'<div class="sign">{_logo()}Urban Makers</div>')
     return (f'<section class="{" ".join(classes)}" id="slide-{n}" data-n="{n}" data-layout="{layout}" '
             f'data-h="{h_px}" data-b="{b_px}">{"".join(parts)}</section>')
 
