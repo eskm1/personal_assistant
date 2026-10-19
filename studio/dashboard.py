@@ -78,7 +78,9 @@ def _close_db(_exc):
         conn.close()
 
 
-_PUBLIC = ("/login", "/setup", "/invite/", "/healthz", "/static/")
+# The app icons are public too: a phone fetches them for the home screen, sometimes signed out.
+_PUBLIC = ("/login", "/setup", "/invite/", "/healthz", "/static/", "/favicon.ico", "/apple-touch-icon",
+           "/plan/favicon.ico", "/plan/apple-touch-icon.png", "/plan/icon-192.png", "/plan/icon-512.png")
 
 
 @app.before_request
@@ -146,6 +148,15 @@ def _safe_next(target: str | None) -> str:
 @app.get("/healthz")
 def healthz():
     return "ok"
+
+
+@app.get("/favicon.ico")
+@app.get("/apple-touch-icon.png")
+@app.get("/apple-touch-icon-precomposed.png")
+def app_icon():
+    """Where browsers and iPhones look for the icon when a page doesn't say."""
+    name = "studio.ico" if request.path.endswith(".ico") else "apple-touch-icon.png"
+    return send_file(WEB / name, max_age=86400)
 
 
 @app.route("/login", methods=["GET", "POST"])
