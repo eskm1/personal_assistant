@@ -20,13 +20,18 @@ import extract
 import settings
 
 GOOD, CHECK, RETAKE = "good", "check", "retake"
+# Bump when the audio measurement or its thresholds change: clips judged by older rules are
+# checked again in the background (recheck_audio_once).
+AUDIO_RULES = 2
+AUDIO_CODES = ("voice_quiet", "voice_very_quiet", "noisy", "noisy_ok", "very_noisy", "unclear_speech")
 
 # What to do differently next time, by flag code.
 TIPS = {
     "voice_quiet": "Get the mic closer: a clip-on mic, or hold the phone within arm's length when talking.",
-    "voice_very_quiet": "Use a clip-on mic. From this distance the phone mic mostly hears the room.",
+    "voice_very_quiet": "Studio lifts a quiet voice, but a clip-on mic or a closer phone sounds better.",
     "noisy": "Move away from tools and traffic, pause the noisy work for the take, or use a clip-on mic.",
     "very_noisy": "Re-record somewhere quieter or with a clip-on mic; the noise is nearly as loud as you.",
+    "noisy_ok": "Studio cleans this up. Somewhere quieter, or a clip-on mic, sounds better still.",
     "distorted": "Audio overloads: keep the mic out of wind and away from your mouth, or speak a bit softer.",
     "unclear_speech": "Speak toward the phone and slow down a little; Whisper struggled to make out the words.",
     "dark": "Face a window or turn on site lights; avoid filming with the light behind the subject.",
@@ -67,21 +72,30 @@ def measure_audio(samples: np.ndarray, words: list[dict], segments: list[dict] |
     for w in words:
         speech[max(0, int(w["start"] * rate)):int(w["end"] * rate)] = True
     if len(words) >= 5 and speech.any():
-        out["voice_db"] = round(_db(np.sqrt(np.mean(samples[speech] ** 2))), 1)
-        # Background: 100 ms windows well clear of any word (0.15 s margin).
+        # Levels of 100 ms windows: the voice is the median window inside the words (a
+        # whole-clip average is dragged down by the gaps between syllables); the background
+        # is the quiet end (20th percentile) of the windows well clear of any word, so a
+        # room's echo after a sentence or a word Whisper timed late doesn't count as noise.
+        win = rate // 10
         margin = int(0.15 * rate)
         near = np.convolve(speech.astype(np.int8), np.ones(2 * margin + 1, dtype=np.int8), "same") > 0
-        win = rate // 10
-        levels = []
+        voice, gaps = [], []
         for i in range(0, samples.size - win, win):
-            if not near[i:i + win].any():
-                levels.append(_db(np.sqrt(np.mean(samples[i:i + win] ** 2))))
-        if len(levels) >= 5:  # at least half a second of gaps
-            out["background_db"] = round(float(np.median(levels)), 1)
+            level = _db(np.sqrt(np.mean(samples[i:i + win] ** 2)))
+            if speech[i:i + win].all():
+                voice.append(level)
+            elif not near[i:i + win].any():
+                gaps.append(level)
+        if not voice:
+            voice = [_db(np.sqrt(np.mean(samples[speech] ** 2)))]
+        out["voice_db"] = round(float(np.median(voice)), 1)
+        if len(gaps) >= 5:  # at least half a second of gaps
+            out["background_db"] = round(float(np.percentile(gaps, 20)), 1)
             out["snr_db"] = round(out["voice_db"] - out["background_db"], 1)
         logprobs = [s["logprob"] for s in segments or [] if s.get("logprob") is not None]
         if logprobs:
             out["speech_confidence"] = round(float(np.mean(logprobs)), 2)
+        out["rules"] = AUDIO_RULES
     return out
 
 
@@ -125,19 +139,18 @@ def assess(meta: dict, audio: dict, picture: dict, checks: dict | None = None) -
     def flag(code, area, level, text):
         flags.append({"code": code, "area": area, "level": level, "text": text, "tip": TIPS.get(code, "")})
 
-    # Audio: only judged on clips with speech, except distortion.
-    if "voice_db" in audio:
-        v = audio["voice_db"]
-        if v < -48:
-            flag("voice_very_quiet", "audio", "fail", f"Voice is very quiet ({v:.0f} dB)")
-        elif v < -38:
-            flag("voice_quiet", "audio", "warn", f"Voice is quiet ({v:.0f} dB)")
+    # Audio: only judged on clips with speech, except distortion. The editor levels the voice
+    # and cleans the background, so a quiet or slightly noisy recording is a note, not a
+    # retake; only noise Whisper itself struggled through makes a retake.
+    clear = audio.get("speech_confidence", -1.0) >= -0.6  # Whisper made out the words easily
+    if "voice_db" in audio and audio["voice_db"] < -52:
+        flag("voice_very_quiet", "audio", "warn", f"Voice is very quiet ({audio['voice_db']:.0f} dB)")
     if "snr_db" in audio:
         snr = audio["snr_db"]
-        if snr < 10:
+        if snr < 6 and not clear:
             flag("very_noisy", "audio", "fail", f"Background noise almost as loud as the voice ({snr:.0f} dB apart)")
-        elif snr < 18:
-            flag("noisy", "audio", "warn", f"Noticeable background noise ({snr:.0f} dB below the voice)")
+        elif snr < 12:
+            flag("noisy_ok", "audio", "warn", f"Some background noise ({snr:.0f} dB below the voice)")
     clipped = audio.get("clipped_fraction", 0)
     if clipped > 0.005:
         flag("distorted", "audio", "fail", "Audio distorts badly (overloaded)")
@@ -186,7 +199,7 @@ def assess(meta: dict, audio: dict, picture: dict, checks: dict | None = None) -
 
     verdict = RETAKE if any(f["level"] == "fail" for f in flags) else CHECK if flags else GOOD
     return {"verdict": verdict, "flags": flags, "audio": audio, "picture": picture,
-            "judged": bool(checks)}
+            "judged": bool(checks), "rules": AUDIO_RULES}
 
 
 def check_clip(video, meta: dict, transcript: dict | None, samples: np.ndarray | None,
@@ -223,3 +236,35 @@ def recheck(row, checks: dict | None = None) -> dict:
         if analysis_path.exists():
             checks = json.loads(analysis_path.read_text(encoding="utf-8")).get("checks")
     return check_clip(video, meta, transcript, samples, checks)
+
+
+def recheck_audio_once() -> None:
+    """In the background at startup: clips judged by older audio rules that carry a sound
+    flag are measured again under the current ones (a few seconds each, no API cost).
+    Clips whose original was freed from the server keep their old verdict."""
+    import json
+    import logging
+    from pathlib import Path
+
+    import catalog
+    log = logging.getLogger("studio.quality")
+    conn = catalog.connect()
+    done = 0
+    for row in conn.execute("SELECT * FROM clips WHERE quality IS NOT NULL AND status IN ('tagged', 'transcribed')"
+                            " ORDER BY id DESC").fetchall():
+        old = json.loads(row["quality"] or "{}")
+        if old.get("rules", 1) >= AUDIO_RULES or not any(f.get("code") in AUDIO_CODES for f in old.get("flags", [])):
+            continue
+        if not Path(row["video_path"]).exists():
+            continue
+        try:
+            report = recheck(row)
+        except Exception as e:  # never stop the others
+            log.warning("Sound re-check failed for %s: %s", row["source_name"], e)
+            continue
+        catalog.save_quality(conn, row["id"], report)
+        done += 1
+        if old.get("verdict") != report["verdict"]:
+            log.info("Sound re-check: %s %s -> %s", row["title"] or row["source_name"], old.get("verdict"), report["verdict"])
+    if done:
+        log.info("Sound re-checked on %d clips under the new rules", done)

@@ -691,6 +691,8 @@ def main() -> int:
         rebuild_previews(conn)
         import subtitles
         subtitles.fix_once(conn)  # captions in English / Simplified Chinese only (once)
+        import quality  # clips judged by older sound rules get measured again, in the background
+        threading.Thread(target=quality.recheck_audio_once, name="sound-recheck", daemon=True).start()
     editor_on = not args.once and not args.no_editor
     import cloud_sync
     if cloud_sync.enabled():
