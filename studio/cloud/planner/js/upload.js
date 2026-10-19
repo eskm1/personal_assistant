@@ -189,11 +189,13 @@ const url = (path) => `${studioBase() ?? ""}${path}`;
 export async function studioApi(method, path, body) { return api(method, path, body); }
 async function api(method, path, body, retried = false) {
   let res;
+  // A string goes as it is (a cookies.txt for the Instagram sign-in); anything else as JSON.
+  const text = typeof body === "string";
   try {
     res = await fetch(url(path), {
       method, credentials: studioBase() === "" ? "same-origin" : "omit",
-      headers: { Authorization: `Bearer ${await token(retried)}`, ...(body ? { "Content-Type": "application/json" } : {}) },
-      body: body ? JSON.stringify(body) : undefined,
+      headers: { Authorization: `Bearer ${await token(retried)}`, ...(body ? { "Content-Type": text ? "text/plain" : "application/json" } : {}) },
+      body: body ? (text ? body : JSON.stringify(body)) : undefined,
     });
   } catch (err) { throw new NetError(err.message); }
   const j = await res.json().catch(() => ({}));

@@ -1060,10 +1060,12 @@ def production_media(production_id: int, what: str):
 from plan_routes import bp as _plan_bp  # noqa: E402 - its own module; shares webutil, not this file
 from planner_site import bp as _planner_bp  # noqa: E402 - the online planner at /plan/
 from uploads import bp as _uploads_bp  # noqa: E402 - footage uploaded from the planner to a shot
+from ig_signin import bp as _signin_bp  # noqa: E402 - the owner's Instagram sign-in for reference downloads
 
 app.register_blueprint(_plan_bp)
 app.register_blueprint(_planner_bp)
 app.register_blueprint(_uploads_bp)
+app.register_blueprint(_signin_bp)
 
 
 # ── Serve ─────────────────────────────────────────────────────────────────────

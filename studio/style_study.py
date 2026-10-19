@@ -21,6 +21,12 @@ about US$0.05 a reel. Claude then writes a short report and a proposed "House
 style (measured)" section; nothing reaches the playbook until --style-apply.
 Downloaded videos are deleted after measuring; the stills and numbers stay.
 
+Carousels and photo posts (Instagram /p/ links) are analysed from their pictures
+instead: up to ten slides (yt-dlp, or gallery-dl with the cookies.txt sign-in),
+and Claude reads their layout, type, palette, text density, slide structure,
+cover hook and call to action. Whatever the post's metadata says about how it did
+(likes, comments, views, upload date) comes back as "engagement".
+
 The same pieces run the online "Reference guides" (cloud/CONTRACT.md): the
 worker's sync analyses each reference the team adds with analyse(), and drafts
 the brand's style guide with draft_guide() whenever the set of references
@@ -33,7 +39,7 @@ import os
 import re
 import shutil
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -84,10 +90,17 @@ def parse_links(text: str) -> list[dict]:
     return out
 
 
-def download(url: str, out_dir: Path) -> Path:
-    """Fetch a public reel with yt-dlp (≤1080 px wide, mp4)."""
-    import yt_dlp
-    out_dir.mkdir(parents=True, exist_ok=True)
+class DownloadFailed(RuntimeError):
+    """A download that didn't work, with what kind of problem it was (problem_of)."""
+
+    def __init__(self, message: str, problem: str = "other"):
+        super().__init__(message)
+        self.problem = problem
+
+
+def _ydl_opts(out_dir: Path) -> tuple[dict, str]:
+    """yt-dlp's options (≤1080 px wide mp4, ffmpeg found, the Instagram sign-in) and
+    which sign-in it uses ("" = none)."""
     opts = {
         "format": "bv*[height<=1920][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
         "merge_output_format": "mp4",
@@ -106,18 +119,54 @@ def download(url: str, out_dir: Path) -> Path:
     elif COOKIES_FILE.is_file():  # on the server there's no browser: an exported cookies.txt instead
         opts["cookiefile"] = str(COOKIES_FILE)
         browser = "cookies.txt"
+    return opts, browser
+
+
+def download(url: str, out_dir: Path) -> Path:
+    """Fetch a public reel with yt-dlp (≤1080 px wide, mp4)."""
+    return download_post(url, out_dir)[0]
+
+
+def download_post(url: str, out_dir: Path) -> tuple[Path, dict]:
+    """download(), plus what the site says about the post (yt-dlp's info: likes,
+    comments, views, upload date, account, caption). Raises DownloadFailed."""
+    import yt_dlp
+    out_dir.mkdir(parents=True, exist_ok=True)
+    opts, browser = _ydl_opts(out_dir)
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             path = Path(ydl.prepare_filename(info)).with_suffix(".mp4")
     except Exception as e:  # yt-dlp's DownloadError and friends: say what to do about it
-        raise RuntimeError(download_problem(url, str(e), browser)) from None
+        raise DownloadFailed(download_problem(url, str(e), browser), problem_of(str(e))) from None
     if not path.exists():
-        found = sorted(out_dir.glob(f"*{info.get('id', '')}*"))
+        found = sorted(p for p in out_dir.glob(f"*{info.get('id', '')}*") if p.suffix.lower() in VIDEO_EXTS)
         if not found:
-            raise RuntimeError("download finished but no video file appeared")
+            raise DownloadFailed("download finished but no video file appeared")
         path = found[0]
-    return path
+    return path, info
+
+
+def problem_of(message: str) -> str:
+    """What kind of download problem a message describes: login (Instagram wants a
+    sign-in), rate (too many downloads: wait), gone (deleted, private or not a post),
+    net (no internet: try later) or other."""
+    low = re.sub(r"\x1b\[[0-9;]*m", "", str(message)).lower()
+    if any(k in low for k in ("429", "too many requests", "please wait a few minutes", "try again later",
+                              "rate-limit reached or login", "rate limit reached")):
+        # yt-dlp's "rate-limit reached or login required" is either; with no sign-in it's a login.
+        if "or login" in low and not (COOKIES_FILE.is_file() or settings._env("STUDIO_YTDLP_COOKIES_BROWSER")):
+            return "login"
+        return "rate"
+    if any(k in low for k in ("login", "log in", "sign in", "cookies", "authenticat", "empty media response",
+                              "401", "checkpoint", "challenge page", "credentials required")):
+        return "login"
+    if any(k in low for k in ("private", "not available", "unavailable", "404", "removed", "deleted",
+                              "could not be found", "not found", "registered users who follow", "unsupported url")):
+        return "gone"
+    if any(k in low for k in ("timed out", "getaddrinfo", "connection", "network", "resolve", "temporary failure")):
+        return "net"
+    return "other"
 
 
 def download_problem(url: str, message: str, browser: str = "") -> str:
@@ -127,12 +176,16 @@ def download_problem(url: str, message: str, browser: str = "") -> str:
     site = "Instagram" if "instagram" in url.lower() else "The site"
     if any(k in low for k in ("login", "log in", "cookies", "rate-limit", "rate limit", "empty media response",
                               "authentication", "sign in")):
+        if browser == "cookies.txt":
+            return (f"{site} refused the download even with the sign-in file (cookies.txt): it may have expired. "
+                    "Upload a fresh one on the References page (Instagram sign-in for downloads); "
+                    f"it is tried again later ({text[:150]})")
         if browser:
             return (f"{site} refused the download even with {browser}'s sign-in: open the link in {browser} "
                     f"and sign in, then it is retried within a day ({text[:150]})")
         if os.name != "nt":
-            return (f"{site} needs a login: put an exported {COOKIES_FILE.name} (a spare account's sign-in) in "
-                    f"{COOKIES_FILE.parent}, or save the video and drop it in OneDrive: "
+            return (f"{site} needs a login: upload a cookies.txt from a spare account on the References page "
+                    "(Instagram sign-in for downloads), or save the video and drop it in OneDrive: "
                     "Studio Inbox > References > Inspiration")
         return (f"{site} needs a login: set STUDIO_YTDLP_COOKIES_BROWSER=chrome (or edge) in studio\\.env, "
                 f"signed in to {site if site != 'The site' else 'it'} in that browser")
@@ -143,6 +196,209 @@ def download_problem(url: str, message: str, browser: str = "") -> str:
     if any(k in low for k in ("timed out", "getaddrinfo", "connection", "network", "resolve")):
         return f"Couldn't reach {site.lower() if site != 'The site' else 'the site'} (no internet?): {text[:150]}"
     return f"Download failed: {text[:250]}"
+
+
+# ── Carousels and photos ──────────────────────────────────────────────────────
+
+MAX_SLIDES = 10                 # pictures of a carousel Claude looks at
+SLIDE_MAX_BYTES = 25 << 20      # a picture bigger than this isn't a slide
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
+GALLERY_DL_TIMEOUT = 180
+_ACCOUNT_RE = re.compile(r"^[A-Za-z0-9._]{1,30}$")
+
+
+def is_post_link(url: str) -> bool:
+    """An Instagram /p/ link: a carousel or a photo (or now and then a single video)."""
+    return bool(re.search(r"instagram\.com/(?:[A-Za-z0-9_.]+/)?p/", url or "", re.I))
+
+
+def _best_image(entry: dict) -> str | None:
+    thumbs = [t for t in entry.get("thumbnails") or []
+              if isinstance(t, dict) and str(t.get("url") or "").startswith("https://")]
+    if thumbs:
+        return max(thumbs, key=lambda t: (t.get("width") or 0) * (t.get("height") or 0))["url"]
+    one = entry.get("thumbnail")
+    return one if isinstance(one, str) and one.startswith("https://") else None
+
+
+def _fetch_image(url: str, path: Path) -> Path | None:
+    import requests
+    try:
+        with requests.get(url, timeout=(10, 30), stream=True, allow_redirects=True,
+                          headers={"Referer": "https://www.instagram.com/", "User-Agent": "Mozilla/5.0"}) as r:
+            if r.status_code != 200:
+                return None
+            size = 0
+            with open(path, "wb") as fh:
+                for chunk in r.iter_content(1 << 16):
+                    size += len(chunk)
+                    if size > SLIDE_MAX_BYTES:
+                        break
+                    fh.write(chunk)
+        if size > SLIDE_MAX_BYTES or size == 0:
+            path.unlink(missing_ok=True)
+            return None
+        return path
+    except (requests.RequestException, OSError):
+        path.unlink(missing_ok=True)
+        return None
+
+
+def _gallery_dl(args: list[str], timeout: int = GALLERY_DL_TIMEOUT) -> subprocess.CompletedProcess:
+    """Run gallery-dl (pip package, same Python), with the cookies.txt sign-in when there is one."""
+    import sys
+    cookies = ["--cookies", str(COOKIES_FILE)] if COOKIES_FILE.is_file() else []
+    return subprocess.run([sys.executable, "-m", "gallery_dl", *cookies, *args], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=timeout,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+def _gallery_error(stderr: str) -> str:
+    lines = [l.strip() for l in (stderr or "").splitlines() if "[error]" in l or "error:" in l.lower()]
+    return re.sub(r"^\[[^\]]+\]\[error\]\s*", "", lines[-1]) if lines else (stderr or "").strip()[-250:]
+
+
+def fetch_slides(url: str, out_dir: Path) -> dict:
+    """The pictures of a carousel or photo post (up to MAX_SLIDES, in order) and what
+    Instagram says about it. yt-dlp first (it reads public posts without a sign-in), then
+    gallery-dl (better with a cookies.txt sign-in). Returns {kind: images, files, info,
+    source} or {kind: video} when the post is a single video (analyse it as a reel).
+    Raises DownloadFailed."""
+    import yt_dlp
+    out_dir.mkdir(parents=True, exist_ok=True)
+    opts, browser = _ydl_opts(out_dir)
+    opts.update(noplaylist=False, ignore_no_formats_error=True, extract_flat=False)
+    first_error = None
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+        entries = [e for e in (info.get("entries") or []) if isinstance(e, dict)]
+        if not entries and info.get("formats"):
+            return {"kind": "video"}
+        files = []
+        for n, entry in enumerate((entries or [info])[:MAX_SLIDES], 1):
+            src = _best_image(entry)
+            got = _fetch_image(src, out_dir / f"slide_{n:02d}.jpg") if src else None
+            if got:
+                files.append(got)
+        if files:
+            return {"kind": "images", "files": files, "info": info, "source": "yt-dlp",
+                    "slides": len(entries) or 1}
+        first_error = DownloadFailed("Instagram didn't give the post's pictures", "other")
+    except Exception as e:
+        first_error = DownloadFailed(download_problem(url, str(e), browser), problem_of(str(e)))
+    # gallery-dl: images (and the cover of any video slide), with a .json of metadata per file.
+    if first_error.problem in ("rate", "net") or (first_error.problem == "login" and not COOKIES_FILE.is_file()):
+        raise first_error  # gallery-dl would be refused the same way
+    gdl = out_dir / "gdl"
+    try:
+        result = _gallery_dl(["-D", str(gdl), "--write-metadata", "--range", f"1-{MAX_SLIDES}", "--no-part",
+                              "--no-mtime", "-o", "videos=false", "-o", "previews=video", url])
+    except (OSError, subprocess.SubprocessError) as e:
+        raise DownloadFailed(f"{first_error} (gallery-dl couldn't run: {type(e).__name__})", first_error.problem) from None
+    files = sorted(p for p in gdl.glob("*") if p.suffix.lower() in IMAGE_EXTS) if gdl.exists() else []
+    if not files:
+        message = _gallery_error(result.stderr)
+        raise DownloadFailed(download_problem(url, message or str(first_error), "cookies.txt" if COOKIES_FILE.is_file()
+                                              else ""), problem_of(message) if message else first_error.problem)
+    meta = {}
+    for js in sorted(gdl.glob("*.json")):
+        try:
+            meta = json.loads(js.read_text(encoding="utf-8"))
+            break
+        except (OSError, ValueError):
+            continue
+    return {"kind": "images", "files": files[:MAX_SLIDES], "info": meta, "source": "gallery-dl",
+            "slides": int(meta.get("count") or len(files)) if isinstance(meta, dict) else len(files)}
+
+
+def _int(v):
+    try:
+        return int(v) if v is not None and v != "" and int(v) >= 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def engagement_of(info: dict, source: str) -> dict:
+    """What a post's metadata says about how it did, in one shape whichever tool read it:
+    {likes, comments, views, followers, uploaded (YYYY-MM-DD), account, source}. A number
+    Instagram didn't give is None (not 0)."""
+    info = info if isinstance(info, dict) else {}
+    uploaded = None
+    if source == "gallery-dl":
+        uploaded = str(info.get("post_date") or info.get("date") or "")[:10] or None
+        out = {"likes": _int(info.get("likes")), "comments": _int(info.get("comments") or info.get("comment_count")),
+               "views": _int(info.get("video_view_count") or info.get("play_count")),
+               "account": str(info.get("username") or "")[:100]}
+        user = info.get("user") if isinstance(info.get("user"), dict) else {}
+        followers = _int(user.get("follower_count") or (user.get("edge_followed_by") or {}).get("count"))
+    else:
+        if info.get("timestamp"):
+            try:
+                uploaded = datetime.fromtimestamp(int(info["timestamp"]), timezone.utc).strftime("%Y-%m-%d")
+            except (TypeError, ValueError, OSError, OverflowError):
+                uploaded = None
+        elif re.fullmatch(r"\d{8}", str(info.get("upload_date") or "")):
+            d = str(info["upload_date"])
+            uploaded = f"{d[:4]}-{d[4:6]}-{d[6:]}"
+        out = {"likes": _int(info.get("like_count")), "comments": _int(info.get("comment_count")),
+               "views": _int(info.get("view_count")),
+               "account": str(info.get("channel") or info.get("uploader_id") or "")[:100]}
+        followers = _int(info.get("channel_follower_count"))
+    return {**out, "followers": followers, "uploaded": uploaded, "source": source}
+
+
+def caption_of(info: dict) -> str:
+    info = info if isinstance(info, dict) else {}
+    return str(info.get("description") or "")[:2000]
+
+
+def caption_numbers(caption: str) -> dict:
+    words = re.findall(r"[\w'’-]+", re.sub(r"#\w+", " ", caption or ""))
+    return {"caption": caption or "", "caption_words": len(words), "hashtags": len(re.findall(r"#\w+", caption or ""))}
+
+
+def account_followers(account: str) -> int | None:
+    """An Instagram account's follower count (gallery-dl's profile info; needs cookies.txt).
+    None when it can't be read."""
+    if not COOKIES_FILE.is_file() or not _ACCOUNT_RE.match(account or ""):
+        return None
+    try:
+        result = _gallery_dl(["-j", f"https://www.instagram.com/{account}/info/"], timeout=90)
+        data = json.loads(result.stdout or "[]")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    for message in data if isinstance(data, list) else []:
+        user = message[-1] if isinstance(message, list) and message and isinstance(message[-1], dict) else None
+        if user:
+            n = _int(user.get("follower_count") or (user.get("edge_followed_by") or {}).get("count"))
+            if n is not None:
+                return n
+    return None
+
+
+def slide_stills(files: list[Path], out_dir: Path) -> list[tuple[float, Path]]:
+    """Each picture as a small still (540 px wide JPEG), numbered in post order."""
+    from PIL import Image, ImageOps
+    try:
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+    except Exception:
+        pass
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stills = []
+    for n, f in enumerate(files[:MAX_SLIDES], 1):
+        try:
+            with Image.open(f) as im:
+                im = ImageOps.exif_transpose(im).convert("RGB")
+                if im.width > 540:
+                    im = im.resize((540, max(1, round(im.height * 540 / im.width))))
+                path = out_dir / f"{n:02d}.jpg"
+                im.save(path, "JPEG", quality=82)
+                stills.append((float(n), path))
+        except Exception as e:  # one broken picture shouldn't sink the post
+            log.warning("Couldn't read slide %s (%s): %s", n, f.name, e)
+    return stills
 
 
 # ── Measuring (no API cost) ───────────────────────────────────────────────────
@@ -242,6 +498,23 @@ def stills(video: Path, cuts: list[float], duration: float, out_dir: Path) -> li
 
 # ── Looking (Claude) ──────────────────────────────────────────────────────────
 
+DESIGN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "palette": {"type": "array", "items": {"type": "string"}},
+        "materials": {"type": "array", "items": {"type": "string"}},
+        "lighting": {"type": "string"},
+        "camera": {"type": "string"},
+        "framing": {"type": "string"},
+        "shot_types": {"type": "array", "items": {"type": "string"}},
+        "text_style": {"type": "string"},
+        "closest_free_fonts": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["palette", "materials", "lighting", "camera", "framing", "shot_types", "text_style",
+                 "closest_free_fonts"],
+    "additionalProperties": False,
+}
+
 LOOK_SCHEMA = {
     "type": "object",
     "properties": {
@@ -267,8 +540,9 @@ LOOK_SCHEMA = {
         "graphics": {"type": "string"},
         "cta": {"type": "string"},
         "standout": {"type": "string"},
+        "design": DESIGN_SCHEMA,
     },
-    "required": ["layouts", "captions", "hook", "first_frame", "broll", "graphics", "cta", "standout"],
+    "required": ["layouts", "captions", "hook", "first_frame", "broll", "graphics", "cta", "standout", "design"],
     "additionalProperties": False,
 }
 
@@ -282,7 +556,60 @@ screen; text_card; before_after).
 serif accent words"), accent colours and what they mark, box/outline/shadow, position.
 - hook: what the first 3 seconds say and show. first_frame: what the very first frame shows.
 - broll: kinds of cutaway footage used. graphics: motion graphics, cards, arrows, counters (or "none").
-- cta: how it ends and asks for something. standout: the one editing choice that makes this reel work."""
+- cta: how it ends and asks for something. standout: the one editing choice that makes this reel work.
+- design: the look of the spaces and the filming. palette: the main colours (names, with a hex code \
+where clear); materials (e.g. "fluted oak", "terrazzo", "brushed brass"); lighting (daylight, warm \
+lamps, moody, flash); camera (handheld, gimbal glide, locked off, slow push-in, POV); framing \
+(symmetry, low angle, close details, wide room reveals); shot_types (wide reveal, detail macro, \
+walk-through, hands at work, before/after); text_style: on-screen text and caption type (serif or sans, \
+weight, rounded or geometric, letter spacing, case); closest_free_fonts: the nearest free fonts \
+(Google Fonts / SIL Open Font License) to the type you see, e.g. "Figtree", "DM Serif Display"."""
+
+SLIDES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "structure": {"type": "array", "items": {"type": "string", "enum": [
+            "cover", "point", "list", "quote", "before_after", "photo", "detail", "plan", "product", "ask", "other"]}},
+        "cover_hook": {"type": "string"},
+        "words_per_slide": {"type": "number"},
+        "text_density": {"type": "string"},
+        "typography": {
+            "type": "object",
+            "properties": {
+                "headline": {"type": "string"},
+                "body": {"type": "string"},
+                "case": {"type": "string", "enum": ["upper", "mixed", "lower", "none"]},
+                "closest_free_fonts": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["headline", "body", "case", "closest_free_fonts"],
+            "additionalProperties": False,
+        },
+        "layout": {"type": "string"},
+        "cta": {"type": "string"},
+        "standout": {"type": "string"},
+        "design": DESIGN_SCHEMA,
+    },
+    "required": ["structure", "cover_hook", "words_per_slide", "text_density", "typography", "layout", "cta",
+                 "standout", "design"],
+    "additionalProperties": False,
+}
+
+_SLIDES_SYSTEM = """You study Instagram carousel and photo posts (interiors, renovation, home design) to \
+describe their design and content precisely. You get the post's pictures in order (slide 1 is the cover) \
+and its caption. Describe only what you can see or read; say "unclear" rather than guess.
+- structure: one per slide, in order (cover = the first slide's hook; point = one idea with text; list; \
+quote; before_after; photo = a picture with no or little text; detail = a close-up; plan = a floor plan \
+or drawing; product; ask = a call-to-action slide).
+- cover_hook: what the cover says and shows to stop the scroll (quote its words).
+- words_per_slide: about how many words of on-picture text a slide carries (0 for photos). text_density: \
+in words, e.g. "photo-led, 0-6 words" or "text-led, 25-40 words a slide".
+- typography: the headline and body type (serif or sans, weight, rounded or geometric, spacing), the \
+case, and the nearest free fonts (Google Fonts / SIL Open Font License), e.g. "Figtree", "Fraunces".
+- layout: margins, where text sits, grids, frames, numbering, brand marks.
+- cta: how the post asks for something (last slide or caption). standout: the one design or content \
+choice that makes this post work.
+- design: palette (main colours, hex where clear), materials, lighting, camera (for photos: eye level, \
+low angle, flat lay), framing, shot_types, text_style and closest_free_fonts."""
 
 
 def look(frames: list[tuple[float, Path]], transcript: str, ref: str, client=None) -> dict:
@@ -307,18 +634,51 @@ def look(frames: list[tuple[float, Path]], transcript: str, ref: str, client=Non
     return json.loads(next(b.text for b in response.content if b.type == "text"))
 
 
+def look_slides(frames: list[tuple[float, Path]], caption: str, ref: str, client=None) -> dict:
+    """Claude's read of a carousel or photo post: layout, type, palette, text density,
+    slide structure, cover hook and call to action (about US$0.05 a post)."""
+    import anthropic
+
+    import usage
+    from settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
+    content = []
+    for n, path in frames:
+        content.append({"type": "text", "text": f"Slide {int(n)}"})
+        content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                    "data": base64.standard_b64encode(path.read_bytes()).decode()}})
+    content.append({"type": "text", "text": "Caption:\n" + (caption or "(no caption)")[:2000]})
+    client = client or anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or None)
+    response = client.beta.messages.create(
+        model=CLAUDE_MODEL, max_tokens=8000, betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+        output_config={"effort": "low", "format": {"type": "json_schema", "schema": SLIDES_SCHEMA}},
+        system=_SLIDES_SYSTEM, messages=[{"role": "user", "content": content}])
+    usage.record("style", ref, response)
+    if response.stop_reason in ("refusal", "max_tokens"):
+        raise RuntimeError(f"Claude couldn't describe this post ({response.stop_reason})")
+    return json.loads(next(b.text for b in response.content if b.type == "text"))
+
+
 # ── One reference: measure it and look at it ──────────────────────────────────
 
 def analyse(source: str | Path, stills_dir: Path | None = None, *, download_dir: Path | None = None,
-            keep_video: bool = False, client=None, ref: str = "style") -> dict:
-    """Analyse one reel: a link (downloaded, then deleted unless keep_video) or a
-    local video file (never deleted). Returns {measured, look, stills: [local
-    paths in time order]}. Raises RuntimeError with a readable reason."""
+            keep_video: bool = False, client=None, ref: str = "style", kind: str | None = None) -> dict:
+    """Analyse one post: a link (downloaded, then deleted unless keep_video) or a
+    local video file (never deleted). kind: "images" for a carousel or photo post,
+    "video" for a reel; None = from the link (Instagram /p/ links are tried as
+    pictures first). Returns {kind, measured, look, stills: [local paths in order],
+    engagement (links only)}. Raises RuntimeError (DownloadFailed for downloads)
+    with a readable reason."""
     is_url = isinstance(source, str) and URL_RE.match(source.strip())
     slug = re.sub(r"[^A-Za-z0-9]+", "_", str(source))[-60:].strip("_") or "reel"
     stills_dir = stills_dir or STUDIES / "stills" / slug
+    work = download_dir or STUDIES / "downloads"
+    if is_url and (kind == "images" or (kind is None and is_post_link(source))):
+        post = fetch_slides(source.strip(), work / f"slides_{slug[-24:]}")
+        if post["kind"] == "images":
+            return _analyse_slides(post, stills_dir, work / f"slides_{slug[-24:]}", keep_video, client, ref)
+    info = {}
     if is_url:
-        video = download(source.strip(), download_dir or STUDIES / "downloads")
+        video, info = download_post(source.strip(), work)
     else:
         video = Path(source)
         if not video.exists():
@@ -328,6 +688,8 @@ def analyse(source: str | Path, stills_dir: Path | None = None, *, download_dir:
             measured = measure(video)
         except (RuntimeError, OSError, KeyError, subprocess.SubprocessError) as e:
             raise RuntimeError(f"couldn't measure the video ({type(e).__name__}: {str(e)[:200]})") from e
+        if is_url:
+            measured.update(caption_numbers(caption_of(info)))
         if stills_dir.exists():
             shutil.rmtree(stills_dir, ignore_errors=True)
         frames = stills(video, measured["cut_times"], measured["duration"], stills_dir)
@@ -337,7 +699,42 @@ def analyse(source: str | Path, stills_dir: Path | None = None, *, download_dir:
     finally:
         if is_url and not keep_video:
             video.unlink(missing_ok=True)
-    return {"measured": measured, "look": seen, "stills": [str(p) for _, p in frames]}
+    out = {"kind": "video", "measured": measured, "look": seen, "stills": [str(p) for _, p in frames]}
+    if is_url:
+        out["engagement"] = engagement_of(info, "yt-dlp")
+    return out
+
+
+def _analyse_slides(post: dict, stills_dir: Path, folder: Path, keep: bool, client, ref: str) -> dict:
+    """The picture half of analyse(): small stills of each slide, then Claude's read."""
+    try:
+        if stills_dir.exists():
+            shutil.rmtree(stills_dir, ignore_errors=True)
+        frames = slide_stills(post["files"], stills_dir)
+        if not frames:
+            raise RuntimeError("couldn't read any of the post's pictures")
+        from PIL import Image
+        with Image.open(post["files"][0]) as im:
+            width, height = im.size
+        caption = caption_of(post["info"])
+        measured = {"kind": "images", "slides": int(post.get("slides") or len(frames)), "slides_seen": len(frames),
+                    "width": width, "height": height, "aspect": round(width / height, 3) if height else None,
+                    **caption_numbers(caption)}
+        seen = look_slides(frames, caption, ref, client)
+    finally:
+        if not keep:
+            shutil.rmtree(folder, ignore_errors=True)
+    return {"kind": "images", "measured": measured, "look": seen, "stills": [str(p) for _, p in frames],
+            "engagement": engagement_of(post["info"], post.get("source") or "yt-dlp")}
+
+
+def brief(result: dict) -> str:
+    """One line about an analysis, for logs."""
+    m = result.get("measured") or {}
+    if result.get("kind") == "images" or m.get("kind") == "images":
+        return f"{m.get('slides_seen', 0)} of {m.get('slides', 0)} slides"
+    return (f"{(m.get('duration') or 0):.0f}s, {m.get('cuts')} cuts, shots ~{m.get('shot_median')}s, "
+            f"{m.get('words_per_sec') or '-'} words/s")
 
 
 # ── Summary ───────────────────────────────────────────────────────────────────
@@ -533,9 +930,7 @@ def run(source: Path, keep_videos: bool = False, client=None, say=print) -> Path
                              download_dir=study / "videos", keep_video=keep_videos, client=client,
                              ref=f"style:{study.name}")
             reel.update(result)
-            m = result["measured"]
-            say(f"  {i}/{len(reels)} {reel['group']}: {name}: {m['duration']:.0f}s, {m['cuts']} cuts, "
-                f"shots ~{m['shot_median']}s, {m.get('words_per_sec') or '-'} words/s")
+            say(f"  {i}/{len(reels)} {reel['group']}: {name}: {brief(result)}")
         except Exception as e:  # one bad link shouldn't sink the study
             reel["error"] = str(e)[:300] if isinstance(e, RuntimeError) else f"{type(e).__name__}: {e}"[:300]
             say(f"  {i}/{len(reels)} skipped {name}: {reel['error']}")
@@ -558,13 +953,18 @@ def run(source: Path, keep_videos: bool = False, client=None, say=print) -> Path
 
 # ── Into the playbook ─────────────────────────────────────────────────────────
 
-def apply_section(section: str, origin: str) -> Path:
-    """Put a house style into the playbook between the markers, replacing an earlier one."""
+def apply_section(section: str, origin: str, markers: tuple[str, str] = (START, END)) -> Path:
+    """Put a house style (or another section with its own markers, such as the taste
+    report's) into the playbook between the markers, replacing an earlier one."""
     import playbook
+    start, end = markers
     text = playbook.text()
-    block = f"{START}\n{section.strip()}\n\n_{origin}_\n{END}"
-    if START in text and END in text:
-        text = text[:text.index(START)] + block + text[text.index(END) + len(END):]
+    block = f"{start}\n{section.strip()}\n\n_{origin}_\n{end}"
+    if start in text and end in text:
+        text = text[:text.index(start)] + block + text[text.index(end) + len(end):]
+    elif start != START and START in text:  # another section goes just before the house style
+        i = text.index(START)
+        text = text[:i] + block + "\n\n" + text[i:]
     elif "## Notes from reviews" in text:
         i = text.index("## Notes from reviews")
         text = text[:i] + block + "\n\n" + text[i:]

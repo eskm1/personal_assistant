@@ -47,7 +47,8 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   migration not yet online: 20261018000000_shoot_plan, 20261019000000_footage_ideas (the `ideas` job,
   `clips.usable`/`flagged`), 20261020000000_content_plan (+ the updated plan-organise / plan-develop functions),
   20261021000000_carousels (+ plan-develop's slide writing) and 20261022000000_topics (`client_questions`,
-  `ideas.suggestion`, the `topics` job). Re-run after any new migration. Until then the planner hides the "This
+  `ideas.suggestion`, the `topics` job) and 20261023000000_reference_library (imports, held analyses, taste
+  reports, the `refs`/`taste` jobs). Re-run after any new migration. Until then the planner hides the "This
   month" strip, carousels, suggested topics and Client questions, and the server sends no `post_type`.
 - Content plan (Bryan approved the proposal 2026-10-18: https://claude.ai/artifact/UyGPCh6YJv3y334g6531Ke), built in
   four steps, all four now built; none yet proven on the server or with real Claude/Gemini. Step 1: kinds of post

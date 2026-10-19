@@ -662,6 +662,57 @@ it becomes a reference and moves to `Studio\References`. Then, on the laptop, au
 
 Retire a reference rather than deleting it when it no longer represents the style.
 
+### Many references at once, and the taste report
+
+When the team has a long list of posts it likes (say an export of 800 saved Instagram posts),
+import them in one go: **References** > **Import many…**, then paste the links (one per line) or
+choose the CSV file (a `url` column; an `account` and `type` column are kept too), and say whether
+they're **Inspiration** or **Ours**. The same post twice (a `/reel/` and a `/p/` link to one post,
+or one already in References) is skipped. Imported posts go in the **Library** on the References
+page: a progress line ("312 of 814 analysed · 40 couldn't be downloaded"), a paged grid you can
+filter by kind of post and account, and each post's own page.
+
+**Nothing is downloaded or spent until Bryan presses Analyse.** The Library shows the cost first:
+**Analyse all** (about US$0.05 a post: US$41 and about 18 hours for 814) or **Analyse a sample of
+150 first** (about US$7.50 and 3 hours, spread across kinds of post and accounts, at most two per
+account). Studio then works through them on the server one every minute or so, so Instagram
+doesn't block it: when Instagram refuses, it waits longer each time (10 minutes, then 20, 40 …), and
+if most downloads want a login it pauses and says so. **Pause**, **Resume**, **Stop** (the rest go
+back to waiting, nothing more is spent) and **Try again** (the ones that failed but weren't
+deleted) are on the same card. A monthly cap, `STUDIO_REFERENCE_BUDGET_USD` (default US$60),
+covers this and the taste report; past it, analysing waits for next month.
+
+Reels are measured as before. Carousels and photos are analysed from their pictures (up to ten
+slides): Claude reads the layout, type (with the nearest free fonts), colours, how many words a
+slide carries, the slide order, the cover's hook and the call to action. Whatever Instagram shows
+is kept as engagement: likes, comments, views, the date, and (with the sign-in below) the account's
+followers. Downloads are deleted after analysis; only small stills stay.
+
+**Instagram sign-in for downloads.** Instagram often refuses downloads to a server. On the
+References page (Bryan only) there's a box with four steps: pick a **spare** Instagram account (not
+Urban Makers' own); sign in to it at instagram.com on a laptop in Chrome or Edge; with the browser
+extension **"Get cookies.txt LOCALLY"** export `cookies.txt` while on instagram.com; upload the file
+in that box. It goes straight to the Studio machine (`Studio/cookies.txt`, readable by Studio only;
+only the instagram.com lines are kept, nothing goes online). The box then says "Signed in for
+downloads · added <date>". When downloads start failing with "login required" again, the sign-in
+has expired: export a fresh file and upload it (**Replace**); a paused batch carries on by itself.
+
+**The taste report** (Style guide > Taste report, or the Library's **Taste report** link): once
+posts are analysed, Bryan presses **Write the taste report** (about US$4 for 800 posts, US$1.20 for
+150). Claude reads every analysis and writes: (1) **Design**: colours, materials, light, camera,
+framing, kinds of shot, on-screen type and the closest free fonts Studio could bundle (for a
+softer caption font), caption styling, carousel layouts; (2) **Content**: formats, hooks (quoted),
+structures, topics, length and pace, calls to action, voice; (3) **Engagement**: what the
+better-performing posts share against the rest, with the numbers and their caveats; then ranked
+**recommendations** for Urban Makers by kind of post and for Reels or carousels, the editor and
+carousel **settings** worth changing, which posts stand out and why (Studio's own inference: the
+list has no tags), and a **proposed style guide** and short **taste section** for the playbook.
+Example posts show as thumbnails that open the post on Instagram. The page works on a phone; the
+same report is kept as `Studio/Style/taste-report-v<n>.md`. **Nothing changes until Bryan
+approves it**: then the proposed guide becomes the style guide in force and the taste section goes
+into the playbook (the idea generator and editor follow both). Settings it suggests are only
+suggestions: changing one is a separate decision.
+
 ### Study from the command line
 
 1. Make a text file, say `reels.txt`, with links under two headings, and a few words on why:
@@ -684,7 +735,8 @@ cut, speaking pace, pauses, loudness, and how far the music sits under the voice
 at about a dozen stills per reel for captions, layouts, B-roll, hook and call to action (about
 US$0.05 a reel) and writes the report (cents). Public posts only; downloads are deleted after
 measuring. If Instagram asks for a login, set `STUDIO_YTDLP_COOKIES_BROWSER=chrome` (or `edge`) in
-`.env` so the download uses your browser's Instagram sign-in.
+`.env` so the download uses your browser's Instagram sign-in (on the server: the References page's
+"Instagram sign-in for downloads", above).
 ## 15. Moving Studio to a server
 
 [server/SERVER.md](server/SERVER.md) has the whole move, about 45 minutes once: rent a Hetzner

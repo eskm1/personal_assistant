@@ -25,7 +25,9 @@ STUDIO_CLOUD_SYNC_SECONDS (30 s) it:
      (two per tick at most), drafts a new style guide when a brand's set of
      analysed references changes (or on a "style" job), and writes the approved
      guide into the playbook. If the online database predates these tables, it
-     says "run cloud_setup.py --update" and skips this step.
+     says "run cloud_setup.py --update" and skips this step. The imported
+     reference library (ref_library.py: the owner's Analyse, one paced analysis
+     a tick) and the taste report (taste.py) run here too.
 
 Plain HTTPS to PostgREST (/rest/v1) and Storage (/storage/v1) with the service
 key; no extra packages. The key never leaves for anywhere but
@@ -246,10 +248,24 @@ def _heartbeat(api: Client) -> None:
         "id": 1, "last_seen": _now(), "version": f"{v['commit']} {v['date'][:10]}".strip(),
         "info": {"subject": v.get("subject", ""), "sync": status.get("counts", {}), "note": status.get("note"),
                  "dashboard_url": settings.DASHBOARD_URL, "footage_ideas": status.get("footage_ideas"),
-                 "topics": status.get("topics"),
+                 "topics": status.get("topics"), "references": _library_info(),
                  # Can Studio draw AI concept pictures (the image key is set)? Never the key itself.
                  "concepts": concepts.info()},
     }, on_conflict="id", resolution="merge-duplicates", returning=False)
+
+
+def _library_info() -> dict | None:
+    """The reference library's pacing, budget and estimates (never the sign-in file)."""
+    try:
+        import ref_library
+        conn = catalog.connect()
+        try:
+            return ref_library.info(conn)
+        finally:
+            conn.close()
+    except Exception as e:
+        log.debug("No reference library info: %s", e)
+        return None
 
 
 def _push_context(api: Client) -> int:
@@ -997,13 +1013,26 @@ def _due(analysis: dict, now: datetime) -> bool:
 
 def analyse_reference(api: Client, ref: dict, analysis: dict, client=None) -> str:
     """Claim one reference's analysis, run it and write the result. Returns a line for the log."""
+    return analyse_one(api, ref, analysis, client)[0]
+
+
+KIND_HINT = {"carousel": "images", "image": "images", "reel": "video", "video": "video", "series": "video"}
+
+
+def analyse_one(api: Client, ref: dict, analysis: dict, client=None, library: bool = False) -> tuple[str, str]:
+    """analyse_reference(), also saying how it went: ok, or the download problem (login,
+    rate, gone, net, other; style_study.problem_of). A library reference Instagram
+    refused (login, rate) or that couldn't be reached (net) goes back in the queue
+    instead of failing; the pacing (ref_library) decides when to try again."""
     import style_study
     claimed = api.update("reference_analysis", {"reference_id": f"eq.{ref['id']}", "state": f"eq.{analysis['state']}"},
                          {"state": "running", "error": None})
     if not claimed:
-        return ""
+        return "", ""
+    library_cols = check_library(api)
     name = ref.get("title") or ref.get("url") or ref.get("file_name")
     work = settings.REFERENCES / ".work" / str(ref["id"])
+    problem = "other"
     try:
         if ref.get("url"):
             source = ref["url"]
@@ -1013,7 +1042,7 @@ def analyse_reference(api: Client, ref: dict, analysis: dict, client=None) -> st
                 raise RuntimeError(f"{ref['file_name']} isn't in Studio\\References on the laptop any more: "
                                    "drop it in Studio Inbox\\References again")
         result = style_study.analyse(source, work / "stills", download_dir=work, client=client,
-                                     ref=f"ref:{ref['id']}")
+                                     ref=f"ref:{ref['id']}", kind=KIND_HINT.get(ref.get("post_type") or ""))
         paths = []
         for n, still in enumerate(result["stills"], 1):
             path = f"refs/{ref['id']}/{n}.jpg"
@@ -1026,13 +1055,13 @@ def analyse_reference(api: Client, ref: dict, analysis: dict, client=None) -> st
                 api.request("DELETE", f"/storage/v1/object/{BUCKET}", json_body={"prefixes": stale})
             except CloudError as e:
                 log.warning("Couldn't remove old stills of reference %s: %s", ref["id"], e)
-        done = api.update("reference_analysis", {"reference_id": f"eq.{ref['id']}", "state": "eq.running"},
-                          {"state": "done", "measured": result["measured"], "look": result["look"], "stills": paths,
-                           "error": None, "analyser": style_study.ANALYSER, "analysed_at": _now()})
-        m = result["measured"]
-        log.info("Reference %s analysed: %s: %.0fs, %s cuts, %d stills", ref["id"], name, m["duration"], m["cuts"],
-                 len(paths))
-        return f"reference #{ref['id']}: analysed" + ("" if done else " (changed meanwhile: again next tick)")
+        values = {"state": "done", "measured": result["measured"], "look": result["look"], "stills": paths,
+                  "error": None, "analyser": style_study.ANALYSER, "analysed_at": _now()}
+        if library_cols:
+            values.update(kind=result.get("kind") or "video", engagement=result.get("engagement"), problem=None)
+        done = api.update("reference_analysis", {"reference_id": f"eq.{ref['id']}", "state": "eq.running"}, values)
+        log.info("Reference %s analysed: %s: %s, %d stills", ref["id"], name, style_study.brief(result), len(paths))
+        return (f"reference #{ref['id']}: analysed" + ("" if done else " (changed meanwhile: again next tick)"), "ok")
     except CloudError as e:
         if "can't reach" in str(e):
             raise  # offline: the stale check puts it back
@@ -1043,18 +1072,50 @@ def analyse_reference(api: Client, ref: dict, analysis: dict, client=None) -> st
         else:
             log.exception("Reference %s (%s) not analysed", ref["id"], name)
         message = str(e) if isinstance(e, RuntimeError) else f"{type(e).__name__}: {e}"
+        problem = getattr(e, "problem", "other")
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    api.update("reference_analysis", {"reference_id": f"eq.{ref['id']}", "state": "eq.running"},
-               {"state": "failed", "error": (message or "failed")[:1000], "analyser": style_study.ANALYSER})
-    return f"reference #{ref['id']}: failed ({message[:100]})"
+    values = {"error": (message or "failed")[:1000], "analyser": style_study.ANALYSER}
+    if library_cols:
+        values["problem"] = problem if problem in ("login", "rate", "gone") else "other"
+    if library and problem in ("login", "rate", "net"):
+        values["state"] = "pending"  # back in the queue: tried again once the pacing allows
+        api.update("reference_analysis", {"reference_id": f"eq.{ref['id']}", "state": "eq.running"}, values)
+        return f"reference #{ref['id']}: waiting ({message[:100]})", problem
+    values["state"] = "failed"
+    api.update("reference_analysis", {"reference_id": f"eq.{ref['id']}", "state": "eq.running"}, values)
+    return f"reference #{ref['id']}: failed ({message[:100]})", problem
+
+
+_library_online = False       # migration 20261023000000 (reference library, taste reports) is online
+_library_checked = 0.0
+
+
+def check_library(api: Client) -> bool:
+    """Is the reference-library migration online? Asked again every 10 minutes while it isn't."""
+    global _library_online, _library_checked
+    if _library_online or time.time() - _library_checked < SCHEMA_RECHECK_SECONDS:
+        return _library_online
+    _library_checked = time.time()
+    try:
+        api.request("GET", "/rest/v1/taste_reports", params={"select": "id", "limit": 1})
+        _library_online = True
+    except CloudError as e:
+        if not _missing_table(e):
+            raise
+        log.warning("%s (the reference library and taste reports wait for it)", NEEDS_UPDATE)
+    return _library_online
 
 
 def _guide_inputs(refs: list[dict], analyses: dict[int, dict], brand: str) -> list[dict]:
-    """The brand's current set: active references whose analysis is done, with their numbers."""
+    """The brand's current set: active references added one by one (not the imported library)
+    whose analysis is done, with their numbers."""
+    import ref_library
     out = []
     for r in refs:
         a = analyses.get(r["id"])
+        if ref_library.is_library(r):
+            continue  # the imported library speaks through the taste report instead
         if r["brand"] == brand and r["status"] == "active" and a and a["state"] == "done" and a.get("measured"):
             out.append({**r, "measured": a["measured"], "look": a.get("look")})
     return sorted(out, key=lambda r: r["id"])
@@ -1108,9 +1169,12 @@ def apply_active_guide(guides: list[dict]) -> str | None:
     return f"style guide v{active['version']} applied to the playbook"
 
 
-def sync_references(api: Client, started: float, client=None) -> dict:
+def sync_references(api: Client, started: float, client=None, conn=None) -> dict:
     """Intake, analyses, drafts and applying, each step on its own: one failing
-    never stops the others or the rest of the sync. Returns counts."""
+    never stops the others or the rest of the sync. Then the imported library
+    (ref_library: the owner's Analyse buttons, one paced analysis) and the taste
+    report (taste: the owner's button, approvals into the playbook). Returns counts."""
+    import ref_library
     global _refs_missing_until
     out: dict = {}
     if time.time() < _refs_missing_until:
@@ -1152,7 +1216,8 @@ def sync_references(api: Client, started: float, client=None) -> dict:
 
     # Analyses (active references only; at most REFS_PER_TICK, within the tick's time budget)
     now = datetime.now(timezone.utc)
-    due = [r for r in refs if r["status"] == "active" and analyses.get(r["id"]) and _due(analyses[r["id"]], now)]
+    due = [r for r in refs if r["status"] == "active" and analyses.get(r["id"]) and not ref_library.is_library(r)
+           and _due(analyses[r["id"]], now)]
     due.sort(key=lambda r: (analyses[r["id"]]["state"] != "pending", r["id"]))
     for r in due[:REFS_PER_TICK]:
         if time.time() - started > REF_TICK_BUDGET:
@@ -1200,6 +1265,7 @@ def sync_references(api: Client, started: float, client=None) -> dict:
             if brand in drafted:
                 continue
             if any(r["brand"] == brand and r["status"] == "active" and analyses.get(r["id"])
+                   and not ref_library.is_library(r)
                    and (analyses[r["id"]]["state"] in ("pending", "running") or _due(analyses[r["id"]], now))
                    for r in refs):
                 continue  # wait until every analysis is in
@@ -1219,12 +1285,35 @@ def sync_references(api: Client, started: float, client=None) -> dict:
             lines.append(f"style guide v{row['version']} drafted ({brand})")
     step("style guide draft", auto_drafts)
 
+    # The imported library and the taste report (migration 20261023000000)
+    if check_library(api):
+        import taste
+        own = conn is None
+        db = conn or catalog.connect()
+        try:
+            for name, fn in (("reference library jobs", lambda: ref_library.run_jobs(api, refs, analyses, db)),
+                             ("reference library", lambda: ref_library.tick(api, refs, analyses, db, client)
+                              if time.time() - started <= REF_TICK_BUDGET else []),
+                             ("taste report", lambda: taste.run_jobs(api, refs, guides, db, client))):
+                got = step(name, fn) or []
+                lines += got
+                if got and name != "taste report":
+                    analyses = {a["reference_id"]: a for a in api.select("reference_analysis", {"order": "reference_id"})}
+            taste_applied = step("applying the taste report", lambda: taste.sync_approved(api))
+            if taste_applied:
+                lines.append(taste_applied)
+                out["applied"] = 1
+        finally:
+            if own:
+                db.close()
+
     # The approved guide into the playbook
     applied = step("applying the style guide", lambda: apply_active_guide(
         api.select("style_guides", {"order": "version.desc", "status": "eq.active"})))
     if applied:
         lines.append(applied)
         out["applied"] = 1
+    if out.get("applied"):
         step("context", lambda: _push_context(api))
 
     status["refs"] = _refs_summary(refs, analyses, guides)
@@ -1239,7 +1328,10 @@ def sync_references(api: Client, started: float, client=None) -> dict:
 
 
 def _refs_summary(refs: list[dict], analyses: dict[int, dict], guides: list[dict]) -> dict:
-    active = [r for r in refs if r["status"] == "active"]
+    import ref_library
+    library = [analyses.get(r["id"], {}).get("state") for r in refs
+               if ref_library.is_library(r) and r["status"] == "active"]
+    active = [r for r in refs if r["status"] == "active" and not ref_library.is_library(r)]
     states = [analyses.get(r["id"], {}).get("state") for r in active]
     um = [g for g in guides if g["brand"] == "urban_makers"]
     live = next((g for g in um if g["status"] == "active"), None)
@@ -1247,7 +1339,10 @@ def _refs_summary(refs: list[dict], analyses: dict[int, dict], guides: list[dict
     return {"references": len(active), "ours": sum(r["side"] == "ours" for r in active),
             "retired": len(refs) - len(active), "waiting": states.count("pending") + states.count("running"),
             "failed": states.count("failed"), "guide_version": live["version"] if live else None,
-            "draft_version": draft["version"] if draft else None}
+            "draft_version": draft["version"] if draft else None,
+            "library": {"total": len(library), "held": library.count("held"),
+                        "queued": library.count("pending") + library.count("running"), "done": library.count("done"),
+                        "failed": library.count("failed")}}
 
 
 # ── The tick ──────────────────────────────────────────────────────────────────
@@ -1341,7 +1436,7 @@ def sync_once(conn, api: Client | None = None) -> dict:
         pass
     counts["productions"] = push_productions(api, conn, remote["ideas"])
     try:  # reference reels and the style guide: never stops the rest of the sync
-        refs = sync_references(api, started)
+        refs = sync_references(api, started, conn=conn)
     except Exception as e:
         message = str(e) if isinstance(e, CloudError) else f"{type(e).__name__}: {e}"
         if [message] != status.get("ref_problems"):
@@ -1464,7 +1559,10 @@ def check(conn) -> int:
 
 def _check_references(api: Client) -> None:
     try:
-        refs = api.select("reference_videos", {"select": "id,brand,side,status"})
+        try:
+            refs = api.select("reference_videos", {"select": "id,brand,side,status,import_id"})
+        except CloudError:  # before the reference-library update
+            refs = api.select("reference_videos", {"select": "id,brand,side,status"})
         analyses = {a["reference_id"]: a for a in api.select(
             "reference_analysis", {"select": "reference_id,state,error,analyser,updated_at", "order": "reference_id"})}
         guides = api.select("style_guides", {"select": "id,brand,version,status,reference_ids", "order": "version.desc"})
@@ -1475,9 +1573,13 @@ def _check_references(api: Client) -> None:
     print(f"References  : {s['references']} active ({s['ours']} ours, {s['references'] - s['ours']} inspiration)"
           + (f", {s['retired']} retired" if s["retired"] else "")
           + f"; {s['waiting']} waiting for analysis" + (f", {s['failed']} failed" if s["failed"] else ""))
+    lib = s["library"]
+    if lib["total"]:
+        print(f"Library     : {lib['total']} imported; {lib['done']} analysed, {lib['queued']} queued, "
+              f"{lib['held']} waiting for Analyse, {lib['failed']} couldn't be downloaded")
     for r in refs:
         a = analyses.get(r["id"]) or {}
-        if r["status"] == "active" and a.get("state") == "failed":
+        if r["status"] == "active" and a.get("state") == "failed" and r.get("import_id") is None:
             print(f"              #{r['id']} failed: {(a.get('error') or '')[:150]}")
     guide = (f"v{s['guide_version']} active" if s["guide_version"] else "none approved yet")
     if s["draft_version"]:

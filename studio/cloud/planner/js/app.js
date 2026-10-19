@@ -133,7 +133,8 @@ function stop() {
   if (session.shootChannel) sb.removeChannel(session.shootChannel);
   if (session.planChannel) sb.removeChannel(session.planChannel);
   if (session.topicChannel) sb.removeChannel(session.topicChannel);
-  session.channel = session.refChannel = session.shootChannel = session.planChannel = session.topicChannel = null;
+  if (session.libChannel) sb.removeChannel(session.libChannel);
+  session.channel = session.refChannel = session.shootChannel = session.planChannel = session.topicChannel = session.libChannel = null;
   session.started = false;
   hideViewer();
   hideChecklist();
@@ -323,7 +324,7 @@ async function doRoute() {
     hideChecklist();
     hideTeam();
     $("#planner").hidden = true;
-    setSection(refRoute.page === "style" ? "style" : "refs");
+    setSection(refRoute.page === "style" || refRoute.page === "taste" ? "style" : "refs");
     await showRefs(refRoute);
     return;
   }
@@ -396,7 +397,8 @@ window.addEventListener("hashchange", () => route());
 
 const TABLES = ["projects", "arcs", "ideas", "shots", "clips", "takes", "votes", "comments", "jobs", "laptop_status",
   "reference_videos", "reference_analysis", "style_guides"];
-const REF_TABLES = new Set(["reference_videos", "reference_analysis", "style_guides"]);
+const REF_TABLES = new Set(["reference_videos", "reference_analysis", "style_guides", "taste_reports", "reference_imports"]);
+const LIBRARY_TABLES = ["taste_reports", "reference_imports"];
 const SHOOT_TABLES = ["phases", "site_days", "shot_uploads"];
 const PLAN_TABLES = ["content_plan"];
 const TOPIC_TABLES = ["client_questions"];
@@ -417,11 +419,18 @@ function startRealtime() {
   // Its own channel: until the database update that adds these tables, subscribing
   // to them fails, and that mustn't take the planning board's live updates down too.
   const refChannel = sb.channel("studio-references");
-  for (const table of REF_TABLES) {
+  for (const table of [...REF_TABLES].filter((t) => !LIBRARY_TABLES.includes(t))) {
     refChannel.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => onChange(table, payload));
   }
   refChannel.subscribe();
   session.refChannel = refChannel;
+  // The reference library's taste reports and imports, on their own channel for the same reason.
+  const libChannel = sb.channel("studio-library");
+  for (const table of LIBRARY_TABLES) {
+    libChannel.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => onChange(table, payload));
+  }
+  libChannel.subscribe();
+  session.libChannel = libChannel;
   // The shoot plan's tables, on their own channel for the same reason.
   const shootChannel = sb.channel("studio-shoot");
   for (const table of SHOOT_TABLES) {

@@ -1,22 +1,38 @@
 // References and the style guide. The team keeps reels that show the style it wants
 // (its own best ones and other accounts'), each with a note on why it works. The Studio
 // laptop analyses each one and drafts a style guide from the active set; the owner
-// approves it. Routes: #/references, #/references/<id>, #/style, #/style/<brand>.
+// approves it. Routes: #/references, #/references/<id>, #/style, #/style/<brand>, #/taste.
+// The imported library (hundreds of posts) and the taste report live in library.js.
 import {
   $, $$, BRAND, ACCOUNTS, oneBrand, esc, sb, must, toast, ago, shortDate, plural, httpsUrl, isOwner, ownerName, nameOf, state,
   typingIn, keepDrafts, signPaths, stillUrl, jobView, jobActive, laptopWait, laptopOn, openModal, closeModal,
   modalOpen, formError, store, recall, isTyping,
 } from "./core.js";
+import {
+  isLib, lib, libraryHTML, libVisiblePaths, openImport, loadSignin, libDetailHTML, slidesLookHTML, designHTML, tasteHTML,
+  tastePaths, tasteLineHTML,
+} from "./library.js";
 
 const root = () => $("#refs");
 const BRANDS = ACCOUNTS;
 const SIDE = { ours: "Ours", inspiration: "Inspiration" };
 const SIDE_LONG = { ours: "Ours: our own reel", inspiration: "Inspiration: another account" };
 const JOB_COLS = "id,kind,runner,state,payload,result,error,requested_by,created_at,started_at,updated_at";
+// The list's columns: the light parts of each analysis (a few numbers, not transcripts), so
+// a library of hundreds of posts stays quick. The reference page loads its full analysis.
+const LIGHT = "id,brand,side,url,file_name,title,why,status,added_by,created_at,updated_at,retired_at,account,post_type,purpose,import_id,shortcode,"
+  + "reference_analysis(state,error,problem,kind,stills,analysed_at,updated_at,analyser,engagement,"
+  + "duration:measured->duration,cuts:measured->cuts,first_cut:measured->first_cut,shot_median:measured->shot_median,"
+  + "words_per_sec:measured->words_per_sec,music_under_voice_db:measured->music_under_voice_db,slides:measured->slides,"
+  + "captions:look->captions,layouts:look->layouts,standout:look->standout,cover_hook:look->cover_hook)";
+const MEASURED_KEYS = ["duration", "cuts", "first_cut", "shot_median", "words_per_sec", "music_under_voice_db", "slides"];
+const LOOK_KEYS = ["captions", "layouts", "standout", "cover_hook"];
+// The library columns come with a database update (20261023000000_reference_library).
+const schemaLib = { on: true };
 const WHY_HINT = "e.g. most saves we've had; the reveal at 3 s; fast captions, two or three words at a time";
 
 export const refs = {
-  route: null, rows: null, guides: [], jobs: [], sig: "", pending: false, editing: null, error: "",
+  route: null, rows: null, guides: [], jobs: [], taste: [], sig: "", pending: false, editing: null, error: "",
   brand: oneBrand ? "all" : recall("studio.refBrand") || "all", status: recall("studio.refStatus") || "active",
   guideBrand: BRANDS.includes(recall("studio.guideBrand")) ? recall("studio.guideBrand") : "urban_makers",
   flashed: new Set(),
@@ -29,6 +45,7 @@ export function refsRoute(hash) {
   if (hash === "#/references") return { page: "list" };
   if ((m = hash.match(/^#\/references\/(\d+)$/))) return { page: "detail", id: Number(m[1]) };
   if ((m = hash.match(/^#\/style(?:\/(urban_makers|personal))?$/))) return { page: "style", brand: m[1] || null };
+  if (hash === "#/taste") return { page: "taste" };
   return null;
 }
 
@@ -87,28 +104,62 @@ export async function loadRefs(force = false) {
   const route = refs.route;
   if (!route) return;
   const seq = (refs.seq = (refs.seq || 0) + 1);
-  const stale = () => refs.seq !== seq || refs.route !== route;
-  const [rows, guides, jobs] = await Promise.all([
-    sb.from("reference_videos").select("*,reference_analysis(*)").order("created_at", { ascending: false }).order("id", { ascending: false }).then(must),
+  // Only a newer load that already landed (or another page) makes this one stale: with a busy
+  // database, loads overlap all the time, and dropping each for the next would never show anything.
+  const stale = () => refs.route !== route || seq < (refs.doneSeq || 0);
+  const refsQuery = async () => {
+    if (schemaLib.on) {
+      const { data, error } = await sb.from("reference_videos").select(LIGHT).order("created_at", { ascending: false }).order("id", { ascending: false });
+      if (!error) return data;
+      if (!/42703|PGRST200|column|account|import_id|relationship/i.test(`${error.code || ""} ${error.message}`)) throw error;
+      schemaLib.on = false;
+    }
+    return must(await sb.from("reference_videos").select("*,reference_analysis(*)").order("created_at", { ascending: false }).order("id", { ascending: false }));
+  };
+  const tasteQuery = async () => {
+    if (!schemaLib.on) return [];
+    const cols = route.page === "taste" ? "*" : "id,brand,version,status,created_at,approved_at,guide_id";
+    const { data, error } = await sb.from("taste_reports").select(cols).order("version", { ascending: false }).limit(route.page === "taste" ? 5 : 3);
+    return error ? [] : data;
+  };
+  const fullQuery = async () => {
+    if (route.page !== "detail") return null;
+    const { data } = await sb.from("reference_analysis").select("*").eq("reference_id", route.id).maybeSingle();
+    return data || null;
+  };
+  const [rows, guides, jobs, taste, full] = await Promise.all([
+    refsQuery(),
     sb.from("style_guides").select("*").order("version", { ascending: false }).then(must),
-    sb.from("jobs").select(JOB_COLS).eq("kind", "style").order("id", { ascending: false }).limit(30).then(must),
+    sb.from("jobs").select(JOB_COLS).in("kind", ["style", "refs", "taste"]).order("id", { ascending: false }).limit(40).then(must),
+    tasteQuery(), fullQuery(), route.page === "list" ? loadSignin() : null,
   ]);
   if (stale()) { if (force) refs.forceNext = true; return; }
   for (const r of rows) {
-    const a = Array.isArray(r.reference_analysis) ? r.reference_analysis[0] : r.reference_analysis;
+    let a = Array.isArray(r.reference_analysis) ? r.reference_analysis[0] : r.reference_analysis;
     delete r.reference_analysis;
+    if (a && schemaLib.on) {
+      a = { ...a, measured: Object.fromEntries(MEASURED_KEYS.filter((k) => a[k] != null).map((k) => [k, a[k]])),
+        look: Object.fromEntries(LOOK_KEYS.filter((k) => a[k] != null).map((k) => [k, a[k]])) };
+    }
+    if (full && r.id === route.id) a = full;
     r.a = a || null;
     r.stills = Array.isArray(a?.stills) ? a.stills.filter((p) => typeof p === "string" && p) : [];
   }
-  const paths = route.page === "detail" ? (rows.find((r) => r.id === route.id)?.stills || []) : rows.map((r) => r.stills[0]);
+  refs.doneSeq = seq;
+  refs.rows = rows;
+  refs.taste = taste;
+  const paths = route.page === "detail" ? (rows.find((r) => r.id === route.id)?.stills || [])
+    : route.page === "taste" ? tastePaths()
+    : [...rows.filter((r) => !isLib(r)).map((r) => r.stills[0]), ...libVisiblePaths()];
   await signPaths(paths).catch(() => {});
   if (stale()) { if (force) refs.forceNext = true; return; }
   if (refs.forceNext) { force = true; refs.forceNext = false; }
-  refs.rows = rows;
   refs.guides = guides;
   refs.jobs = jobs;
   render(force);
 }
+refs.reload = () => loadRefs(true).catch(() => {});
+refs.rerender = () => render(true);
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -155,6 +206,7 @@ function analysisChip(r, long = false) {
   const s = a?.state || "pending";
   if (s === "done") return `<span class="chip ok">Analysed</span>`;
   if (s === "running") return `<span class="chip drafting"><span class="spin"></span>Analysing…</span>`;
+  if (s === "held") return `<span class="chip">Waiting for Analyse</span>`;
   if (s === "failed") {
     const why = str(a.error) || "unknown error";
     return `<span class="chip failed" title="${esc(why)}">Failed: ${esc(long || why.length <= 60 ? why : `${why.slice(0, 59)}…`)}</span>`;
@@ -171,6 +223,7 @@ const KEY_NUMBERS = [
   ["music_under_voice_db", (v) => `${fmt(v, 0)} dB`, "music under voice"],
   ["duration", (v) => `${fmt(v, 0)} s`, "long"],
   ["cuts", (v) => fmt(v, 0), "cuts"],
+  ["slides", (v) => fmt(v, 0), "slides"],
 ];
 function statsHTML(m) {
   if (!m || typeof m !== "object") return "";
@@ -188,11 +241,12 @@ const NUMBERS = [
   ["gap_median", "Typical pause", "s"], ["gap_p90", "Long pauses (90th pct)", "s"], ["long_pauses", "Pauses over 0.4 s", ""],
   ["music_under_voice_db", "Music under voice", "dB"], ["voice_db", "Voice level", "dB"],
   ["loudness_lufs", "Loudness", "LUFS"], ["loudness_true_peak", "True peak", "dBTP"], ["fps", "Frame rate", "fps"],
+  ["slides", "Slides", ""], ["caption_words", "Caption words", ""], ["hashtags", "Hashtags", ""],
 ];
 function numbersHTML(m) {
   if (!m || typeof m !== "object") return "";
   const cells = NUMBERS.filter(([k]) => num(m[k]) != null)
-    .map(([k, label, unit]) => `<div><dt>${esc(label)}</dt><dd>${esc(fmt(m[k], k === "cuts" || k === "words" || k === "long_pauses" ? 0 : 2))}${unit ? ` <span class="unit">${esc(unit)}</span>` : ""}</dd></div>`);
+    .map(([k, label, unit]) => `<div><dt>${esc(label)}</dt><dd>${esc(fmt(m[k], ["cuts", "words", "long_pauses", "slides", "caption_words", "hashtags"].includes(k) ? 0 : 2))}${unit ? ` <span class="unit">${esc(unit)}</span>` : ""}</dd></div>`);
   if (num(m.width) && num(m.height)) cells.push(`<div><dt>Size</dt><dd>${esc(fmt(m.width, 0))}×${esc(fmt(m.height, 0))}</dd></div>`);
   return cells.length ? `<dl class="ref-nums">${cells.join("")}</dl>` : "";
 }
@@ -297,12 +351,13 @@ function render(force = false) {
   if (!route || !refs.rows) return;
   const lap = laptopOn() ? "on" : Math.floor(Date.parse(state.laptop?.last_seen || 0) / 60e3) || 0;
   const stills = refs.rows.map((r) => (route.page === "detail" && r.id === route.id ? r.stills : r.stills.slice(0, 1)).map((p) => !!stillUrl(p)));
-  const sig = JSON.stringify([route, refs.rows, refs.guides, refs.jobs, refs.brand, refs.status, refs.guideBrand, refs.editing, lap, stills]);
+  const sig = JSON.stringify([route, refs.rows, refs.guides, refs.jobs, refs.taste, refs.brand, refs.status, refs.guideBrand, refs.editing, lap, stills,
+    state.laptop?.info?.references || null, lib.signin, lib.signinError, lib.signinBusy, lib.type, lib.show, lib.page]);
   if (!force && sig === refs.sig) return;
   if (!force && (typingIn(root()) || root().querySelector("select:focus"))) { refs.pending = true; return; }
   refs.sig = sig;
   refs.pending = false;
-  const html = route.page === "detail" ? detailHTML(route.id) : route.page === "style" ? styleHTML() : listHTML();
+  const html = route.page === "detail" ? detailHTML(route.id) : route.page === "style" ? styleHTML() : route.page === "taste" ? tasteHTML() : listHTML();
   // Keep open <details> open across re-renders.
   const open = new Set($$("details[data-key][open]", root()).map((d) => d.dataset.key));
   keepDrafts(root(), () => { root().innerHTML = html; });
@@ -318,7 +373,7 @@ function seg(attr, current, items, label) {
 // ── The list ────────────────────────────────────────────────────────────────
 
 function listHTML() {
-  const all = refs.rows;
+  const all = refs.rows.filter((r) => !isLib(r));
   const shown = all.filter((r) => (refs.brand === "all" || r.brand === refs.brand)
     && (refs.status === "all" || r.status === refs.status));
   const group = (side, blurb) => {
@@ -336,18 +391,19 @@ function listHTML() {
         <h1 tabindex="-1">References</h1>
         <p class="muted">Reels that show the style we want: our own best ones and other accounts'. Say why each one works. Studio measures them (cuts, pace, captions, music) and drafts the style guide from them.</p>
       </div>
-      <div class="row refs-actions"><button class="btn primary" id="ref-add">Add references</button><a class="btn" href="#/style">Style guide</a></div>
+      <div class="row refs-actions"><button class="btn primary" id="ref-add">Add references</button>${schemaLib.on ? `<button class="btn" id="ref-import">Import many…</button>` : ""}<a class="btn" href="#/style">Style guide</a></div>
     </div>
     ${guideStatusHTML()}
+    ${schemaLib.on ? libraryHTML() : ""}
     ${all.length ? `<div class="refs-filters">
       ${oneBrand ? "" : seg("ref-brand", refs.brand, [["all", "Both accounts"], ...BRANDS.map((b) => [b, BRAND[b]])], "Account")}
       ${seg("ref-status", refs.status, [["active", "Active"], ["retired", `Retired${retired ? ` (${retired})` : ""}`], ["all", "All"]], "Show")}
     </div>
     ${group("ours", "Our own reels that did well.")}
     ${group("inspiration", "Other accounts' reels we'd like ours to feel like.")}`
-    : `<div class="plan-empty"><h2>No references yet</h2>
+    : refs.rows.length ? "" : `<div class="plan-empty"><h2>No references yet</h2>
       <p class="muted">Add a reel that shows the style you want, ours or someone else's, and say why it works: “most saves we've had; the reveal at 3 s; fast captions”.</p>
-      <button class="btn primary" id="ref-add-empty">Add a reference</button></div>`}
+      <button class="btn primary" id="ref-add-empty">Add a reference</button>${schemaLib.on ? ` <button class="btn" id="ref-import-empty">Import a list or CSV…</button>` : ""}</div>`}
   </div>`;
 }
 
@@ -401,7 +457,9 @@ function detailHTML(id) {
       `<figure role="listitem"><img src="${esc(u)}" alt="Still ${k + 1}" loading="lazy"><figcaption>${k + 1}</figcaption></figure>`).join("")}</div>`
       : `<p class="muted small">No stills.</p>`}
       ${numbersHTML(a.measured)}
-      ${lookHTML(a.look)}
+      ${a.kind === "images" || a.measured?.kind === "images" ? slidesLookHTML(a.look) : lookHTML(a.look)}
+      ${a.look?.design ? `<details data-key="design"><summary>The look: palette, materials, light, camera, type</summary>${designHTML(a.look.design)}</details>` : ""}
+      ${str(a.measured?.caption) ? `<details data-key="caption"><summary>Instagram caption</summary><p class="note-body">${esc(a.measured.caption)}</p></details>` : ""}
       ${str(a.measured?.transcript) ? `<details data-key="transcript"><summary>Transcript</summary><p class="note-body">${esc(a.measured.transcript)}</p></details>` : ""}
       <p class="muted small">Analysed ${esc(ago(a.analysed_at || a.updated_at))}.</p>`;
   } else if (a.state === "failed") {
@@ -410,6 +468,8 @@ function detailHTML(id) {
         : /login|private|sign in|cookies/i.test(str(a.error)) ? "Check the link opens without signing in (private accounts can't be downloaded). " : ""}Studio tries again within a day; changing the link analyses it again now.</p>`;
   } else if (a.state === "running") {
     analysis = `<p><span class="spin"></span> Studio is analysing it: cuts, pace, music, and a look at a dozen stills.</p>`;
+  } else if (a.state === "held") {
+    analysis = `<p class="muted">Not analysed yet: it waits for ${esc(isOwner() ? "you" : ownerName())} to press Analyse on the References page.</p>`;
   } else {
     analysis = `<p class="muted"><span class="spin"></span> Waiting for Studio. ${esc(laptopOn() ? "It's on and picks this up within a minute or two." : laptopWait())}</p>`;
   }
@@ -430,6 +490,7 @@ function detailHTML(id) {
     </div>
     <div class="ref-detail-grid">
       <div class="ref-col">
+        ${isLib(r) ? libDetailHTML(r) : ""}
         <section class="ref-sec" data-saved-scope>
           <h2><label for="ref-why">Why it works</label> <span class="saved" aria-live="polite"></span></h2>
           <textarea id="ref-why" rows="5" maxlength="4000" data-orig="${esc(r.why)}" placeholder="${esc(WHY_HINT)}">${esc(r.why)}</textarea>
@@ -483,7 +544,7 @@ function whySnippet(r) {
 
 // What changed since the active guide was built: references added, retired, deleted.
 function sinceGuide(brand, active) {
-  const brandRefs = refs.rows.filter((r) => r.brand === brand && r.status === "active");
+  const brandRefs = refs.rows.filter((r) => r.brand === brand && r.status === "active" && !isLib(r));
   const current = brandRefs.filter((r) => r.a?.state === "done");
   const curIds = new Set(current.map((r) => r.id));
   const pending = brandRefs.filter((r) => !r.a || r.a.state === "pending" || r.a.state === "running");
@@ -527,7 +588,7 @@ function bannerHTML(brand, active, draft) {
 }
 
 function latestJob(brand) {
-  return refs.jobs.find((j) => (j.payload?.brand || "urban_makers") === brand) || null;
+  return refs.jobs.find((j) => j.kind === "style" && (j.payload?.brand || "urban_makers") === brand) || null;
 }
 function jobHTML(brand) {
   const job = jobView(latestJob(brand));
@@ -625,7 +686,7 @@ function styleHTML() {
   const job = jobView(latestJob(brand));
   const busy = jobActive(job);
   const history = list.filter((g) => g !== active && g !== draft);
-  const nActive = refs.rows.filter((r) => r.brand === brand && r.status === "active").length;
+  const nActive = refs.rows.filter((r) => r.brand === brand && r.status === "active" && !isLib(r)).length;
   return `<div class="refs-wrap sg">
     <div class="refs-head">
       <div class="refs-intro">
@@ -642,6 +703,7 @@ function styleHTML() {
       <p class="muted small">${nActive ? "Studio also drafts a new version by itself whenever references are added or retired." : `Add ${esc(BRAND[brand])} references first.`}</p>
       ${jobHTML(brand)}
     </div>
+    ${tasteLineHTML()}
     ${bannerHTML(brand, active, draft)}
     ${draft ? draftHTML(draft) : ""}
     ${active ? activeHTML(active) : draft ? "" : `<p class="muted">No ${esc(BRAND[brand])} style guide yet.</p>`}
@@ -800,6 +862,7 @@ root().addEventListener("click", async (e) => {
   const id = Number(refs.route?.id);
   try {
     if (t.id === "ref-add" || t.id === "ref-add-empty") openAdd();
+    else if (t.id === "ref-import" || t.id === "ref-import-empty") openImport();
     else if (t.id === "refs-retry") await showRefs(refs.route);
     else if (ds.refBrand) { refs.brand = ds.refBrand; store("studio.refBrand", refs.brand); render(true); }
     else if (ds.refStatus) { refs.status = ds.refStatus; store("studio.refStatus", refs.status); render(true); }

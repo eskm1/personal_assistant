@@ -214,3 +214,9 @@ RCLONE = _env("STUDIO_RCLONE", "rclone")
 def ensure_folders() -> None:
     for folder in (ROOT, INBOX, LIBRARY, REVIEW, APPROVED, LOGS):
         folder.mkdir(parents=True, exist_ok=True)
+
+# ── Reference library (ref_library.py, taste.py) ──────────────────────────────
+# The most Studio may spend in a calendar month on analysing bulk-imported references and
+# writing taste reports (US$; about 0.05 a post). Nothing is spent until the owner presses
+# "Analyse" in the planner; past this, analysing pauses until next month.
+REFERENCE_BUDGET_USD = max(float(_env("STUDIO_REFERENCE_BUDGET_USD", "60")), 0.0)

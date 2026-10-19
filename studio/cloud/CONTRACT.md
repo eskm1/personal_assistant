@@ -510,3 +510,74 @@ page): a fast add box (question; optional who asked and a note), the questions b
 became, Edit, Delete (owner or author), Suggest again. Until the update the row and the page say nothing / ask for
 `cloud_setup.py --update`.
 
+
+## Reference library and the taste report (migration 20261023000000_reference_library.sql)
+
+Many references imported at once (a pasted list or a CSV), held until the owner pays for them, analysed slowly on
+the Studio machine (`ref_library.py`), and a taste report from all of them (`taste.py`) that the owner approves.
+
+| Data | Written by | Notes |
+|---|---|---|
+| reference_imports | members, through `import_references()` | one row per import: name, side, totals (added, duplicates, invalid), who |
+| reference_videos (new columns) | `import_references()` / members | `account`, `post_type` (reel, video, carousel, image, series), `purpose` (design, content, engagement: only when the list has such a column), `import_id` (set = the library), `shortcode` (trigger: the Instagram post a /reel/, /reels/, /p/ or /tv/ link points at; unique, so the same post is never in twice) |
+| reference_analysis (new) | laptop | state `held` (imported, waiting for Analyse); `kind` video \| images; `engagement` `{likes, comments, views, followers, uploaded, account, source}` (null = Instagram didn't say); `problem` login \| rate \| gone \| other |
+| taste_reports | laptop inserts drafts; owner approves / rejects | `report` (Markdown, also `Studio/Style/taste-report-v<n>.md`), `sections` (structured, for the page), `taste_section`, `guide_id` (its proposed style guide, a `style_guides` draft), `reference_ids`, `usage` |
+| jobs kind `refs`, `taste` | owner only | see below |
+
+**Importing.** `rpc/import_references(p_side, p_brand, p_name, p_rows, p_invalid)` (members; at most 5000 rows):
+`p_rows` = `[{url, account, post_type, purpose, why}]` (the planner normalises Instagram links to
+`https://www.instagram.com/reel|p|tv/<code>/` and drops repeats first); a row whose post or link is already there
+counts as a duplicate, a non-https link as invalid. Returns `{import_id, added, duplicates, invalid}`. Every new
+reference's analysis starts `held` (the queue trigger), so nothing is downloaded or spent. Hand-added references
+(no `import_id`) are analysed straight away as before.
+
+**Jobs.**
+
+| kind | runner | queued by | payload | result |
+|---|---|---|---|---|
+| refs | laptop | owner | `{action: analyse, mode: all \| sample, n, ids?, estimate_usd}` (held -> pending; a sample is stratified by `post_type` and account, at most 2 per account, seeded by the job id; only what fits in the month's budget) or `{action: pause \| resume \| stop \| retry}` (stop: pending -> held; retry: failed but not `gone` -> pending) | `{queued, estimate_usd, hours, note}` |
+| taste | laptop | owner | `{brand}` | `{report_id, version, guide_id}` (fails readably under 10 analysed references or past the budget) |
+
+**Laptop (each tick, after the hand-added references).** At most one library analysis, when the pacing allows:
+45-90 s (random) between downloads; on `rate`/`login` the post goes back to `pending` (behind the rest) and the
+next try waits 10, 20, 40 min … (≤4 h); four refusals in a row pause the batch (rate: resumes after 6 h; login:
+resumes when a new `cookies.txt` arrives or on Resume); six of the last ten wanting a login pause it with the
+sign-in hint; `gone` fails for good (never retried by itself); no internet waits 10 min. Before each: the month's
+spend (`usage` kinds `style` + `taste`) against `STUDIO_REFERENCE_BUDGET_USD` (default 60) and 3 GB of free disk.
+Reels: `style_study.analyse` as before plus the caption and engagement from yt-dlp's info. Carousels and photos
+(`post_type` carousel/image, or a /p/ link): up to 10 pictures (yt-dlp's metadata without a sign-in; gallery-dl with
+`cookies.txt` when yt-dlp can't), stills ≤540 px, Claude's slide read (`SLIDES_SCHEMA`); a /p/ post that is one
+video is analysed as a reel. Follower counts: gallery-dl's profile info, once per account a month (only with the
+sign-in), cached in `Studio/Style/accounts.json`. Downloads are deleted after each analysis. Library references
+never count toward the automatic style-guide drafts (`_guide_inputs` is the hand-added set); they speak through the
+taste report. The heartbeat carries `laptop_status.info.references`: `{paused: {kind, reason, at} | null, next_at,
+backing_off, budget: {cap_usd, spent_usd, left_usd}, estimates: {per_post_usd, seconds_per_post, sample, report:
+{base_usd, per_chunk_usd, chunk}}, signin: {present, added_at}}` (never the sign-in itself).
+
+**Taste report.** One Claude read per 80 analysed references (notes, quoted hooks, notable posts with why:
+design | content | engagement, inferred), then one report call with the measured stats (`taste.stats`: medians by
+kind of post; engagement per view for Reels, per follower for carousels; top quarter vs the rest; coverage) and
+the current settings, kinds of post and playbook. It inserts a `style_guides` draft (the proposed house style;
+`reference_ids` = the hand-added set, so no automatic redraft follows) and the `taste_reports` draft. **Approving
+the report** (owner; trigger) makes its guide active (the previous one archived) and archives the previous report;
+rejecting it rejects its guide. A guide approved or rejected on the Style guide page carries its report along
+(next sync). The laptop then writes the approved guide (as before) and the report's `taste_section` into
+`playbook.md` between `<!-- taste:start -->` / `<!-- taste:end -->` (before the house style), once per report.
+
+**Instagram sign-in for downloads (Studio machine, HTTP).** `GET | PUT | DELETE /api/uploads/instagram-signin`
+with the planner session (uploads.guard: Bearer token, the planner's own address), owner only. PUT takes the
+cookies.txt text (≤256 KB; must hold an instagram.com `sessionid`), keeps only the instagram.com lines and saves
+`ROOT/cookies.txt` with mode 0600, replacing the old one; answers `{present, added_at, expires, signed_in}`. Never
+stored online, never logged.
+
+**Planner.** References: **Import many…** (paste or CSV; preview with counts by kind, accounts, duplicates, lines
+that aren't links); the **Library** card (progress line and bar, what's on now and the time left or why it's paused,
+the owner's Analyse all / Analyse a sample of 150 first with cost and time, Pause/Resume, Stop, Try again, the
+month's budget; the team sees that it waits for the owner); the owner's **Instagram sign-in for downloads** box
+(four steps, upload / Replace / Remove, a warning when downloads fail with "login required"); a paged grid (60 a
+page) filtered by kind, state and account. Ours/Inspiration cards and the style-guide banner leave the library
+out. A library post's page adds its account, kind, engagement, Claude's slide read and "Analyse just this one".
+`#/taste`: Write the taste report (owner, with its cost), the latest report (sections, fonts, ranked
+recommendations with kinds of post, settings, why posts stand out, proposed guide and taste section; thumbnails
+open the posts on Instagram), Approve / Reject (owner); the Style guide page links to it. List queries select only
+the light parts of each analysis (a few numbers through `measured->key`) so 800 posts stay quick.

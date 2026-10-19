@@ -138,8 +138,9 @@ If anything stops it (a typo, the Wi-Fi), run the same command again. Finished s
   that are already archived.
 - **Instagram links on the References tab**: Instagram sometimes refuses downloads from servers.
   If a reference says it "needs a login", save the reel to your phone and drop it in
-  Studio Inbox > References > Inspiration. Or put a `cookies.txt` exported from a browser signed in
-  to a spare Instagram account in `/home/studio/Studio` on the server.
+  Studio Inbox > References > Inspiration. Or give Studio a spare Instagram account's sign-in: the
+  References page's "Instagram sign-in for downloads" box (owner only) takes a `cookies.txt` exported
+  from a browser signed in to that account and saves it as `/home/studio/Studio/cookies.txt` (0600).
 - **Accounts** move across with the catalogue, so everyone signs in as before. The dashboard's
   first-time setup page only works on the machine itself, so a new owner account on a fresh
   server is made over SSH:
