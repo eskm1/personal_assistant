@@ -15,8 +15,8 @@ Hetzner raised its prices in 2026, so check the price the console shows before y
 location (Nuremberg, Falkenstein or Helsinki). Singapore costs about half as much again and includes
 only 1 TB of traffic a month; the EU locations include 20 TB. Distance doesn't matter much here:
 your phone uploads to OneDrive, which sits close to you, and the server collects from OneDrive
-datacentre to datacentre. Only the dashboard's previews travel the long way, and a reel is about
-30 MB.
+datacentre to datacentre. Only the dashboard's previews travel the long way: Review plays a light
+720p copy (about 2 Mbps, 13 MB for a one-minute reel), so it doesn't stop to buffer that far away.
 
 **Use a new server, not the one that runs theurbanmakers.com, Bob and Ava.** Video work would take
 over that server's processor for minutes at a time and slow the website down.

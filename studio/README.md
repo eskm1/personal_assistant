@@ -219,13 +219,24 @@ section 11.
   approved or posted draft from Done (it stays in OneDrive's **Studio Ready to post**); the **Archived** view
   lists them, each with **Bring back**.
 - **Library**: **Archive** hides a clip from the Library, footage ideas, suggested topics and the planner's
-  pickers; **Bring back** undoes it. **Free up space** deletes Studio's own copy of a clip's original video, but
-  only once Studio has found that same file in OneDrive's **Studio Archive** (same name and size); the stills,
-  transcript and tags stay, and if an edit needs the clip again Studio fetches the original back from OneDrive by
-  itself. **Select** picks several clips at once; **Suggested to tidy** lists retakes, clips unused for 60 days
-  and clips of archived projects, each with what it would free. The bar at the top shows the disk's free space.
+  pickers; **Bring back** undoes it. **Free up space** deletes Studio's own copy of a clip's original video once
+  OneDrive's **Studio Archive** holds it. A clip OneDrive never had (uploaded from the planner, or from the laptop
+  before the move) is copied there first, into `Studio Archive/<project>/<post or Uploads>/`, never over another
+  file, and checked (exact size and OneDrive's fingerprint) before anything is deleted. It runs in the background
+  ("Copying 4 of 11 to OneDrive…", then "Freed 2.3 GB from 11 clips."), can be stopped, and carries on after a
+  restart. The light preview, stills, transcript and tags stay, and if an edit needs the clip again Studio fetches
+  the original back from OneDrive by itself. **Select** picks several clips at once (Shift-click picks a run,
+  Ctrl/Cmd-click one more; on a phone, press and hold a clip, then tap); **Suggested to tidy** lists retakes,
+  clips unused for 60 days and clips of archived projects, each with what it would free. The bar at the top
+  shows the disk's free space.
 - Every delete asks once, in plain words, and is logged with the space it freed (`Studio\logs\cleanup.jsonl`).
   Michelle doesn't see these buttons.
+
+**Watching far from the server.** Review plays a light copy of every draft and clip: 720p at about 2 Mbps,
+made as a draft goes to review and as a clip comes in (older ones get theirs in the background, while Studio is
+idle, or the first time they're played). It starts at once and doesn't stop to buffer on wifi from Singapore.
+The **720p** button on the video switches to the full-quality file (**Full quality** for a draft, **Original**
+for a clip); **Download video** and OneDrive's Ready to post always get the full-quality file.
 
 Telegram is just for notifications: one summary per batch of uploads or edits, with a link
 to the right dashboard tab (set `STUDIO_DASHBOARD_URL` so the link works from your phone).

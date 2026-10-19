@@ -609,6 +609,7 @@ $("#grid").addEventListener("mouseover", (e) => {
   let video = tile.querySelector("video");
   if (!video) {
     video = Object.assign(document.createElement("video"), { src, muted: true, loop: true, playsInline: true, preload: "metadata" });
+    if (safeSrc(item.thumb)) video.poster = safeSrc(item.thumb);
     tile.insertBefore(video, tile.querySelector(".chips"));
   }
   tile.classList.add("playing");
@@ -625,8 +626,55 @@ $("#grid").addEventListener("click", (e) => {
   const tile = e.target.closest(".tile");
   if (!tile) return;
   const item = state.list[Number(tile.dataset.index)];
-  if (tidy.select && state.stage === "library") { togglePick(item); return; }
+  // Picking clips: a click (or Ctrl/Cmd-click) toggles one, Shift-click does the range from the last one.
+  const canPick = state.stage === "library" && isOwner() && item?.kind === "clip";
+  if (canPick && (tidy.select || e.shiftKey || e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    if (!tidy.select) { tidy.select = true; tidy.picked.clear(); tidy.anchor = null; }
+    if (e.shiftKey) pickRange(item); else togglePick(item);
+    return;
+  }
   openItem(item);
+});
+// Shift-click shouldn't select the tiles' text.
+$("#grid").addEventListener("mousedown", (e) => { if (e.shiftKey && e.target.closest(".tile")) e.preventDefault(); });
+// Phones: a long press on a clip starts picking (with that clip); taps then add or remove.
+$("#grid").addEventListener("pointerdown", (e) => {
+  if (e.pointerType !== "touch" || state.stage !== "library" || !isOwner()) return;
+  const tile = e.target.closest(".tile");
+  const item = tile && state.list[Number(tile.dataset.index)];
+  if (!item || item.kind !== "clip") return;
+  const x = e.clientX, y = e.clientY;
+  clearTimeout(tidy.pressTimer);
+  const cancel = () => { clearTimeout(tidy.pressTimer); tidy.pressFire = null; tile.removeEventListener("pointermove", move); };
+  const move = (m) => { if (Math.hypot(m.clientX - x, m.clientY - y) > 10) cancel(); };
+  tile.addEventListener("pointermove", move);
+  tile.addEventListener("pointerup", cancel, { once: true });
+  tile.addEventListener("pointercancel", cancel, { once: true });
+  const fire = () => {
+    cancel();
+    tidy.pressFire = null;
+    tidy.pressed = true;  // the click that follows the release is this press, not a tap
+    setTimeout(() => { tidy.pressed = false; }, 800);
+    navigator.vibrate?.(15);
+    if (!tidy.select) { tidy.select = true; tidy.picked.clear(); tidy.anchor = null; }
+    if (!tidy.picked.has(item.id)) togglePick(item);
+  };
+  tidy.pressFire = fire;
+  tidy.pressTimer = setTimeout(fire, 450);
+});
+// The click a long press ends with is part of it, wherever it lands (the bar slides in under the finger).
+document.addEventListener("click", (e) => {
+  if (!tidy.pressed) return;
+  tidy.pressed = false;
+  e.preventDefault();
+  e.stopPropagation();
+}, true);
+// Android's own long press (its menu) counts as the same press.
+$("#grid").addEventListener("contextmenu", (e) => {
+  if (state.stage !== "library" || !isOwner() || !e.target.closest(".tile")) return;
+  if (tidy.pressFire) { e.preventDefault(); tidy.pressFire(); return; }
+  if (tidy.select || tidy.pressed) e.preventDefault();
 });
 $("#tabs").addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-stage]");
@@ -650,7 +698,8 @@ $("#brand-filter").addEventListener("click", (e) => {
 // approved or posted one (hidden from Done; undo under Archived). Library: Archive clips, Free up
 // space (Studio's own copy of an original, only when OneDrive's archive has it), and "Suggested to
 // tidy". Bryan only; every delete asks once, in plain words, with what it frees.
-const tidy = { view: { done: "done", library: "all" }, select: false, picked: new Set(), info: null, at: 0, olderOpen: false };
+const tidy = { view: { done: "done", library: "all" }, select: false, picked: new Set(), info: null, at: 0, olderOpen: false,
+  anchor: null, pressTimer: null, pressFire: null, pressed: false, job: null, jobTimer: null, jobSeen: recall("studio.freeSeen") || "" };
 const WHY = { retake: "Retake", unused: "Unused 60+ days", "archived project": "Archived project" };
 
 function gb(bytes) {
@@ -665,8 +714,44 @@ async function loadTidy(force = false) {
   if (!isOwner() || (!force && Date.now() - tidy.at < 60e3)) return;
   tidy.at = Date.now();
   try { tidy.info = await api("/api/cleanup"); } catch { tidy.info = null; }
+  setJob(tidy.info?.job || null);
   if (state.stage === "done" || state.stage === "library") renderGrid();
 }
+
+// Free up space runs on the server, a clip at a time: its progress in the Library's bar.
+function setJob(job) {
+  tidy.job = job;
+  clearTimeout(tidy.jobTimer);
+  if (job && (job.state === "running" || job.state === "waiting")) tidy.jobTimer = setTimeout(pollJob, 1500);
+}
+async function pollJob() {
+  let job;
+  try { job = (await api("/api/clips/free")).job; } catch { tidy.jobTimer = setTimeout(pollJob, 5000); return; }
+  const was = tidy.job?.state;
+  setJob(job);
+  if (job && was === "running" && job.state !== "running") {
+    if (state.stage !== "library") toast(jobLine(job));  // in the Library the bar says it
+    await afterTidy();
+    return;
+  }
+  renderSelBar();
+}
+const STEP = { checking: "Checking", copying: "Copying", preview: "Making a preview for", start: "Checking" };
+function jobLine(job) {
+  const n = Math.max(1, Number(job.n) || 0), total = Number(job.total) || 0;
+  if (job.state === "running" || job.state === "waiting") {
+    if (job.state === "waiting") return `Free up space carries on when Studio restarts (${Number(job.n) || 0} of ${total} done).`;
+    return job.phase === "copying" ? `Copying ${n} of ${total} to OneDrive…` : `${STEP[job.phase] || "Checking"} ${n} of ${total}…`;
+  }
+  const freed = `Freed ${gb(job.bytes)} from ${plural(job.freed || 0, "clip")}.`;
+  const left = (job.skipped || []).filter((x) => !/^(not tried|stopped before)/.test(x.why));
+  const why = left.length ? ` ${plural(left.length, "clip")} left as ${left.length === 1 ? "it was" : "they were"}: ${left[0].why}.` : "";
+  if (job.state === "stopped") return `Stopped${job.stopped && job.stopped !== "stopped" ? `: ${job.stopped}` : ""}. ${freed}${why}`;
+  return freed + why;
+}
+// A finished job's line stays until Bryan closes it, for a quarter of an hour at most.
+const jobShown = (job) => job && (job.state === "running" || job.state === "waiting"
+  || (job.finished_at && job.finished_at !== tidy.jobSeen && Date.now() - Date.parse(job.finished_at) < 15 * 60e3));
 
 function tidyList(stage) {
   const all = state.items.filter((i) => i.stage === stage && (!state.brand || i.brand === state.brand));
@@ -734,17 +819,28 @@ function renderTidyBar() {
 // The selection bar under the Library: what's picked, what it frees, what to do with it.
 function renderSelBar() {
   const bar = $("#sel-bar");
-  const on = tidy.select && state.stage === "library";
-  bar.hidden = !on;
-  if (!on) { bar.innerHTML = ""; return; }
+  const library = state.stage === "library";
+  const on = tidy.select && library;
+  const job = library && isOwner() && jobShown(tidy.job) ? tidy.job : null;
+  bar.hidden = !on && !job;
+  if (bar.hidden) { bar.innerHTML = ""; return; }
+  const running = job && (job.state === "running" || job.state === "waiting");
+  const jobRow = job ? `<div class="sel-job${running ? " running" : ""}" role="status" aria-live="polite">
+      ${running ? `<span class="sel-spin" aria-hidden="true"></span>` : ""}<span class="sel-job-text">${esc(jobLine(job))}</span>
+      ${running && job.state === "running" ? `<button type="button" class="btn small" data-tidy="stop-free">Stop</button>` : running ? "" : `<button type="button" class="btn small ghost" data-tidy="job-ok">OK</button>`}
+      ${running && job.total ? `<span class="sel-meter" aria-hidden="true"><i style="width:${Math.round(100 * Math.max(0, (job.n || 1) - 1) / job.total)}%"></i></span>` : ""}</div>` : "";
+  if (!on) { bar.innerHTML = jobRow; return; }
   const items = state.items.filter((i) => i.kind === "clip" && tidy.picked.has(i.id));
   const bytes = items.reduce((t, i) => t + tidyBytes(i), 0);
   const archivedView = tidy.view.library === "archived";
-  bar.innerHTML = `<span class="sel-count">${items.length ? `${esc(plural(items.length, "clip"))} picked${bytes ? ` · ${esc(gb(bytes))}` : ""}` : "Tap clips to pick them"}</span>
+  const od = tidy.info?.onedrive;
+  const freeWhy = !od ? "Needs OneDrive (on the server)" : running ? "Free up space is already running" : !items.length ? "Pick clips first" : "";
+  const hint = phone() ? "Tap clips to pick them" : "Click clips to pick them. Shift-click picks a run of them";
+  bar.innerHTML = `${jobRow}<span class="sel-count">${items.length ? `${esc(plural(items.length, "clip"))} picked${bytes ? ` · ${esc(gb(bytes))}` : ""}` : esc(hint)}</span>
     <button type="button" class="btn small" data-tidy="all">Pick all ${esc(state.list.length)}</button>
     ${archivedView ? `<button type="button" class="btn small" data-tidy="unarchive-clips" ${items.length ? "" : "disabled"}>Bring back</button>`
       : `<button type="button" class="btn small" data-tidy="archive-clips" ${items.length ? "" : "disabled"}>Archive</button>`}
-    <button type="button" class="btn small danger" data-tidy="free" ${items.length && tidy.info?.onedrive ? "" : "disabled"} title="${tidy.info?.onedrive ? "Delete Studio's own copy of the original videos; OneDrive keeps them" : "Needs OneDrive (on the server)"}">Free up space${bytes ? ` · ${esc(gb(bytes))}` : ""}</button>
+    <button type="button" class="btn small danger sel-free" data-tidy="free" ${freeWhy ? "disabled" : ""} title="${esc(freeWhy || "Copies any original OneDrive doesn't have, then deletes Studio's own copy")}">Free up space${bytes ? ` · ${esc(gb(bytes))}` : ""}</button>
     <button type="button" class="btn small ghost" data-tidy="none">Clear</button>`;
 }
 
@@ -757,7 +853,24 @@ async function afterTidy() {
 
 function togglePick(item) {
   if (!item || item.kind !== "clip") return;
-  if (tidy.picked.has(item.id)) tidy.picked.delete(item.id); else tidy.picked.add(item.id);
+  const on = !tidy.picked.has(item.id);
+  if (on) tidy.picked.add(item.id); else tidy.picked.delete(item.id);
+  tidy.anchor = { id: item.id, on };  // a Shift-click next does the same to the run up to here
+  renderGrid();
+}
+
+// Shift-click: every clip between the last one clicked and this one, picked (or, when the last
+// click took one off, taken off).
+function pickRange(item) {
+  const at = state.list.findIndex((i) => i.kind === "clip" && i.id === item.id);
+  const from = tidy.anchor ? state.list.findIndex((i) => i.kind === "clip" && i.id === tidy.anchor.id) : -1;
+  if (at < 0 || from < 0) { togglePick(item); return; }
+  const on = tidy.anchor.on;
+  for (const i of state.list.slice(Math.min(at, from), Math.max(at, from) + 1)) {
+    if (i.kind !== "clip") continue;
+    if (on) tidy.picked.add(i.id); else tidy.picked.delete(i.id);
+  }
+  tidy.anchor = { id: item.id, on };
   renderGrid();
 }
 
@@ -802,12 +915,22 @@ async function tidyAction(t) {
   } else if (what === "select") {
     tidy.select = !tidy.select;
     tidy.picked.clear();
+    tidy.anchor = null;
     renderGrid();
+  } else if (what === "stop-free") {
+    t.disabled = true;
+    await api("/api/clips/free/stop", {});
+    toast("Stopping after the clip it's on.");
+  } else if (what === "job-ok") {
+    tidy.jobSeen = tidy.job?.finished_at || "";
+    store("studio.freeSeen", tidy.jobSeen);
+    renderSelBar();
   } else if (what === "all") {
     for (const i of state.list) if (i.kind === "clip") tidy.picked.add(i.id);
     renderGrid();
   } else if (what === "none") {
     tidy.picked.clear();
+    tidy.anchor = null;
     renderGrid();
   } else if (what === "archive-clips" || what === "unarchive-clips") {
     const ids = [...tidy.picked];
@@ -819,13 +942,15 @@ async function tidyAction(t) {
   } else if (what === "free") {
     const items = state.items.filter((i) => i.kind === "clip" && tidy.picked.has(i.id));
     const bytes = items.reduce((t, i) => t + tidyBytes(i), 0);
-    askOnce(`Remove ${plural(items.length, "clip")} from the server?`,
-      `The originals stay in OneDrive (Studio Archive), so this frees ${esc(gb(bytes))} on Studio's disk. Stills, transcripts and tags stay, and Studio fetches an original back by itself if an edit needs it. A clip OneDrive doesn't have is left as it is.`,
+    askOnce(`Free up space for ${plural(items.length, "clip")}?`,
+      `Studio copies each original OneDrive doesn't have yet into Studio Archive, checks the copy, then deletes the server's copy: about ${esc(gb(bytes))}. Previews, stills and tags stay; an edit fetches the original back.`,
       "Free up space", async () => {
         const r = await api("/api/clips/free", { ids: items.map((i) => i.id) });
         tidy.picked.clear();
-        toast(`Freed ${gb(r.bytes)} (${plural(r.freed, "clip")}).${r.skipped.length ? ` ${plural(r.skipped.length, "clip")} left as ${r.skipped.length === 1 ? "it was" : "they were"}: ${r.skipped[0].why}.` : ""}`);
-        await afterTidy();
+        tidy.anchor = null;
+        tidy.select = false;
+        setJob(r.job);
+        renderGrid();
       });
   }
 }
@@ -1406,13 +1531,13 @@ function renderPlayer(item) {
   if (video && isDetail(item.kind)) return renderTile(item, video, original, thumb);
   if (video) {
     const useOriginal = original && recall("studio.original") === "1";
-    frame.innerHTML = `<video controls autoplay playsinline src="${esc(useOriginal ? original : video)}" ${thumb ? `poster="${esc(thumb)}"` : ""}></video>
-      ${original ? `<button class="quality${useOriginal ? " on" : ""}" id="quality" title="Switch between the 1080p preview and your untouched file">${useOriginal ? "Original" : "1080p preview"}</button>` : ""}`;
+    frame.innerHTML = `<video controls autoplay playsinline preload="metadata" src="${esc(useOriginal ? original : video)}" ${thumb ? `poster="${esc(thumb)}"` : ""}></video>
+      ${original ? `<button class="quality${useOriginal ? " on" : ""}" id="quality" title="${esc(QUALITY_TIP)}">${qualityLabel(item, useOriginal)}</button>` : ""}`;
     player().addEventListener("timeupdate", updatePinLabel);
     player().addEventListener("error", () => {
       // Originals from an iPhone are usually HEVC, which some browsers can't play.
       if (player().src.endsWith("/original")) {
-        toast("This browser can't play the original (iPhone HEVC). Showing the 1080p preview.");
+        toast("This browser can't play the original (iPhone HEVC). Showing the 720p copy.");
         setQuality(item, false);
       }
     });
@@ -1431,7 +1556,7 @@ function renderTile(item, video, original, thumb) {
   frame.innerHTML = `<video playsinline preload="metadata" src="${esc(useOriginal ? original : video)}" ${thumb ? `poster="${esc(thumb)}"` : ""}></video>
     <button class="tile-play" id="tile-play" aria-label="Play the ${what}"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg></button>
     ${item.duration ? `<span class="tile-time">${esc(mmss(item.duration))}</span>` : ""}
-    ${original ? `<button class="quality${useOriginal ? " on" : ""}" id="quality" title="Switch between the 1080p preview and your untouched file">${useOriginal ? "Original" : "1080p"}</button>` : ""}`;
+    ${original ? `<button class="quality${useOriginal ? " on" : ""}" id="quality" title="${esc(QUALITY_TIP)}">${qualityLabel(item, useOriginal)}</button>` : ""}`;
   const v = player();
   v.addEventListener("timeupdate", updatePinLabel);
   v.addEventListener("play", () => { frame.classList.add("playing"); if (!phone()) v.controls = true; });
@@ -1439,7 +1564,7 @@ function renderTile(item, video, original, thumb) {
   v.addEventListener("webkitendfullscreen", () => v.pause());  // iPhone: leaving full screen stops it
   v.addEventListener("error", () => {
     if (v.src.endsWith("/original")) {
-      toast("This browser can't play the original (iPhone HEVC). Showing the 1080p preview.");
+      toast("This browser can't play the original (iPhone HEVC). Showing the 720p copy.");
       setQuality(item, false);
     }
   });
@@ -1477,8 +1602,12 @@ function setQuality(item, original) {
   }, { once: true });
   const btn = $("#quality");
   btn.classList.toggle("on", original);
-  btn.textContent = original ? "Original" : detailMode() ? "1080p" : "1080p preview";
+  btn.textContent = qualityLabel(item, original);
 }
+
+// What plays: the light 720p copy (starts at once, no stops on wifi), or the file itself.
+const QUALITY_TIP = "720p plays without stopping. Switch to the full-quality file to check detail.";
+const qualityLabel = (item, full) => (full ? (item.kind === "production" ? "Full quality" : "Original") : "720p");
 
 async function loadDetail() {
   const { kind, id } = state.current;
@@ -2730,7 +2859,7 @@ function playTake(shotId, takeId) {
   const start = Number(t.start) || 0, end = Number(t.end) || 0;
   const wrap = document.createElement("div");
   wrap.className = "sb-media playing";
-  wrap.innerHTML = `<video src="${esc(src)}#t=${start}${end > start ? `,${end}` : ""}" controls autoplay playsinline></video>`;
+  wrap.innerHTML = `<video src="${esc(src)}#t=${start}${end > start ? `,${end}` : ""}" controls autoplay playsinline preload="metadata"></video>`;
   media.replaceWith(wrap);
   wrap.querySelector("video").play().catch(() => {});
   wrap.scrollIntoView({ block: "nearest", behavior: "smooth" });

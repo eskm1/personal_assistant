@@ -8,17 +8,23 @@ without ever losing anything that isn't kept somewhere else.
   OneDrive's "Studio Ready to post"; undo any time).
 - Library: Archive a clip (hidden from the Library, ideas from footage, suggested topics and the
   planner's footage pickers; undo any time); Free up space: delete the server's copy of a clip's
-  original video, only when OneDrive's archive holds it (checked in OneDrive at that moment, by
-  name and exact size). Stills, preview, transcript and tags stay. If an edit, a carousel still
-  or a Resolve project later needs that original, onedrive.ensure_originals() fetches it back.
+  original video once OneDrive's archive holds it. An original OneDrive never had (uploaded from
+  the planner, or from the laptop before the move) is copied there first, into Studio Archive/
+  <project>/<post or Uploads>/, and checked (exact size, and OneDrive's fingerprint) before
+  anything is deleted. It runs in the background with its progress in the Library's bar, one
+  clip at a time, and carries on after a restart. Stills, the light preview, transcript and tags
+  stay. If an edit, a carousel still or a Resolve project later needs that original,
+  onedrive.ensure_originals() fetches it back.
 - "Suggested to tidy": retakes, clips no post has used for 60 days, clips of archived projects.
 
 Deleting is the owner's only (Remove, Clear rejected, Free up space); so is archiving. OneDrive's
-own files are never touched. Everything freed is logged (worker.log and logs/cleanup.jsonl).
+own files are never touched (Free up space only adds originals to Studio Archive). Everything
+freed is logged (worker.log and logs/cleanup.jsonl).
 """
 import json
 import logging
 import shutil
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -157,43 +163,200 @@ def tidy_reasons(conn) -> dict[int, list[str]]:
     return out
 
 
-def free_clips(conn, ids: list[int]) -> dict:
-    """Delete the server's copy of these clips' originals where OneDrive's archive holds them.
-    Returns {freed, bytes, skipped: [{id, why}]}. Never deletes what OneDrive doesn't have."""
+# OneDrive problems that would stop every clip the same way: the job stops instead of trying them all.
+_STOPPERS = ("Can't reach OneDrive", "sign-in has expired", "isn't connected", "OneDrive is full",
+             "rclone isn't installed", "connection settings")
+
+
+def _free_one(conn, r, listing, say) -> int:
+    """Free one clip: its original into OneDrive's archive if OneDrive doesn't have it yet,
+    checked there, then the server's copy deleted. Returns the bytes freed; ValueError (why,
+    in plain words) when it's left as it was. Never deletes without a checked OneDrive copy."""
+    import onedrive
+    import previews
+    path = Path(r["video_path"] or "")
+    if r["freed_at"]:
+        if path.is_file() and r["onedrive_path"]:   # recorded, then cut short before the delete
+            say("checking")
+            onedrive.verify(path, r["onedrive_path"])   # checked again: still there, still the same
+            size = path.stat().st_size
+            path.unlink()
+            return size
+        raise ValueError("already freed")
+    if not path.is_file():
+        raise ValueError("the server has no copy of it")
+    if r["status"] != "tagged":
+        raise ValueError("still being processed")
+    remote = onedrive.original_in_archive(r, listing())
+    if remote:
+        say("checking")
+        try:
+            onedrive.verify(path, remote)
+        except onedrive.Mismatch:
+            remote = None   # same name and size but not the same file: copy ours up as well
+    if not remote:
+        say("copying")
+        remote = onedrive.upload_original(conn, r)
+    clip_dir = Path(r["clip_dir"])
+    if not any((clip_dir / n).is_file() for n in (previews.NAME, *previews.OLD_NAMES)):
+        try:   # Review keeps something to play: once the original's gone it can't be made from it
+            say("preview")
+            previews.make(path, clip_dir / previews.NAME, background=True)
+        except (RuntimeError, OSError) as e:
+            log.info("Clean-up: no light copy for clip %s (%s); the still stays", r["id"], e)
+    size = path.stat().st_size
+    # Recorded first: if the server stops between these two lines, the clip is still marked
+    # as kept in OneDrive and the next run finishes the delete.
+    conn.execute("UPDATE clips SET freed_at = ?, freed_bytes = ?, onedrive_path = ?, onedrive_size = ? WHERE id = ?",
+                 (catalog.now(), size, remote, size, r["id"]))
+    conn.commit()
+    path.unlink()
+    return size + previews.drop_old(clip_dir)
+
+
+def free_clips(conn, ids: list[int], progress=None, stop=None) -> dict:
+    """Free up space for these clips (_free_one each). Returns {freed, bytes, skipped: [{id, why}],
+    stopped}. progress(n, total, phase, row) reports each step; stop() True ends it after a clip."""
     import onedrive
     rows = [r for r in (conn.execute("SELECT * FROM clips WHERE id = ?", (i,)).fetchone() for i in ids) if r]
-    skipped, freed, total = [], 0, 0
+    out = {"freed": 0, "bytes": 0, "skipped": [], "stopped": None}
     if not onedrive.configured():
-        return {"freed": 0, "bytes": 0, "skipped": [{"id": r["id"], "why": "OneDrive isn't connected on this machine"} for r in rows]}
-    # One listing of the archive for the clips whose place there isn't known yet.
-    try:
-        listing = onedrive.archive_listing() if any(not r["onedrive_path"] for r in rows) else None
-    except onedrive.OneDriveError as e:
-        return {"freed": 0, "bytes": 0, "skipped": [{"id": r["id"], "why": str(e)} for r in rows]}
-    for r in rows:
-        path = Path(r["video_path"] or "")
-        if r["freed_at"] or not path.is_file():
-            skipped.append({"id": r["id"], "why": "already freed"})
-            continue
-        if r["status"] != "tagged":
-            skipped.append({"id": r["id"], "why": "still being processed"})
-            continue
+        out["skipped"] = [{"id": r["id"], "why": "OneDrive isn't connected on this machine"} for r in rows]
+        return out
+    cache = {}
+
+    def listing():   # one listing of the archive, only if a clip's place there isn't known
+        if "all" not in cache:
+            cache["all"] = onedrive.archive_listing() if any(not r["onedrive_path"] for r in rows) else []
+        return cache["all"]
+
+    for n, r in enumerate(rows, 1):
+        if stop and stop():
+            out["stopped"] = "stopped"
+            out["skipped"] += [{"id": x["id"], "why": "stopped before it"} for x in rows[n - 1:]]
+            break
+        if progress:
+            progress(n, len(rows), "start", r)
         try:
-            remote = onedrive.original_in_archive(r, listing)
+            out["bytes"] += _free_one(conn, r, listing, lambda phase: progress and progress(n, len(rows), phase, r))
+            out["freed"] += 1
+        except ValueError as e:
+            out["skipped"].append({"id": r["id"], "why": str(e)})
         except onedrive.OneDriveError as e:
-            skipped.append({"id": r["id"], "why": str(e)})
-            continue
-        if not remote:
-            skipped.append({"id": r["id"], "why": "OneDrive's archive doesn't have its original"})
-            continue
-        size = path.stat().st_size
-        path.unlink()
-        conn.execute("UPDATE clips SET freed_at = ?, freed_bytes = ?, onedrive_path = ?, onedrive_size = ? WHERE id = ?",
-                     (catalog.now(), size, remote, size, r["id"]))
-        conn.commit()
-        freed += 1
-        total += size
-    return {"freed": freed, "bytes": total, "skipped": skipped}
+            out["skipped"].append({"id": r["id"], "why": str(e)})
+            log.warning("Clean-up: clip %s left as it was: %s", r["id"], e)
+            if any(w in str(e) for w in _STOPPERS):
+                out["stopped"] = str(e)
+                out["skipped"] += [{"id": x["id"], "why": "not tried: " + str(e)} for x in rows[n:]]
+                break
+        except OSError as e:
+            out["skipped"].append({"id": r["id"], "why": f"couldn't read or delete it ({e.strerror or e})"})
+    return out
+
+
+# ── Free up space as a job: progress in the Library's bar, safe across a restart ──
+
+JOB_FILE = "cleanup_job.json"
+_job_lock = threading.Lock()
+_job_thread: threading.Thread | None = None
+_stop = threading.Event()
+
+
+def _job_path() -> Path:
+    return settings.ROOT / JOB_FILE
+
+
+def job_status() -> dict | None:
+    """The last Free up space job ({state: running | done | stopped, n, total, phase, freed,
+    bytes, skipped, ...}), or None."""
+    try:
+        job = json.loads(_job_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if job.get("state") == "running" and not busy():
+        job["state"] = "waiting"   # cut short by a restart; resume() carries on
+    return job
+
+
+def _save_job(job: dict) -> None:
+    path = _job_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(job), encoding="utf-8")
+    tmp.replace(path)
+
+
+def busy() -> bool:
+    return _job_thread is not None and _job_thread.is_alive()
+
+
+def start_free(ids: list[int], who: str) -> dict:
+    """Start Free up space for these clips in the background. ValueError if one is running."""
+    global _job_thread
+    with _job_lock:
+        if busy():
+            raise ValueError("Free up space is already running")
+        _stop.clear()
+        job = {"state": "running", "ids": [int(i) for i in ids], "done": [], "total": len(ids), "n": 0,
+               "phase": "start", "name": "", "freed": 0, "bytes": 0, "skipped": [], "by": who,
+               "started_at": catalog.now(), "finished_at": None, "stopped": None}
+        _save_job(job)
+        _job_thread = threading.Thread(target=_run_job, args=(job,), name="free-up-space", daemon=True)
+        _job_thread.start()
+        return job
+
+
+def stop_job() -> bool:
+    if not busy():
+        return False
+    _stop.set()
+    return True
+
+
+def resume() -> None:
+    """At start: carry on a Free up space job a restart cut short (the clips not done yet)."""
+    global _job_thread
+    try:
+        job = json.loads(_job_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if job.get("state") != "running":
+        return
+    with _job_lock:
+        if busy():
+            return
+        _stop.clear()
+        log.info("Clean-up: carrying on Free up space (%d of %d clips left)",
+                 len(job["ids"]) - len(job["done"]), len(job["ids"]))
+        _job_thread = threading.Thread(target=_run_job, args=(job,), name="free-up-space", daemon=True)
+        _job_thread.start()
+
+
+def _run_job(job: dict) -> None:
+    conn = catalog.connect()
+    try:
+        todo = [i for i in job["ids"] if i not in set(job["done"])]
+        base = len(job["done"])
+
+        def progress(n, total, phase, row):
+            job.update(n=base + n, phase=phase, name=row["title"] or row["source_name"] or "")
+            _save_job(job)
+
+        result = free_clips(conn, todo, progress=lambda n, t, ph, r: progress(n, t, ph, r), stop=_stop.is_set)
+        job["freed"] += result["freed"]
+        job["bytes"] += result["bytes"]
+        job["skipped"] += result["skipped"]
+        job["done"] = job["ids"]
+        job.update(state="stopped" if result["stopped"] else "done", stopped=result["stopped"],
+                   finished_at=catalog.now(), phase="")
+    except Exception as e:   # never leave the job "running" for ever
+        log.exception("Clean-up: Free up space stopped")
+        job.update(state="stopped", stopped=f"{type(e).__name__}: {e}"[:200], finished_at=catalog.now(), phase="")
+    finally:
+        conn.close()
+        _save_job(job)
+    if job["freed"]:
+        _record("freed clip originals (kept in OneDrive)", job["freed"], job["bytes"], job.get("by", ""))
 
 
 def set_archived(conn, table: str, ids: list[int], on: bool) -> int:
@@ -224,6 +387,7 @@ def summary(conn) -> dict:
         "tidy": [{"id": i, "why": why, "bytes": sizes.get(i, 0), "known": bool(clips[i]["onedrive_path"])}
                  for i, why in reasons.items() if i in clips],
         "freed_total": freed_so_far(),
+        "job": _job_view(job_status()),
     }
 
 
@@ -296,11 +460,35 @@ def archive_clips():
 @bp.post("/api/clips/free")
 @owner_only
 def free():
+    """Free up space for the picked clips, in the background (GET /api/clips/free for progress)."""
     try:
         ids = _ids()
     except (ValueError, TypeError) as e:
         return jsonify({"error": str(e)}), 400
-    result = free_clips(db(), ids)
-    if result["freed"]:
-        _record("freed clip originals (kept in OneDrive)", result["freed"], result["bytes"], g.user["email"])
-    return jsonify(result)
+    try:
+        job = start_free(ids, g.user["email"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
+    return jsonify({"ok": True, "job": _job_view(job)}), 202
+
+
+@bp.get("/api/clips/free")
+@owner_only
+def free_status():
+    response = jsonify({"job": _job_view(job_status())})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@bp.post("/api/clips/free/stop")
+@owner_only
+def free_stop():
+    """Stop after the clip it's on (nothing half-done: that clip finishes or is left as it was)."""
+    return jsonify({"ok": True, "stopping": stop_job()})
+
+
+def _job_view(job: dict | None) -> dict | None:
+    if not job:
+        return None
+    return {k: job.get(k) for k in ("state", "n", "total", "phase", "name", "freed", "bytes", "skipped",
+                                    "stopped", "started_at", "finished_at")}

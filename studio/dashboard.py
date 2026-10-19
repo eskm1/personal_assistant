@@ -33,6 +33,7 @@ import auth
 import cloud_sync
 import settings
 import playbook
+import previews
 import usage
 from settings import DASHBOARD_HOST, DASHBOARD_PORT, INBOX, VIDEO_EXTS
 from webutil import LOOPBACK, body, client_ip, db, is_local, is_owner, own_origin, owner_only, text
@@ -248,9 +249,10 @@ def update_now():
 
 def busy() -> bool:
     """Background work started here that a restart would cut short."""
+    import cleanup
     import draft_review
     import plan_routes
-    return (_ideas_job["running"] or draft_review.busy() or any(j.get("state") == "building" for j in _resolve_jobs.values())
+    return (_ideas_job["running"] or draft_review.busy() or cleanup.busy() or any(j.get("state") == "building" for j in _resolve_jobs.values())
             or any(j.get("state") == "running" for j in plan_routes._jobs.values()))
 
 
@@ -318,17 +320,41 @@ def _file_response(path: str | None):
     if mime == "video/quicktime":
         mime = "video/mp4"  # browsers play iPhone .MOV (H.264/HEVC) when it's labelled mp4
     # conditional=True answers Range requests, so the player can seek.
-    return send_file(path, mimetype=mime, conditional=True, max_age=3600)
+    return _stream_ranges(send_file(path, mimetype=mime, conditional=True, max_age=3600), path)
 
 
-def _clip_files(row: sqlite3.Row) -> dict:
+def _stream_ranges(response, path: str):
+    """A video plays through Range requests ("bytes=0-", then a request per seek). Flask answers
+    them by reading the file in small pieces on one of the server's few threads, which stays busy
+    until the browser has read it all; a few videos open at once used them all up and the rest of
+    Review stalled with them. Handing waitress the open file at the right place lets it send it
+    by itself, with no thread waiting (as it already does for whole files)."""
+    wrapper = request.environ.get("wsgi.file_wrapper")
+    if response.status_code != 206 or not getattr(wrapper, "__module__", "").startswith("waitress"):
+        return response
+    m = re.fullmatch(r"bytes (\d+)-(\d+)/\d+", response.headers.get("Content-Range", ""))
+    if not m:
+        return response
+    start, end = int(m[1]), int(m[2])
+    try:
+        f = open(path, "rb")
+    except OSError:
+        return response
+    response.response.close()   # the piecewise reader Flask made
+    f.seek(start)
+    response.response = wrapper(f, 256 * 1024)
+    response.direct_passthrough = True
+    response.headers["Content-Length"] = str(end - start + 1)  # waitress sends exactly this much
+    return response
+
+
+def _clip_files(row: sqlite3.Row, want: bool = False) -> dict:
     clip_dir = Path(row["clip_dir"])
     frames = sorted((clip_dir / "frames").glob("*.jpg"))
-    # Newest preview first; clips from before a recipe change fall back to the old one.
-    preview = next((p for p in (clip_dir / "preview-1080.mp4", clip_dir / "preview.mp4") if p.exists()), None)
     return {
         "thumb": str(frames[len(frames) // 2]) if frames else None,
-        "video": str(preview) if preview else row["video_path"],
+        # The light copy (previews.py); an older preview or the original until it's made.
+        "video": previews.clip_video(row, want=want),
         "original": row["video_path"],
     }
 
@@ -382,7 +408,10 @@ def _clip_item(row: sqlite3.Row, open_notes: dict[int, int]) -> dict:
         "archived": bool(row["archived_at"]), "freed": bool(row["freed_at"]),
         "error": row["error"], "open_notes": open_notes.get(row["id"], 0),
         "thumb": f"/media/clip/{row['id']}/thumb" if files["thumb"] else None,
-        "video": f"/media/clip/{row['id']}/video" if row["status"] != "processing" else None,
+        # ?light=1 once its light copy is there: a new address, so a browser never mixes cached
+        # pieces of the older preview with the new file.
+        "video": (f"/media/clip/{row['id']}/video" + ("?light=1" if (Path(row["clip_dir"]) / previews.NAME).is_file() else ""))
+        if row["status"] != "processing" else None,
         "original": f"/media/clip/{row['id']}/original" if row["status"] != "processing" and not row["freed_at"] else None,
         "updated": row["ingested_at"],
     }
@@ -397,7 +426,10 @@ def _production_item(row: sqlite3.Row, open_notes: dict[int, int]) -> dict:
         "version": row["version"], "duration": row["duration"], "open_notes": open_notes.get(row["id"], 0),
         # ?v= makes the browser fetch the new render after each revision.
         "thumb": f"/media/production/{row['id']}/thumb?v={row['version']}" if row["thumb_path"] else None,
-        "video": f"/media/production/{row['id']}/video?v={row['version']}" if row["video_path"] else None,
+        "video": (f"/media/production/{row['id']}/video?v={row['version']}"
+                  + ("&light=1" if previews.light_for(row["video_path"]).is_file() else "")) if row["video_path"] else None,
+        # The full-quality file (Review's "Full quality"); "video" is its light copy (previews.py).
+        "original": f"/media/production/{row['id']}/video?v={row['version']}&full=1" if row["video_path"] else None,
         "updated": row["updated_at"], "archived": bool(row["archived_at"]), "removed": bool(row["removed_at"]),
     }
 
@@ -1036,7 +1068,7 @@ def clip_media(clip_id: int, what: str):
     row = db().execute("SELECT * FROM clips WHERE id = ?", (clip_id,)).fetchone()
     if row is None or what not in ("thumb", "video", "original"):
         abort(404)
-    return _file_response(_clip_files(row)[what])
+    return _file_response(_clip_files(row, want=what == "video")[what])
 
 
 @app.get("/media/idea/<int:idea_id>/thumb")
@@ -1129,7 +1161,10 @@ def production_media(production_id: int, what: str):
         name = re.sub(r"[^\w\- ]+", "", row["title"] or "Studio post").strip()[:60] or "Studio post"
         return send_file(row["video_path"], as_attachment=True,
                          download_name=f"{name} v{row['version']}{Path(row['video_path']).suffix}")
-    return _file_response(row["thumb_path"] if what == "thumb" else row["video_path"])
+    if what == "thumb":
+        return _file_response(row["thumb_path"])
+    # The light copy plays in Review; ?full=1 is the file as rendered (Full quality).
+    return _file_response(row["video_path"] if request.args.get("full") else previews.draft_video(row["video_path"]))
 
 
 # ── Planning board ────────────────────────────────────────────────────────────
@@ -1165,7 +1200,9 @@ def run() -> None:
     log.info("Dashboard on http://%s:%s", DASHBOARD_HOST, DASHBOARD_PORT)
     for attempt in range(30):  # after an update restart, the old worker may still hold the port briefly
         try:
-            serve(app, host=DASHBOARD_HOST, port=DASHBOARD_PORT, threads=8, _quiet=True)
+            # 16 threads: videos no longer hold one each (_stream_ranges), but uploads from the
+            # planner and Claude-backed pages still do.
+            serve(app, host=DASHBOARD_HOST, port=DASHBOARD_PORT, threads=16, _quiet=True)
             return
         except OSError as e:
             if attempt == 29:

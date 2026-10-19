@@ -832,9 +832,26 @@ button.concept-opt:disabled { opacity: .6; cursor: progress; }
 .sel-bar .sel-count { flex: 1 1 160px; font-weight: 500; }
 .sel-bar .btn { background: transparent; color: var(--um-paper); border-color: rgba(251, 250, 247, .4); }
 .sel-bar .btn:hover:not(:disabled) { background: rgba(251, 250, 247, .12); color: var(--um-paper); }
-.sel-bar .btn.danger { background: var(--um-paper); color: var(--um-danger); border-color: var(--um-paper); }
-.sel-bar .btn.danger:hover:not(:disabled) { background: var(--um-danger-tint); color: var(--um-danger); }
+/* On the ink bar a button that can be pressed looks it (a clear outline, or the red fill for Free up
+   space); one that can't is flat, dashed and faint, so the two never look alike. */
+.sel-bar .btn { border-color: rgba(251, 250, 247, .7); }
+.sel-bar .btn.danger { background: var(--um-danger); color: #fff; border-color: var(--um-danger); font-weight: 600; }
+.sel-bar .btn.danger:hover:not(:disabled) { background: var(--um-danger); color: #fff; opacity: .9; }
+.sel-bar .btn:disabled, .sel-bar .btn.danger:disabled {
+  opacity: 1; background: transparent; color: rgba(251, 250, 247, .42); border: 1px dashed rgba(251, 250, 247, .3);
+  font-weight: 500; cursor: not-allowed;
+}
 .sel-bar .btn.ghost { border-color: transparent; }
+.sel-job { flex: 1 1 100%; display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; font-weight: 500; }
+.sel-job + .sel-count { padding-top: 8px; border-top: 1px solid rgba(251, 250, 247, .2); }
+.sel-job-text { flex: 1 1 200px; }
+.sel-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(251, 250, 247, .35); border-top-color: var(--um-paper); animation: sel-spin .9s linear infinite; }
+@keyframes sel-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sel-spin { animation: none; } }
+.sel-meter { flex: 1 1 100%; height: 4px; border-radius: 2px; background: rgba(251, 250, 247, .2); overflow: hidden; }
+.sel-meter i { display: block; height: 100%; background: var(--um-paper); transition: width .4s; }
+/* A long press on a phone picks a clip: no text selection or picture menu under the thumb. */
+#grid .tile { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 @media (max-width: 720px) {
   .tidy-row .seg { width: 100%; }
   .tidy-row .seg button { flex: 1; }
@@ -842,4 +859,5 @@ button.concept-opt:disabled { opacity: .6; cursor: progress; }
   .tidy-gap { display: none; }
   .sel-bar { bottom: calc(var(--shell-bottom) + 8px); }
   .sel-bar .btn { flex: 1 1 40%; }
+  .sel-bar .sel-job .btn { flex: 0 0 auto; min-width: 72px; }
 }

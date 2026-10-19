@@ -81,7 +81,9 @@ def _files(row: dict) -> list[Path]:
         except (ValueError, IndexError, TypeError):
             return []
         return [folder] if folder.name.startswith("carousel_") else []
-    return [Path(p) for p in (row.get("video_path"), row.get("thumb_path")) if p]
+    import previews
+    files = [Path(p) for p in (row.get("video_path"), row.get("thumb_path")) if p]
+    return files + ([previews.light_for(row["video_path"])] if row.get("video_path") else [])
 
 
 def _remove(paths: list[Path], keep: list[Path]) -> None:
@@ -187,6 +189,9 @@ def deliver(conn, production_id: int, client=None, find_track=None, rounds: int 
     history["checks"] = [c["did"] for c in final_checks]
     history.update(caught=caught, fixed_count=len(history["fixed"]) + sum(1 for c in final_checks if c.get("counted")),
                    usd=round(usd, 4), left=len((best or {}).get("fixes", [])))
+    if scope == "reel" and best_row.get("video_path"):
+        import previews
+        previews.for_draft(best_row["video_path"])  # the light copy Review plays (the full file if it fails)
     conn.execute("UPDATE productions SET status = 'ready', self_fix = ?, updated_at = ? WHERE id = ?",
                  (json.dumps(history, ensure_ascii=False), catalog.now(), production_id))
     conn.commit()

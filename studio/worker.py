@@ -20,7 +20,7 @@ Usage (from the studio folder, inside its venv):
   python worker.py --file C:\\x.mp4 process one file now (moves it into the library)
   python worker.py --retry-failed  reprocess clips that failed, were interrupted or skipped Claude
   python worker.py --check         check ffmpeg, GPU, API key and Telegram, then exit
-  python worker.py --rebuild-previews  remake missing dashboard previews (also done at start)
+  python worker.py --rebuild-previews  make every missing light copy now (else made when idle)
   python worker.py --edit 12       edit production 12 now (normally the editor queue does this)
   python worker.py --trial "talking head"  ideas -> one edited draft, with footage advice and costs
   python worker.py --resolve 12     make a DaVinci Resolve project of production 12's draft
@@ -339,20 +339,25 @@ def check_quality(conn, everything: bool = False) -> None:
 
 
 def rebuild_previews(conn) -> None:
-    """Make the current dashboard preview for clips that lack it (older clips got a
-    smaller, softer one), and drop the old preview once replaced."""
-    import extract
-    for row in conn.execute("SELECT * FROM clips WHERE status != 'processing' ORDER BY id"):
-        clip_dir, video = Path(row["clip_dir"]), Path(row["video_path"])
-        target = clip_dir / extract.PREVIEW_NAME
-        if target.exists() or not video.exists():
+    """--rebuild-previews: make every missing light copy now, one after another (the worker
+    otherwise makes them in the background, previews.tick), and drop the older previews."""
+    import previews
+    for row in conn.execute("SELECT * FROM clips WHERE status = 'tagged' ORDER BY id DESC").fetchall():
+        target = Path(row["clip_dir"]) / previews.NAME
+        src = previews.clip_source(row)
+        if target.exists() or src is None:
             continue
-        log.info("Making a 1080p preview for %s", row["source_name"])
+        log.info("Making a light copy for %s", row["source_name"])
         try:
-            extract.make_preview(video, target)
-            (clip_dir / "preview.mp4").unlink(missing_ok=True)
+            previews.make(src, target)
+            previews.drop_old(row["clip_dir"])
         except RuntimeError as e:
             log.warning("No preview for %s: %s", row["source_name"], e)
+    for row in conn.execute("""SELECT id, video_path FROM productions WHERE video_path IS NOT NULL
+                               AND COALESCE(format, '') <> 'carousel'""").fetchall():
+        if Path(row["video_path"]).is_file() and not previews.light_for(row["video_path"]).exists():
+            log.info("Making a light copy of draft %s", row["id"])
+            previews.for_draft(row["video_path"])
 
 
 def run_editor(stop_after_one: bool = False) -> None:
@@ -558,7 +563,7 @@ def main() -> int:
     mode.add_argument("--file", type=Path, help="process one video file now")
     mode.add_argument("--retry-failed", action="store_true", help="reprocess failed clips")
     mode.add_argument("--check", action="store_true", help="check the setup, then exit")
-    mode.add_argument("--rebuild-previews", action="store_true", help="remake missing dashboard previews")
+    mode.add_argument("--rebuild-previews", action="store_true", help="make every missing light copy for Review now")
     mode.add_argument("--edit", type=int, metavar="ID", help="edit one production now (by its id)")
     mode.add_argument("--resolve", type=int, metavar="ID", help="make a DaVinci Resolve project of a draft")
     mode.add_argument("--check-quality", action="store_true",
@@ -687,8 +692,10 @@ def main() -> int:
 
     log.info("Studio worker started; watching %s every %ss", INBOX, POLL_SECONDS)
     if not args.once:
+        import cleanup
+        cleanup.resume()  # a Free up space cut short by a restart carries on (in the background)
         retry_failed(conn, use_claude)  # pick up anything a crash or outage left behind
-        rebuild_previews(conn)
+        # Light copies for Review are made in the background while the worker is idle (previews.tick).
         import subtitles
         subtitles.fix_once(conn)  # captions in English / Simplified Chinese only (once)
         import quality  # clips judged by older sound rules get measured again, in the background
@@ -722,8 +729,11 @@ def main() -> int:
         notify.digest.flush(busy=busy)
         import updater
         import uploads
-        updater.tick(idle=not busy and not onedrive.busy() and not uploads.busy()
-                     and not (dashboard_busy() if not args.no_dashboard else False))
+        idle = not busy and not onedrive.busy() and not uploads.busy() \
+            and not (dashboard_busy() if not args.no_dashboard else False)
+        updater.tick(idle=idle)
+        import previews
+        previews.tick(conn, idle)  # older clips and drafts get their light copy, one at a time
         time.sleep(POLL_SECONDS)
 
 

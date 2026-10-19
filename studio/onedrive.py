@@ -13,9 +13,12 @@ folder (STUDIO_ONEDRIVE_INBOX). The server has no OneDrive app, so this module:
      there as a folder of its own: "<title> (<id>)/01.png, 02.png ... caption.txt";
   3. for Review's clean-up (cleanup.py): remembers where each original went in the archive
      (catalog clips.onedrive_path), checks a clip's original is really there before the
-     server's own copy may be deleted, and fetches it back when an edit needs it again.
+     server's own copy may be deleted, copies it there first when OneDrive never had it
+     (uploaded from the planner, or from the laptop before the move: upload_original), and
+     fetches it back when an edit needs it again.
 
-Nothing is ever deleted from OneDrive: originals are only moved to the archive.
+Nothing is ever deleted or changed in OneDrive: originals are only moved to the archive, or
+copied into it as new files.
 rclone keeps the OneDrive sign-in fresh by itself (in rclone.conf, set up by
 server_move.py); this module never reads or prints that file.
 
@@ -109,11 +112,12 @@ def _friendly(stderr: str, code: int) -> str:
     if ("token" in low and any(w in low for w in ("expired", "invalid", "refresh", "fetch"))) \
             or "invalid_grant" in low or "unauthenticated" in low or "aadsts" in low:
         return SIGNED_OUT
-    if "failed to create file system" in low:  # the remote exists but its settings are broken
-        return "OneDrive's connection settings on the server are incomplete: run server_move.py again from the laptop"
+    # Offline first: rclone says "failed to create file system" then too (it can't reach OneDrive at all).
     if any(w in low for w in ("no such host", "network is unreachable", "i/o timeout", "connection refused",
                               "tls handshake timeout")):
         return "Can't reach OneDrive right now (network); trying again shortly"
+    if "failed to create file system" in low:  # the remote exists but its settings are broken
+        return "OneDrive's connection settings on the server are incomplete: run server_move.py again from the laptop"
     if ("insufficient" in low and "storage" in low) or "quota" in low:
         return "OneDrive is full: free up space (the archive folder can be tidied)"
     lines = [ln.strip() for ln in text.splitlines() if ln.strip() and "NOTICE" not in ln]
@@ -521,6 +525,103 @@ def archive_listing() -> list[dict]:
         return _lsjson(settings.ONEDRIVE_ARCHIVE, recursive=True, timeout=600)
     except NotFound:
         return []
+
+
+class Mismatch(OneDriveError):
+    """OneDrive's copy isn't the same file as the server's (size or fingerprint)."""
+
+
+HASHES = ("quickxor", "sha1", "md5")   # OneDrive gives quickxor; the first one both sides know is used
+
+
+def _safe(name: str | None) -> str:
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name or "").strip(" .")[:80]
+
+
+def archive_folder(conn, row) -> str:
+    """Where Free up space puts an original OneDrive never had (one uploaded from the planner, or
+    from the laptop before the move): Studio Archive/<project>/<post, or Uploads>/, or
+    Studio Archive/Uploads/ for a clip of no project."""
+    project = idea = None
+    if row["project_id"]:
+        project = conn.execute("SELECT name, folder FROM projects WHERE id = ?", (row["project_id"],)).fetchone()
+    if project and row["idea_id"]:
+        idea = conn.execute("SELECT title, folder FROM ideas WHERE id = ?", (row["idea_id"],)).fetchone()
+    parts = [settings.ONEDRIVE_ARCHIVE]
+    name = project and (_safe(project["folder"]) or _safe(project["name"]))
+    if name:
+        parts += [name, (idea and (_safe(idea["folder"]) or _safe(idea["title"]))) or "Uploads"]
+    else:
+        parts.append("Uploads")
+    return "/".join(parts)
+
+
+def _remote_file(path: str) -> dict | None:
+    """One file in OneDrive with its size and fingerprints, or None when it isn't there."""
+    args = ["lsjson", "--files-only", "--no-mimetype", *(a for h in HASHES for a in ("--hash-type", h))]
+    try:
+        entries = json.loads(_run([*args, _remote(path)], timeout=300) or "[]")
+    except NotFound:
+        return None
+    name = path.rpartition("/")[2]
+    return next((e for e in entries if e.get("Name") == name), None)
+
+
+def local_hash(path: Path, kind: str) -> str:
+    out = _run(["hashsum", kind, str(path)], timeout=600 + path.stat().st_size / 50_000_000)
+    return out.split()[0].lower() if out.strip() else ""
+
+
+def verify(local: Path, remote: str) -> str:
+    """Check OneDrive's file at `remote` is the same as `local`: exact size, and the same
+    fingerprint when OneDrive gives one. Returns how it was checked ("size", "size and quickxor").
+    Mismatch when it differs; OneDriveError when OneDrive can't be asked."""
+    entry = _remote_file(remote)
+    if entry is None:
+        raise Mismatch(f"OneDrive doesn't show {remote}")
+    size = local.stat().st_size
+    if int(entry.get("Size") or -1) != size:
+        raise Mismatch(f"OneDrive's copy is {int(entry.get('Size') or 0):,} bytes, the server's {size:,}")
+    theirs = {k.lower(): str(v).lower() for k, v in (entry.get("Hashes") or {}).items() if v}
+    for kind in HASHES:
+        if kind in theirs:
+            if local_hash(local, kind) != theirs[kind]:
+                raise Mismatch("OneDrive's copy has a different fingerprint")
+            return f"size and {kind}"
+    return "size"
+
+
+def upload_original(conn, row) -> str:
+    """Copy a clip's original into OneDrive's archive (archive_folder), never over a different
+    file (a name taken by another file gets " (2)"), and check the copy (verify). Returns its
+    path in OneDrive. Only adds a file: nothing in OneDrive is changed or removed."""
+    local = Path(row["video_path"])
+    size = local.stat().st_size
+    folder = archive_folder(conn, row)
+    try:
+        taken = {e["Name"].lower(): e for e in _lsjson(folder, timeout=120)}
+    except NotFound:
+        taken = {}
+    stem, ext = local.stem, local.suffix
+    target, n = local.name, 2
+    while target.lower() in taken:
+        if int(taken[target.lower()].get("Size") or -1) == size:
+            try:   # the same file already (a copy made before a restart cut the job short)
+                verify(local, f"{folder}/{taken[target.lower()]['Name']}")
+                return f"{folder}/{taken[target.lower()]['Name']}"
+            except Mismatch:
+                pass
+        target, n = f"{stem} ({n}){ext}", n + 1
+    remote = f"{folder}/{target}"
+    # --immutable: rclone refuses to change a file that's already there. rclone checks the
+    # upload itself too; verify() checks it again before anything is deleted.
+    _run(["copyto", "--immutable", str(local), _remote(remote)], timeout=600 + size / 1_000_000)
+    try:
+        how = verify(local, remote)
+    except Mismatch as e:
+        raise Mismatch(f"{e}: kept the server's copy") from None
+    log.info("Copied clip %s's original to OneDrive: %s (%.2f GB, checked by %s)", row["id"], remote, size / 1e9, how)
+    return remote
 
 
 def fetch_original(conn, clip_id: int) -> Path | None:

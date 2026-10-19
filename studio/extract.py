@@ -102,19 +102,17 @@ def extract_audio(path: Path, wav_path: Path) -> Path:
     return wav_path
 
 
-# Bump the name when the preview recipe changes, so old previews get rebuilt.
-PREVIEW_NAME = "preview-1080.mp4"
+# Bump the name when the preview recipe changes, so old previews get rebuilt (in the background,
+# previews.py; the old one plays until then).
+PREVIEW_NAME = "preview-720.mp4"
 
 
 def make_preview(path: Path, out_path: Path) -> Path:
-    """A 1080p H.264 copy for the dashboard: plays in any browser and seeks
-    instantly, unlike a 4K HEVC original, while staying crisp enough to judge
-    focus and framing (CRF 20 is close to visually lossless at this size)."""
-    _run([FFMPEG, "-y", "-v", "error", "-i", str(path),
-          "-vf", "scale='if(gt(iw,ih),1920,-2)':'if(gt(iw,ih),-2,1920)'",
-          "-c:v", "libx264", "-preset", "faster", "-crf", "20", "-pix_fmt", "yuv420p",
-          "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out_path)])
-    return out_path
+    """The clip's light copy for Review (previews.py): 720p H.264 at about 2 Mbps with its index
+    up front, so it starts at once and plays without stopping on wifi far from the server, unlike
+    a 4K HEVC original. The original stays for "Original" and for the edits."""
+    import previews
+    return previews.make(path, out_path)
 
 
 def extract_frames(path: Path, out_dir: Path, duration: float) -> list[tuple[float, Path]]:

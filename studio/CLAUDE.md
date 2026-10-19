@@ -74,9 +74,18 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   tool (`cloud/planner/theme.css` + bundled fonts, shared with Review), Plan's home "What needs you" (`js/home.js`,
   `GET /api/home`; nav Plan · Ideas · Review · More, the board moved to Ideas, Today on site under More), and clean-up
   (`cleanup.py`: Done's Remove / Clear rejected / Archive, the Library's Archive / Free up space / Suggested to tidy,
-  Plan's Clear dismissed suggestions). Free up space deletes only what OneDrive's Studio Archive has (path recorded
-  at pull time, else same name and size) and fetches originals back on demand; clips pulled before this update have
-  no recorded path, so they rely on the name and size search.
+  Plan's Clear dismissed suggestions). Free up space (a background job, `cleanup.start_free`, progress in the
+  Library's bar, resumes after a restart) deletes the server's original only once OneDrive's Studio Archive holds it
+  (path recorded at pull time, else same name and size, checked by quickxor); originals OneDrive never had (planner
+  uploads, laptop-era clips) are first copied to `Studio Archive/<project>/<post or Uploads>/` (`onedrive.upload_original`,
+  `--immutable`, never over another file). Originals come back on demand. Library: Shift-click ranges, Ctrl/Cmd-click,
+  long-press on phones.
+- Built 2026-10-19 (not yet proven on the server): Review plays light copies (`previews.py`: 720p H.264 ~2 Mbps capped
+  2.5, faststart; drafts `production_<id>_v<n>.light.mp4` made in `self_fix.deliver`, clips `preview-720.mp4` at
+  ingest; older ones in the background when idle or when first played, never all at boot); "720p" / "Full quality" /
+  "Original" toggle; downloads and Ready to post stay full quality. Range requests are handed to waitress's file
+  wrapper (`dashboard._stream_ranges`) so a playing video no longer holds a thread; waitress threads 8 -> 16. Caddy
+  unchanged.
 - Ideas live only in the planner (footage_ideas.py proposes ideas from new footage into each project's
   "From your footage" arc after uploads go quiet; "Everyday posts" project for loose clips).
   Usable clips are never flagged on cards; only retakes.

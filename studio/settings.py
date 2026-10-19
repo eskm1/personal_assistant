@@ -96,6 +96,10 @@ IMAGE_MODEL = _env("STUDIO_IMAGE_MODEL", "gemini-nano-banana-2.1")
 IMAGE_COST_USD = float(_env("STUDIO_IMAGE_COST_USD", "0.034"))
 GEMINI_URL = _env("STUDIO_GEMINI_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
 
+# Review plays a light 720p copy of each draft and clip (previews.py), made as drafts go to review
+# and, for older ones, in the background. Off = no new light copies; Review plays what's there.
+LIGHT_COPIES = _flag("STUDIO_LIGHT_COPIES", True)
+
 # ── The editor's cutting and framing ──────────────────────────────────────────
 # Jump cuts: inside every stretch the editor keeps, silences, breaths and lone "um"s
 # longer than EDIT_MAX_PAUSE seconds are cut down to a short breath.
