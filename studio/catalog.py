@@ -247,6 +247,9 @@ _ADDED_COLUMNS = {
         # JSON, carousels only (format 'carousel'): the current draft's slides and their
         # rendered PNGs {slides: [...], files: [...], summary, notes_addressed} (carousel.py)
         "slides": "TEXT",
+        # JSON: Studio's own fix rounds on the current version before Bryan saw it (self_fix.py):
+        # {version, caught, fixed: [...], rounds: [...], usd}
+        "self_fix": "TEXT",
     },
     "ideas": {
         "wishlist": "TEXT",     # JSON: shots Bryan could film to make the idea stronger
@@ -266,7 +269,9 @@ _ADDED_COLUMNS = {
         "slides": "TEXT",        # JSON: a carousel's slides, as in the planner (carousel.py)
     },
     "feedback": {"author": "TEXT",
-                 "slide": "INTEGER"},  # a carousel note about one slide (1 = the cover), if any
+                 "slide": "INTEGER",   # a carousel note about one slide (1 = the cover), if any
+                 "kind": "TEXT",       # editing | taste, as the editor sorted it on the send-back (learning.py)
+                 "rule": "TEXT"},      # the rule Studio learned from it, for an editing note
     "shots": {"camera": "TEXT",  # iphone | zfc | gopro | any: which of the team's cameras films it
               "remote_id": "INTEGER"},
     # remote_id: the row's id in the online planner, when planning is online (cloud_sync.py).

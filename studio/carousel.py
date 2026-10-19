@@ -535,18 +535,50 @@ def run(conn, production_id: int, client=None) -> Path:
     if revision and revision.get("caption"):
         caption = revision["caption"]
     clip_ids = list(dict.fromkeys(s["image"]["clip_id"] for s in slides if s["image"].get("source") == "clip"))
+    # It stays 'producing' until Studio's read and its own fix rounds are done (self_fix.deliver).
     conn.execute(
-        """UPDATE productions SET status = 'ready', version = ?, thumb_path = ?, slides = ?, caption = ?,
-               source_clips = ?, duration = NULL, error = NULL, updated_at = ? WHERE id = ?""",
+        """UPDATE productions SET version = ?, thumb_path = ?, slides = ?, caption = ?,
+               source_clips = ?, duration = NULL, error = NULL, updated_at = ?, self_fix = ? WHERE id = ?""",
         (version, str(thumb), json.dumps(stored, ensure_ascii=False), caption, json.dumps(clip_ids), catalog.now(),
-         production_id))
+         json.dumps({"version": version, "pending": True}), production_id))
     if revision is not None or not redraws:
         conn.execute("""UPDATE feedback SET status = 'addressed'
                         WHERE target = 'production' AND target_id = ? AND status = 'open'""", (production_id,))
     conn.commit()
     log.info("Carousel %s v%d laid out: %d slides", production_id, version, len(slides))
-    import draft_review
-    draft_review.safe_run(conn, production_id)  # Studio's read; a failure leaves the draft as it is
+    if revision is not None:  # Bryan's editing notes become rules Studio keeps (learning.py)
+        import learning
+        learning.from_notes(conn, notes, revision.get("notes_addressed", []), "carousel")
+    import self_fix
+    delivered = self_fix.deliver(conn, production_id, client)  # Studio's read and its own fixes, then To review
+    shown = files(delivered)
+    return shown[0].parent if shown else out_dir
+
+
+def self_revise(conn, production_id: int, notes: list[dict], round_no: int, client=None) -> Path:
+    """One of Studio's own fix rounds on a carousel, before Bryan sees it: Claude revises the
+    slides from the read's fixes (no new or redrawn concept pictures: those spend, so they're
+    Bryan's call) and they're laid out again as the same version, in a folder of their own."""
+    row = conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    data = current(row)
+    revision = revise(conn, dict(row), data["slides"], notes, client, own=True)
+    slides = revision["slides"]
+    out_dir = RENDERS / f"carousel_{production_id}_v{row['version']}_fix{round_no}"
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    made = lay_out(conn, slides, out_dir)
+    thumb = out_dir / "thumb.jpg"
+    _thumb(Path(made["files"][0]), thumb)
+    stored = {"version": row["version"], "slides": slides, **made,
+              "summary": _summary(slides, made["pictures"], revision),
+              "notes_addressed": revision.get("notes_addressed", []), "concepts": data.get("concepts")}
+    clip_ids = list(dict.fromkeys(s["image"]["clip_id"] for s in slides if s["image"].get("source") == "clip"))
+    conn.execute("""UPDATE productions SET thumb_path = ?, slides = ?, caption = ?, source_clips = ?, updated_at = ?
+                    WHERE id = ?""",
+                 (str(thumb), json.dumps(stored, ensure_ascii=False), revision.get("caption") or row["caption"],
+                  json.dumps(clip_ids), catalog.now(), production_id))
+    conn.commit()
+    log.info("Carousel %s v%s: Studio's fix round %d laid out", production_id, row["version"], round_no)
     return out_dir
 
 
@@ -627,8 +659,10 @@ REVISE_SCHEMA = {
         "caption": {"type": "string"},
         "summary": {"type": "string"},
         "notes_addressed": {"type": "array", "items": {
-            "type": "object", "properties": {"note_id": {"type": "integer"}, "how": {"type": "string"}},
-            "required": ["note_id", "how"], "additionalProperties": False}},
+            "type": "object", "properties": {"note_id": {"type": "integer"}, "how": {"type": "string"},
+                                             "kind": {"type": "string", "enum": ["editing", "taste"]},
+                                             "rule": {"type": "string"}, "same_rule": {"type": "integer"}},
+            "required": ["note_id", "how", "kind", "rule", "same_rule"], "additionalProperties": False}},
     },
     "required": ["slides", "caption_changed", "caption", "summary", "notes_addressed"],
     "additionalProperties": False,
@@ -694,7 +728,13 @@ again. Otherwise redraw is "" and a kept concept picture stays exactly as it is.
 - caption_changed: true only when a note asks for a different caption; then caption is the new \
 caption, otherwise caption is "".
 - summary: one or two sentences for Bryan on what you changed.
-- notes_addressed: every note id, with how you handled it."""
+- notes_addressed: every note id, with how you handled it, and its kind: "editing" when it's a \
+craft problem a good editor should never repeat on any carousel (too much text on a slide, a \
+spelling slip, a weak cover line, an ask that doesn't fit), "taste" when it's Bryan's judgement or \
+preference about this post. For an editing note, rule is the general rule it teaches as an \
+instruction in at most 14 words, and same_rule the number of the learned rule it repeats (R3 = \
+3) or 0; otherwise rule is "" and same_rule 0.
+- The playbook's "Editing rules Studio learned" are problems caught before: never repeat them."""
 
 
 def _clips(conn, production: dict, slides: list[dict]) -> dict[int, dict]:
@@ -737,7 +777,7 @@ def concepts_line(kind: str | None, on: bool) -> str:
 
 
 def revise_prompt(production: dict, slides: list[dict], notes: list[dict], clips: dict[int, dict],
-                  kind: str | None = None) -> str:
+                  kind: str | None = None, own: bool = False) -> str:
     plan = json.loads(production.get("plan") or "{}")
     kind = kind or plan.get("post_type")
     lines = [f"The carousel: {production['title']} (kind: {kind or 'not set'}), draft "
@@ -746,14 +786,20 @@ def revise_prompt(production: dict, slides: list[dict], notes: list[dict], clips
         lines.append(f"  {n}. [{s['role']}] {s['heading'] or '(no heading)'}" + (f" | {s['body']}" if s["body"] else "")
                      + f" | picture: {picture_text(s['image'], clips)}")
     lines.append(f"Caption now: {production.get('caption') or '(none)'}")
-    lines.append("Bryan's notes:")
+    lines.append("Studio's own read of these slides, before Bryan sees them: fix each point (take kind "
+                 "\"editing\", rule \"\" for each), keep everything else as it is, and draw no new or redrawn "
+                 "concept pictures (concept false, redraw \"\"):" if own else "Bryan's notes:")
     for note in notes:
         lines.append(f"  note {note['id']}" + (f" (slide {note['slide']})" if note.get("slide") else "")
                      + f": {note['body']}")
     lines.append("Clips from Urban Makers' own footage you may take stills from (id, title, length):")
     lines += [f"  clip {c['id']}: \"{c['title'] or 'untitled'}\", {_mmss(c['duration'])}" for c in clips.values()] \
         or ["  (none: keep text-only slides)"]
-    lines.append(concepts_line(kind, concepts.available() is None))
+    lines.append(concepts_line(kind, concepts.available() is None and not own))
+    import learning
+    rules = learning.rules_text("carousel")
+    if rules:
+        lines.append(rules)
     return "\n".join(lines)
 
 
@@ -767,9 +813,11 @@ def _context_text() -> str:
     return content_plan.context_text(api)
 
 
-def revise(conn, production: dict, slides: list[dict], notes: list[dict], client=None) -> dict:
+def revise(conn, production: dict, slides: list[dict], notes: list[dict], client=None, own: bool = False) -> dict:
     """One Claude call: the slides (and caption, when a note asks) changed as the notes say.
-    Returns {slides, caption, summary, notes_addressed}."""
+    own: the notes are Studio's read (one of its own fix rounds): no pictures are drawn, and
+    the cost is counted apart. Returns {slides, caption, summary, notes_addressed}."""
+    import self_fix
     import anthropic
 
     import llm
@@ -784,19 +832,24 @@ def revise(conn, production: dict, slides: list[dict], notes: list[dict], client
         client, model=settings.CLAUDE_MODEL, max_tokens=24000,
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
         output_config={"effort": "high", "format": {"type": "json_schema", "schema": REVISE_SCHEMA}},
-        system=system, messages=[{"role": "user", "content": revise_prompt(production, slides, notes, clips, kind)}])
-    usage.record("carousel", f"production:{production['id']}", response)
+        system=system, messages=[{"role": "user", "content": revise_prompt(production, slides, notes, clips, kind, own)}])
+    usage.record("carousel", self_fix.ref(production["id"]) if own else f"production:{production['id']}", response)
     if response.stop_reason in ("refusal", "max_tokens"):
         raise RuntimeError(f"Claude couldn't revise the slides ({response.stop_reason})")
     answer = json.loads(next(b.text for b in response.content if b.type == "text"))
-    new = plan_slides(answer.get("slides"), slides, clips, new_concepts=concepts.available() is None,
+    if own:  # Studio's own round never spends on pictures
+        for s in answer.get("slides") or []:
+            if isinstance(s, dict):
+                s.pop("redraw", None)
+    new = plan_slides(answer.get("slides"), slides, clips, new_concepts=concepts.available() is None and not own,
                       finished=kind == concepts.FINISHED)
     if len(new) < 2:
         raise RuntimeError("Claude's revision had no slides; send it back again")
     ids = {n["id"] for n in notes}
     return {"slides": new, "caption": _text(answer.get("caption"), 4000) if answer.get("caption_changed") else "",
             "summary": _text(answer.get("summary"), 600),
-            "notes_addressed": [{"note_id": a["note_id"], "how": _text(a.get("how"), 300)}
+            "notes_addressed": [{"note_id": a["note_id"], "how": _text(a.get("how"), 300), "kind": a.get("kind"),
+                                 "rule": _text(a.get("rule"), 200), "same_rule": a.get("same_rule") or 0}
                                 for a in answer.get("notes_addressed", []) if a.get("note_id") in ids]}
 
 

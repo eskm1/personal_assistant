@@ -294,7 +294,8 @@ def build(conn, production_id: int) -> Path:
             if info.get("recording_id") else None)
         if info.get("source") == "epidemic" and track and track.exists():
             shutil.copy2(track, work / "music.mp3")
-            music = (work / "music.mp3", media_info(work / "music.mp3"), edl["music"]["volume_db"])
+            # The level the draft's mix gave the track (older drafts: the plan's music level).
+            music = (work / "music.mp3", media_info(work / "music.mp3"), info.get("gain_db", edl["music"]["volume_db"]))
 
         # Write the timeline against the final folder's paths, then move it into place.
         final_layers = [(n, folder / p.name, lane) for n, p, lane in layers]
@@ -304,7 +305,7 @@ def build(conn, production_id: int) -> Path:
             fcpxml(title, cuts, clips, sources, final_layers, final_music), encoding="utf-8")
         lane_lines = "".join(f"     V{lane + 1}  {name.lower()} (transparent layer)\n" for name, _, lane in layers)
         music_line = (f"     A2  music: {info.get('title', 'Epidemic Sound track')} by {info.get('artist', '?')}, "
-                      f"at {edl['music']['volume_db']:.0f} dB (the draft also dipped it under your voice)\n"
+                      f"at {music[2]:.0f} dB (the draft also dipped it under your voice)\n"
                       if music else
                       "     (no music: personal posts get theirs in the Instagram app)\n")
         (work / "HOW TO OPEN.txt").write_text(

@@ -364,7 +364,11 @@ def run_editor(stop_after_one: bool = False) -> None:
         log.warning("Editor not started: %s (see README section 9)", missing)
         return
     conn = catalog.connect()
-    # A crash mid-edit leaves 'producing'; put those back in the queue.
+    # A crash after a draft rendered, during Studio's read or its own fix rounds: that draft
+    # goes to review as it is (its read follows from the backfill). Any other crash mid-edit
+    # leaves 'producing'; put those back in the queue.
+    conn.execute("""UPDATE productions SET status = 'ready' WHERE status = 'producing'
+                    AND json_extract(self_fix, '$.pending') = 1 AND json_extract(self_fix, '$.version') = version""")
     conn.execute("UPDATE productions SET status = 'planned' WHERE status = 'producing'")
     conn.commit()
     log.info("Editor ready")

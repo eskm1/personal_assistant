@@ -108,6 +108,20 @@ EDIT_REFRAME = _flag("STUDIO_EDIT_REFRAME", True)
 # closer framing (EDIT_PUNCH_ZOOM, 1.12 = 112%), so a long shot never sits still.
 EDIT_PUNCH_INS = _flag("STUDIO_EDIT_PUNCH_INS", True)
 EDIT_PUNCH_ZOOM = float(_env("STUDIO_EDIT_PUNCH_ZOOM", "1.12"))
+# Studio fixes its own list (self_fix.py): after a draft renders and Studio's read runs, the
+# fixes the editor can make itself go back to the editor, up to this many rounds, before Bryan
+# sees the draft. Each round is one edit plan and one read (a few tens of cents). 0 = off.
+SELF_FIX_ROUNDS = min(max(int(_env("STUDIO_SELF_FIX_ROUNDS", "2")), 0), 4)
+# Editing rules Studio learns from the problems it fixed and from Bryan's editing notes,
+# kept in their own section of the playbook (learning.py); at most this many per kind of post.
+LEARN_RULES = _flag("STUDIO_LEARN_RULES", True)
+LEARNED_RULES_MAX = min(max(int(_env("STUDIO_LEARNED_RULES_MAX", "20")), 3), 60)
+# Captions, hook and graphics font, from the fonts bundled in studio/render (editor.CAPTION_FONTS):
+# figtree, nunito, dm_sans or outfit.
+CAPTION_FONT = _env("STUDIO_CAPTION_FONT", "figtree").lower().replace("-", "_").replace(" ", "_")
+# How far the music sits under the voice while Bryan talks (dB); between phrases it rises a
+# little, and with no talking it plays at a comfortable bed level.
+MUSIC_GAP_DB = min(max(float(_env("STUDIO_MUSIC_GAP_DB", "20")), 12.0), 30.0)
 
 # ── Epidemic Sound (music for the editor) ─────────────────────────────────────
 # Personal MCP key from epidemicsound.com/account/api-keys.

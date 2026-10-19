@@ -449,6 +449,7 @@ def _carousel_detail(row: sqlite3.Row) -> dict:
                  "edit_summary": data.get("summary"), "missing_shots": [], "graphics": 0, "wishlist": [],
                  "cost": usage.total_for(db(), f"production:{row['id']}") if is_owner() else None,
                  "cost_parts": usage.parts_for(db(), f"production:{row['id']}") if is_owner() else None,
+                 **_learning_detail(row, "carousel"),
                  "concepts": {"finished": finished, "per_image_usd": settings.IMAGE_COST_USD,
                               "options": len(concepts.OPTIONS), "why_not": concepts.available()},
                  "music": None, "qa": None, "resolve": None, "slides": slides,
@@ -619,10 +620,57 @@ def production_detail(production_id: int):
                  "graphics": len((edl or {}).get("graphics", [])),
                  "wishlist": json.loads(row["plan"] or "{}").get("wishlist", []),
                  "cost": usage.total_for(db(), f"production:{production_id}") if is_owner() else None,
+                 **_learning_detail(row, "reel"),
                  "music": json.loads(row["music"]) if row["music"] else None,
                  "qa": json.loads(row["qa"]) if row["qa"] else None,
                  "resolve": _resolve_state(dict(row)) if edl else None})
     return jsonify(item)
+
+
+def _learning_detail(row: sqlite3.Row, scope: str) -> dict:
+    """What Studio fixed itself before Bryan saw this version, its cost, the trend of problems
+    it catches itself, and the rules it taught itself (learning.py, self_fix.py)."""
+    import learning
+    import self_fix
+    return {"self_fix": self_fix.summary(row),
+            "self_fix_cost": usage.total_for(db(), self_fix.ref(row["id"])) if is_owner() else None,
+            "self_fix_trend": learning.trend(db(), scope),
+            "rules": {"learned": [{"id": r["id"], "text": r["text"], "count": r["count"], "last": r["last"]}
+                                  for r in learning.active(scope)],
+                      "code": learning.CODE_CHECKS.get(scope, [])}}
+
+
+@app.get("/api/playbook")
+def get_playbook():
+    """The playbook: Bryan's part (to edit) and the rules Studio keeps itself (read-only)."""
+    import learning
+    return jsonify({"text": learning.bryan_text(), "editable": is_owner(),
+                    "rules": {scope: [{"id": r["id"], "text": r["text"], "count": r["count"], "last": r["last"]}
+                                      for r in learning.active(scope)] for scope in learning.SCOPES},
+                    "code": learning.CODE_CHECKS})
+
+
+@app.post("/api/playbook")
+@owner_only
+def save_playbook():
+    import learning
+    text = (request.json or {}).get("text")
+    if not isinstance(text, str) or not text.strip():
+        return jsonify({"error": "the playbook can't be empty"}), 400
+    if len(text) > 100_000:
+        return jsonify({"error": "that's too long for the playbook"}), 400
+    learning.save_bryan_text(text)
+    log.info("Playbook edited by %s", g.user["name"])
+    return jsonify({"ok": True})
+
+
+@app.post("/api/playbook/rule/<int:rule_id>/forget")
+@owner_only
+def forget_rule(rule_id: int):
+    import learning
+    if not learning.forget(rule_id):
+        abort(404)
+    return jsonify({"ok": True})
 
 
 @app.get("/api/idea/<int:idea_id>")

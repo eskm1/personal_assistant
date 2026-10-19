@@ -269,18 +269,49 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    shots the picture **punches in** to 112% and back every 4 to 7 seconds, at a jump cut or the
    end of a sentence, so a long shot never sits still (never on B-roll or under the hook).
    ffmpeg then cuts every piece from your **original** files in one pass at 1080x1920.
-4. HyperFrames renders the captions (1 to 3 words, timed to each word) and the hook as a
-   transparent layer over the footage.
-5. Music: Urban Makers posts get an Epidemic Sound track that dips under your voice.
-   Personal posts get no music, plus a note on what to add in the Instagram app.
+   Before that, Studio checks the ends of the draft by code: it never ends on a stray word that
+   starts a new sentence (an "and" after the last full stop), never opens on the tail of a
+   sentence, and trims dead air before the first word and after the last.
+4. HyperFrames renders the captions (1 to 3 words in sentence case, timed to each word) and the
+   hook as a transparent layer over the footage, in a font bundled in `studio/render`
+   (`STUDIO_CAPTION_FONT`: `figtree`, the default, `nunito`, `dm_sans` or `outfit`; nothing depends
+   on the machine's fonts or the network). Cards stay above the caption line, and a caption that
+   repeats a card's words is hidden while the card is up.
+5. Sound: your voice is cleaned up (a gentle high-pass and noise reduction) and brought to a steady
+   level first, then the music is set against it: about 9 dB under your voice where nobody talks,
+   and `STUDIO_MUSIC_GAP_DB` (default 20) dB under it while you talk, with smooth dips timed to your
+   words. Studio measures the gap and turns the music down further if it's short, then sets the
+   whole mix to Instagram's -14 LUFS in two passes (no pumping). Urban Makers posts get an Epidemic
+   Sound track; personal posts get no music, plus a note on what to add in the Instagram app.
 6. The draft is re-transcribed to check no word was clipped, and its loudness is measured
-   (target -14 LUFS). Both show under **Checks and measurements** on the review screen.
+   (target -14 LUFS, corrected if it's off). Both show under **Checks and measurements**.
 7. Studio's read (`draft_review.py`): Claude looks at stills of the finished draft, its
-   captions, words, cut list and checks, and writes the verdict and fix list you see first.
+   captions, words, cut list and checks, and writes the verdict and fix list. Each fix says
+   whether the editor can make it itself (trims, the opening, hook text, captions, a card's
+   place or words, the music level) or it's yours (new footage, spending, judgement calls).
+8. **Studio fixes its own list** (`self_fix.py`): while the read has fixes the editor can make,
+   up to `STUDIO_SELF_FIX_ROUNDS` rounds (default 2; `0` = off), the editor plans the draft again
+   with them as its notes, renders it and Studio reads it again. A round that makes the read
+   better is kept; one that doesn't (or fails) is dropped and the better version stays. Only then
+   does the draft come to **To review** (and Telegram tells you), as v1, with "Studio fixed N
+   things before showing you this" folded at the top and only what's left as fixes. The rounds
+   cost a few tens of cents each, shown apart in the draft's cost line ("Studio's own fixes").
+9. **Studio learns** (`learning.py`): the rule behind each problem a round fixed, and behind each
+   of your send-back notes the editor marks as an editing problem (not taste), is kept in its own
+   playbook section, "Editing rules Studio learned" (how often it was caught, when last), so the
+   next first draft avoids it. Near-duplicates merge, at most `STUDIO_LEARNED_RULES_MAX` (20) per
+   kind of post, rules unseen for four months retire, and **Forget** drops one for good. Review
+   shows them under "Rules Studio taught itself", with the code checks and a trend ("Studio caught
+   4 editing problems itself on this draft · 30-day average 2.1, down from 3.4"); **Edit the
+   playbook** there edits your own rules (Studio never touches them). A note that became a rule
+   says so under it. `STUDIO_LEARN_RULES=0` turns learning off.
 
 The jump cuts, reframing and punch-ins are settings in `.env` (all on by default; `0` turns one off, then press
 **Restart Studio**): `STUDIO_EDIT_JUMP_CUTS`, `STUDIO_EDIT_MAX_PAUSE` (seconds, default 0.35),
-`STUDIO_EDIT_REFRAME`, `STUDIO_EDIT_PUNCH_INS`, `STUDIO_EDIT_PUNCH_ZOOM` (default 1.12). A draft
+`STUDIO_EDIT_REFRAME`, `STUDIO_EDIT_PUNCH_INS`, `STUDIO_EDIT_PUNCH_ZOOM` (default 1.12). The fix rounds,
+learning, caption font and music gap are too: `STUDIO_SELF_FIX_ROUNDS`, `STUDIO_LEARN_RULES`,
+`STUDIO_LEARNED_RULES_MAX`, `STUDIO_CAPTION_FONT`, `STUDIO_MUSIC_GAP_DB`. Older drafts keep their look
+until they're revised. A draft
 remembers its pieces and framing, so a re-render (after a subtitle fix, say) and the Resolve
 project match it.
 

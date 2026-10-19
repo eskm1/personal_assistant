@@ -673,6 +673,11 @@ code { background: var(--surface-2); border-radius: 4px; padding: 1px 5px; font-
 .note-list .time-chip { min-height: 28px; padding: 0 8px; font-size: 12px; }
 .note-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .note-meta { font-size: 12px; color: var(--muted); }
+.note-rule { color: var(--good-fg); }
+.self-fixed { margin-top: -4px; }
+.rule-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.rule-list li { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; line-height: 1.45; font-size: 15px; }
+#playbook-text { width: 100%; min-height: 280px; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .composer { display: flex; gap: 8px; }
 .composer label { display: flex; }
 .composer input {

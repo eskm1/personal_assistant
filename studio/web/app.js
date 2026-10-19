@@ -1484,6 +1484,94 @@ function worksHTML(d) {
   return works.length ? `<section class="d-sec"><h2>What works</h2>${bullets(works.map(esc))}</section>` : "";
 }
 
+// Studio's own fixes before Bryan saw this version: one folded line, and whether it's getting better.
+function trendLine(d) {
+  const sf = d.self_fix, tr = d.self_fix_trend;
+  if (!sf) return "";
+  let line = `Studio caught ${plural(sf.caught, "editing problem")} itself on this draft`;
+  const r = tr?.recent, b = tr?.before;
+  if (r?.avg != null && r.drafts >= 2) {
+    line += ` · ${tr.days}-day average ${r.avg.toFixed(1)}`;
+    if (b?.avg != null && b.drafts >= 2) {
+      line += b.avg > r.avg ? `, down from ${b.avg.toFixed(1)}` : b.avg < r.avg ? `, up from ${b.avg.toFixed(1)}` : ", the same as the month before";
+    }
+  }
+  return `${line}.`;
+}
+
+function selfFixHTML(d) {
+  const fixed = d.self_fix?.fixed || [];
+  if (!fixed.length) return "";
+  const cost = isOwner() && d.self_fix_cost ? `<p class="muted small">Studio's own fixes cost ${esc(money(d.self_fix_cost))} (counted in this draft's cost).</p>` : "";
+  return `<section class="folds self-fixed">${foldHTML("production", "selffix", `Studio fixed ${plural(fixed.length, "thing")} before showing you this`, "",
+    `${bullets(fixed.map(esc))}<p class="muted small">${esc(trendLine(d))}</p>${cost}`)}</section>`;
+}
+
+const timesText = (n) => (n === 1 ? "once" : n === 2 ? "twice" : `${n} times`);
+const dayText = (iso) => {
+  const t = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(t.getTime()) ? String(iso || "") : t.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+};
+
+function ruleListHTML(rules, owner) {
+  return `<ul class="rule-list">${rules.map((x) => `<li><span class="note-text"><span>${esc(x.text)}</span>
+    <span class="note-meta">Caught ${esc(timesText(x.count))} · last ${esc(dayText(x.last))}</span></span>
+    ${owner ? `<button class="btn fix-btn" data-forget-rule="${esc(x.id)}" title="Studio stops following it and won't learn it again">Forget</button>` : ""}</li>`).join("")}</ul>`;
+}
+
+// The rules Studio taught itself (read-only here; Forget drops one) and what it checks by code.
+function rulesHTML(d) {
+  const r = d.rules;
+  if (!r) return "";
+  const learned = r.learned || [];
+  const owner = isOwner();
+  const trend = trendLine(d);
+  const body = (learned.length ? ruleListHTML(learned, owner)
+    : `<p class="muted small">None yet. When Studio fixes a problem in its own draft, or you send back an editing note, the rule behind it is kept here, so you never have to say it twice.</p>`)
+    + (r.code?.length ? `<h3>Checked by Studio on every draft</h3>${bullets(r.code.map(esc))}` : "")
+    + (trend ? `<p class="muted small">${esc(trend)}</p>` : "")
+    + (owner ? `<div class="row"><button class="btn" id="playbook-open">Edit the playbook</button></div>` : "");
+  return foldHTML("production", "rules", "Rules Studio taught itself", learned.length ? plural(learned.length, "rule") : "", body);
+}
+
+// The playbook (Bryan): his rules to edit; Studio's learned rules shown apart, with Forget.
+async function openPlaybook() {
+  openModal(`<h2 id="modal-title">Playbook</h2><p class="muted">Loading…</p>`, playbookClick, true);
+  await renderPlaybook();
+}
+async function renderPlaybook() {
+  const p = await api("/api/playbook");
+  const learned = [["reel", "Reels"], ["carousel", "Carousels"]].filter(([k]) => p.rules?.[k]?.length)
+    .map(([k, label]) => `<h3>${esc(label)}</h3>${ruleListHTML(p.rules[k], p.editable)}`).join("");
+  $("#modal-body").innerHTML = `<h2 id="modal-title">Playbook</h2>
+    <p class="muted small">The rules the idea generator, the editor and Studio's read follow on every post.</p>
+    <h3>Rules Studio taught itself</h3>
+    ${learned || `<p class="muted small">None yet.</p>`}
+    <p class="muted small">Studio keeps these itself, from problems it fixed in its own drafts and editing points in your notes. Forget drops one for good.</p>
+    <label class="form">Your rules and notes<textarea id="playbook-text" rows="16" ${p.editable ? "" : "readonly"}>${esc(p.text)}</textarea></label>
+    <p class="error-text" id="modal-error" hidden></p>
+    <div class="row end"><button type="button" class="btn" data-modal-close>Close</button>${p.editable ? `<button type="button" class="btn primary" id="playbook-save">Save</button>` : ""}</div>`;
+}
+async function forgetRule(id) {
+  if (!confirm("Forget this rule? Studio stops following it and won't learn it again.")) return false;
+  await api(`/api/playbook/rule/${encodeURIComponent(id)}/forget`, {});
+  toast("Rule forgotten.");
+  return true;
+}
+async function playbookClick(e) {
+  const forget = e.target.closest("[data-forget-rule]");
+  if (forget) {
+    if (await forgetRule(forget.dataset.forgetRule)) await renderPlaybook();
+    return;
+  }
+  if (e.target.id !== "playbook-save") return;
+  try {
+    await api("/api/playbook", { text: $("#playbook-text").value });
+  } catch (err) { return formError(err.message); }
+  closeModal();
+  toast("Playbook saved. Every edit from now on follows it.");
+}
+
 function noteListHTML(notes, currentVersion, isProduction) {
   if (!notes.length) return `<p class="muted small">No notes yet.</p>`;
   return `<ul class="note-list">${notes.map((n) => {
@@ -1493,7 +1581,8 @@ function noteListHTML(notes, currentVersion, isProduction) {
       n.status === "addressed" ? "done by the editor" : "",
       n.remember ? "in playbook" : "",
     ].filter(Boolean).join(" · ");
-    return `<li class="${esc(n.status)}">${n.slide ? slideChip(n.slide) : timeChip(n.at_seconds)}<span class="note-text"><span class="note-body">${esc(n.body)}</span>${tags ? `<span class="note-meta">${esc(tags)}</span>` : ""}</span></li>`;
+    const rule = n.rule ? `<span class="note-meta note-rule">Studio learned this as a rule: ${esc(n.rule)}</span>` : "";
+    return `<li class="${esc(n.status)}">${n.slide ? slideChip(n.slide) : timeChip(n.at_seconds)}<span class="note-text"><span class="note-body">${esc(n.body)}</span>${tags ? `<span class="note-meta">${esc(tags)}</span>` : ""}${rule}</span></li>`;
   }).join("")}</ul>`;
 }
 
@@ -1528,7 +1617,7 @@ function checksBody(d) {
   if (qa.match != null) items.push(`Words intact after the cuts: <strong>${Math.round(qa.match * 100)}%</strong>`);
   if (qa.missing?.length) items.push(`Possibly clipped or misheard: ${qa.missing.map(esc).join(", ")}`);
   if (d.graphics) items.push(`Graphics: ${esc(d.graphics)}`);
-  if (d.cost) items.push(`API cost so far: ${esc(money(d.cost))}`);
+  if (d.cost) items.push(`API cost so far: ${esc(money(d.cost))}${d.self_fix_cost ? ` (Studio's own fixes ${esc(money(d.self_fix_cost))})` : ""}`);
   return bullets(items) || `<p class="muted small">No checks ran on this draft.</p>`;
 }
 
@@ -1731,12 +1820,14 @@ function carouselPageHTML(d) {
     n ? foldHTML("production", "words", "The words on each slide", `${n} slides`, `<ol class="slide-words">${words}</ol>`) : "",
     d.sources?.length ? foldHTML("production", "brief", "Stills taken from", plural(d.sources.length, "clip"),
       `<ul class="link-list">${d.sources.map((x) => `<li><button class="link" data-open-clip="${esc(x.id)}">${esc(x.title)}</button></li>`).join("")}</ul>`) : "",
-    d.cost && owner ? foldHTML("production", "cost", "Cost", money(d.cost), `<p class="muted small">So far for this carousel: Claude ${esc(money(d.cost_parts?.claude ?? d.cost))}${d.cost_parts?.image_count ? `, concept pictures ${esc(money(d.cost_parts.images))} (${esc(d.cost_parts.image_count)} drawn)` : ""}.</p>`) : "",
+    d.cost && owner ? foldHTML("production", "cost", "Cost", money(d.cost), `<p class="muted small">So far for this carousel: Claude ${esc(money(d.cost_parts?.claude ?? d.cost))}${d.self_fix_cost ? ` (Studio's own fixes ${esc(money(d.self_fix_cost))})` : ""}${d.cost_parts?.image_count ? `, concept pictures ${esc(money(d.cost_parts.images))} (${esc(d.cost_parts.image_count)} drawn)` : ""}.</p>`) : "",
+    rulesHTML(d),
     phone() && canDecide && owner ? foldHTML("production", "more", "More", "", `<div class="more-part"><button class="btn ghost danger" id="decide-reject">Reject this draft</button></div>`) : "",
   ].join("");
   return `${titleHTML(d, sub)}
     ${failedBox}${statusBox}
     ${n && d.version ? carouselReadHTML(d) : ""}
+    ${selfFixHTML(d)}
     ${carouselFixesHTML(d)}
     ${phone() && n ? `<section class="d-sec" id="slides-sec"><h2>Slides</h2>${swiperHTML(d, "page")}
       ${download ? `<div class="row">${download}</div>` : ""}</section>` : ""}
@@ -1780,6 +1871,7 @@ function productionPageHTML(d) {
     checks: () => d.qa ? foldHTML("production", "checks", "Checks and measurements", checksPeek(d.qa), checksBody(d)) : "",
     brief: () => foldHTML("production", "brief", "Brief and source clips", d.sources.length ? plural(d.sources.length, "clip") : "", briefBody(d)),
     resolve: () => d.resolve && owner ? foldHTML("production", "resolve", "Open in DaVinci Resolve", RESOLVE_PEEK[d.resolve.state] || "", resolveBody(d)) : "",
+    rules: () => rulesHTML(d),
     missing: () => d.missing_shots?.length ? foldHTML("production", "missing", "Missing shots", plural(d.missing_shots.length, "shot"),
       `<ul class="shots">${d.missing_shots.map((s) => `<li><strong>${esc(s.shot)}</strong><span>${esc(s.why)}</span></li>`).join("")}</ul>`) : "",
   };
@@ -1792,13 +1884,14 @@ function productionPageHTML(d) {
       ["Missing shots", d.missing_shots?.length && `<ul class="shots">${d.missing_shots.map((s) => `<li><strong>${esc(s.shot)}</strong><span>${esc(s.why)}</span></li>`).join("")}</ul>`]]
       .filter(([, body]) => body).map(([h, body]) => `<div class="more-part"><h3>${esc(h)}</h3>${body}</div>`).join("");
     const reject = canDecide && owner ? `<div class="more-part"><button class="btn ghost danger" id="decide-reject">Reject this draft</button></div>` : "";
-    folds = rows.caption() + rows.editor() + rows.transcript() + foldHTML("production", "more", "More details", "", more + reject);
+    folds = rows.caption() + rows.editor() + rows.transcript() + rows.rules() + foldHTML("production", "more", "More details", "", more + reject);
   } else {
     folds = Object.values(rows).map((f) => f()).join("");
   }
   return `${titleHTML(d, sub)}
     ${failedBox}${statusBox}
     ${d.video ? readHTML(d) : ""}
+    ${selfFixHTML(d)}
     ${fixesHTML(d)}
     ${worksHTML(d)}
     <section class="d-sec"><h2>Your notes for the editor${notesNow ? ` <span class="count-pill">${notesNow}</span>` : ""}</h2>
@@ -2115,8 +2208,13 @@ async function detailClick(e) {
   const d = state.detail;
   const fixNote = e.target.closest("[data-fix-note]"), fixShot = e.target.closest("[data-fix-shot]");
   const pick = e.target.closest("[data-concept-pick]"), redraw = e.target.closest("[data-concept-redraw]");
+  const forget = e.target.closest("[data-forget-rule]");
   try {
-    if (pick) {
+    if (forget) {
+      if (await forgetRule(forget.dataset.forgetRule)) await loadDetail();
+    } else if (id === "playbook-open") {
+      await openPlaybook();
+    } else if (pick) {
       const n = Number(pick.dataset.conceptPick);
       for (const b of document.querySelectorAll("[data-concept-pick]")) b.disabled = true;
       toast(`Laying out slide ${n} again…`);

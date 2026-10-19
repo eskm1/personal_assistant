@@ -57,8 +57,12 @@ SCHEMA = {
                     "area": {"type": "string", "enum": AREAS},
                     "when": {"type": "string", "enum": ["this_draft", "next_shoot"]},
                     "kind": {"type": "string", "enum": SHOT_KINDS},
+                    "editor_can_fix": {"type": "boolean"},
+                    "rule": {"type": "string"},
+                    "same_rule": {"type": "integer"},
                 },
-                "required": ["what", "why", "start", "end", "area", "when", "kind"],
+                "required": ["what", "why", "start", "end", "area", "when", "kind", "editor_can_fix", "rule",
+                             "same_rule"],
                 "additionalProperties": False,
             },
         },
@@ -93,13 +97,32 @@ what it's about.
 (trim, cut, reorder, captions, hook text, graphics, music level). Anything that needs new footage \
 is "next_shoot", and its "what" says what to film. kind is the kind of shot to film for a \
 next_shoot fix (talking, broll, detail, before_after, reaction, screen), otherwise "none".
+{fixable}
 - works: 2 to 4 short points on what already works, so it's kept in the next version.
 - Place names stay internal: if an estate, condo, street or building name, an address or a \
 client's name appears in the on-screen text, captions or hook, that is always a this_draft fix \
 (area captions) to remove it.
+- Sound: the checks say how Studio levelled the voice and how far the music sits under it. Only \
+call the voice quiet or the music too loud when those numbers or the words say so.
 - Only say what the material shows. Never invent facts, numbers, times or problems; if you're \
 unsure something is wrong, leave it out. Use the timestamps given, don't guess new ones.
 - Plain words, no jargon (no "LUFS", "dB", "EDL", "B-roll" or "SNR"). Short sentences."""
+
+
+_FIXABLE = """\
+- editor_can_fix: true when Studio's editor can make the change itself from what it already has, \
+with no decision from Bryan: {examples}. false for anything that needs new footage or photos, \
+spending (drawing new pictures), and judgement calls only Bryan can make (whether to post it at \
+all, a change of message or offer, a claim only he can confirm, choosing between two good options). \
+Studio fixes the editor_can_fix ones before Bryan sees the draft, so mark them carefully.
+- rule: for an editor_can_fix fix, the general editing rule the problem breaks, as an instruction \
+for any future post in at most 14 words ("End on the last full sentence, never on a word that \
+starts the next"); same_rule is the number of the rule in "Editing rules Studio learned" it repeats \
+(R3 = 3), else 0. For other fixes rule is "" and same_rule 0."""
+_REEL_FIXABLE = ("trims and cuts, the order of the opening, the hook text, pace, caption words and timing, a "
+                 "graphic's wording, placement or timing, the music level")
+_CAROUSEL_FIXABLE = ("slide wording, spelling, length, order, the cover's words, the ask's wording (within the listed "
+                     "offers), removing a place name, the caption, swapping a slide to text only")
 
 
 # ── Carousels ─────────────────────────────────────────────────────────────────
@@ -126,8 +149,11 @@ CAROUSEL_SCHEMA = {
                     "why": {"type": "string"},
                     "slide": _slide_no,
                     "area": {"type": "string", "enum": CAROUSEL_AREAS},
+                    "editor_can_fix": {"type": "boolean"},
+                    "rule": {"type": "string"},
+                    "same_rule": {"type": "integer"},
                 },
-                "required": ["what", "why", "slide", "area"],
+                "required": ["what", "why", "slide", "area", "editor_can_fix", "rule", "same_rule"],
                 "additionalProperties": False,
             },
         },
@@ -160,6 +186,7 @@ call to action fits the kind of post and offers only what's listed under Offers)
 with a verb ("Shorten slide 3's text to two lines"). "why" is one plain reason in at most 18 \
 words. slide is the slide number it's about (1 = the cover), or null for the whole post or the \
 caption. area is what it's about.
+{fixable}
 - An offer, price, discount, promotion or deadline that isn't in the listed offers is always a \
 fix (area ask). A place name (estate, condo, street, block, town), an address or a client's name \
 on a slide or in the caption is always a fix to remove it.
@@ -200,7 +227,19 @@ def carousel_context(production: dict, data: dict) -> str:
     for p in missing:
         lines.append(f"  (slide {p['n']} asked for a picture Studio couldn't get, so it's text only: {p['missing']})")
     lines.append(f"Caption:\n{production.get('caption') or '(none yet)'}")
+    import learning
+    rules = learning.rules_text("carousel")
+    if rules:
+        lines.append(rules)
     return "\n".join(lines)
+
+
+def _learnable(f: dict) -> dict:
+    """editor_can_fix, and the rule it teaches (only for the ones the editor can fix)."""
+    can = f.get("editor_can_fix") is True and f.get("when", "this_draft") != "next_shoot"
+    rule = re.sub(r"\s+", " ", str(f.get("rule") or "")).strip()[:200] if can else ""
+    same = f.get("same_rule") if can and isinstance(f.get("same_rule"), int) and f.get("same_rule") > 0 else 0
+    return {"editor_can_fix": can, "rule": rule, "same_rule": same}
 
 
 def _clean_carousel(result: dict, slides: int) -> dict:
@@ -211,7 +250,8 @@ def _clean_carousel(result: dict, slides: int) -> dict:
                       "slide": n if isinstance(n, int) and 1 <= n <= slides else None,
                       "area": f.get("area") if f.get("area") in CAROUSEL_AREAS else "other",
                       # Everything in a carousel can change in this draft.
-                      "when": "this_draft", "start": None, "end": None, "kind": None})
+                      "when": "this_draft", "start": None, "end": None, "kind": None,
+                      **_learnable(f)})
     works = [w.strip() for w in result.get("works", []) if w.strip()][:MAX_WORKS]
     return {"kind": "carousel", "verdict": result.get("verdict", "").strip(),
             "scores": {k: v for k, v in (result.get("scores") or {}).items() if k in CAROUSEL_SCORES},
@@ -225,8 +265,9 @@ def concept_fixes(production: dict, data: dict, kind: str | None) -> list[dict]:
     out = []
 
     def fix(what, why, n):
+        # Pictures are Bryan's call (a redraw spends), so these wait for him.
         return {"what": what, "why": why, "slide": n, "area": "picture", "when": "this_draft",
-                "start": None, "end": None, "kind": None}
+                "start": None, "end": None, "kind": None, "editor_can_fix": False, "rule": "", "same_rule": 0}
     shown = {p["n"]: p for p in data.get("pictures", [])}
     for n, s in enumerate(data["slides"], 1):
         if s["image"].get("source") != "concept":
@@ -241,7 +282,7 @@ def concept_fixes(production: dict, data: dict, kind: str | None) -> list[dict]:
     return out
 
 
-def run_carousel(conn, production: dict, client=None) -> dict:
+def run_carousel(conn, production: dict, client=None, ref: str | None = None) -> dict:
     """Studio's read of a carousel's current slides (vision). Raises on failure."""
     import anthropic
 
@@ -264,10 +305,11 @@ def run_carousel(conn, production: dict, client=None) -> dict:
         client, model=settings.CLAUDE_MODEL, max_tokens=16000,
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
         output_config={"effort": "low", "format": {"type": "json_schema", "schema": CAROUSEL_SCHEMA}},
-        system=_CAROUSEL_SYSTEM.replace("{content_plan}", carousel._context_text()),
+        system=_CAROUSEL_SYSTEM.replace("{content_plan}", carousel._context_text())
+        .replace("{fixable}", _FIXABLE.replace("{examples}", _CAROUSEL_FIXABLE)),
         messages=[{"role": "user", "content": content}],
     )
-    usage.record("review", f"production:{production['id']}", response)
+    usage.record("review", ref or f"production:{production['id']}", response)
     if response.stop_reason in ("refusal", "max_tokens"):
         raise RuntimeError(f"Claude couldn't review these slides ({response.stop_reason})")
     review = _clean_carousel(json.loads(next(b.text for b in response.content if b.type == "text")), len(pngs))
@@ -372,6 +414,16 @@ def _context(conn, production: dict) -> str:
         checks.append(f"{qa['match']:.0%} of the planned words heard again after the cut")
     if qa.get("missing"):
         checks.append("possibly clipped or misheard words: " + ", ".join(qa["missing"]))
+    sound = qa.get("sound") or {}
+    if sound.get("voice_gain_db") is not None and sound.get("voice_lufs_recorded") is not None:
+        checks.append(f"voice recorded at {sound['voice_lufs_recorded']:.0f} LUFS, levelled by "
+                      f"{sound['voice_gain_db']:+.0f} dB with background noise reduced")
+    if sound.get("gap_db") is not None:
+        checks.append(f"while Bryan talks the music sits {sound['gap_db']:.0f} dB under his voice"
+                      + (f", {sound['bed_below_db']:.0f} dB under it where nobody talks" if sound.get("bed_below_db") is not None else ""))
+    did = [c["did"] if isinstance(c, dict) else str(c) for c in qa.get("checks") or []]
+    if did:
+        checks.append("Studio's own checks already " + "; ".join(did))
     lines.append("Checks: " + ("; ".join(checks) or "none ran"))
     music_line = f"music level before it dips under the voice: {edl.get('music', {}).get('volume_db', 'n/a')} dB"
     if music_info.get("source") == "epidemic":
@@ -386,6 +438,11 @@ def _context(conn, production: dict) -> str:
             f"  - {s['shot']} ({s['why']})" for s in edl["missing_shots"]))
     if edl.get("summary"):
         lines.append(f"The editor's own summary: {edl['summary']}")
+    asked = conn.execute("""SELECT body FROM feedback WHERE target = 'production' AND target_id = ?
+                            AND version = ? ORDER BY id""", (production["id"], production["version"] - 1)).fetchall()
+    if asked:
+        lines.append("Bryan asked for these changes on the last version (done in this draft; never suggest "
+                     "undoing them):\n" + "\n".join(f"  - {r['body']}" for r in asked))
 
     quality = []
     for cid, clip in clips.items():
@@ -409,7 +466,7 @@ def _clean(result: dict, total: float) -> dict:
             f["end"] = None
         if f.get("kind") == "none" or f.get("when") != "next_shoot":
             f["kind"] = None
-        fixes.append(f)
+        fixes.append({**f, **_learnable(f)})
     works = [w.strip() for w in result.get("works", []) if w.strip()][:MAX_WORKS]
     return {"verdict": result.get("verdict", "").strip(), "scores": result.get("scores", {}),
             "fixes": fixes, "works": works}
@@ -417,8 +474,9 @@ def _clean(result: dict, total: float) -> dict:
 
 # ── Running it ────────────────────────────────────────────────────────────────
 
-def run(conn, production_id: int, client=None) -> dict:
-    """Review the production's current draft and store it. Raises on failure."""
+def run(conn, production_id: int, client=None, ref: str | None = None) -> dict:
+    """Review the production's current draft and store it. Raises on failure. ref: where its
+    cost is recorded (Studio's own fix rounds are counted apart)."""
     import anthropic
 
     import llm
@@ -426,7 +484,7 @@ def run(conn, production_id: int, client=None) -> dict:
     import usage
     row = conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
     if row is not None and row["format"] == "carousel":
-        review = run_carousel(conn, dict(row), client)
+        review = run_carousel(conn, dict(row), client, ref)
         review["at"] = catalog.now()
         conn.execute("UPDATE productions SET review = ?, review_version = ? WHERE id = ?",
                      (json.dumps(review, ensure_ascii=False), row["version"], production_id))
@@ -453,10 +511,11 @@ def run(conn, production_id: int, client=None) -> dict:
         client, model=settings.CLAUDE_MODEL, max_tokens=16000,
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
         output_config={"effort": "low", "format": {"type": "json_schema", "schema": SCHEMA}},
-        system=_SYSTEM.replace("{playbook}", playbook.text()),
+        system=_SYSTEM.replace("{playbook}", playbook.text())
+        .replace("{fixable}", _FIXABLE.replace("{examples}", _REEL_FIXABLE)),
         messages=[{"role": "user", "content": content}],
     )
-    usage.record("review", f"production:{production_id}", response)
+    usage.record("review", ref or f"production:{production_id}", response)
     if response.stop_reason in ("refusal", "max_tokens"):
         raise RuntimeError(f"Claude couldn't review this draft ({response.stop_reason})")
     review = _clean(json.loads(next(b.text for b in response.content if b.type == "text")), total)
@@ -474,14 +533,14 @@ errors: dict[int, str] = {}
 _lock = threading.Lock()
 
 
-def safe_run(conn, production_id: int, client=None) -> dict | None:
+def safe_run(conn, production_id: int, client=None, ref: str | None = None) -> dict | None:
     """run(), but a failure is logged and remembered instead of raised."""
     with _lock:
         if production_id in running:
             return None
         running.add(production_id)
     try:
-        review = run(conn, production_id, client)
+        review = run(conn, production_id, client, ref)
         errors.pop(production_id, None)
         return review
     except Exception as e:  # a draft without a review beats no draft

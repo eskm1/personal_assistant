@@ -79,3 +79,20 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
 - Editor upgrades built (not yet proven on real footage): jump cuts (`editor.tighten`), face-tracked
   reframing of horizontal footage and punch-ins (`framing.py`, OpenCV), each a `STUDIO_EDIT_*` setting.
   Still offered: numbered chapter labels, screenshots floating above the speaker.
+- Built 2026-10-19 (not yet proven with real Claude or footage): Studio fixes its own read before Bryan sees a
+  draft (`self_fix.py`, `STUDIO_SELF_FIX_ROUNDS`, reels and carousels; the read marks each fix `editor_can_fix`),
+  learns editing rules into its own playbook section (`learning.py`, Studio/learned_rules.json; Bryan's send-back
+  notes sorted editing/taste; Review's "Rules Studio taught itself", playbook editor, trend), code checks
+  (`editor.sentence_guard`, `clear_of_cards`, caption timing, the voice/music gap guard, loudness), a new mix
+  (voice cleaned and levelled, music `STUDIO_MUSIC_GAP_DB` under it) and bundled caption fonts
+  (`render/captions/fonts`, `STUDIO_CAPTION_FONT`; Bryan picks the final one after studying his reference reels).
+- Reference library and taste report built 2026-10-19 (not yet proven against Instagram or real Claude):
+  Import many (paste or CSV, dedupe by shortcode, `import_references()`), held until Bryan presses Analyse
+  (all, or a stratified sample of 150), paced downloads with backoff and pauses (`ref_library.py`), carousels and
+  photos from their pictures (yt-dlp metadata, gallery-dl 1.32.15 with the sign-in), engagement captured, the
+  monthly cap `STUDIO_REFERENCE_BUDGET_USD` (60), the taste report (`taste.py`, map-reduce, `#/taste`, approval puts
+  its guide in force and its taste section in the playbook). Bryan's 814 saved posts (no tags: the report infers why
+  each stands out) are to be imported once the migration is online. What Bryan must do: (1) `cloud_setup.py
+  --update`; (2) upload a spare Instagram account's cookies.txt in References > "Instagram sign-in for downloads";
+  (3) Import many > the CSV, then Analyse all (about US$41, about 18 hours); (4) Write the taste report (about
+  US$4) and approve it. The editor settings it suggests (caption font etc.) are his separate call.

@@ -3,21 +3,27 @@ The editor (phase 5): turns a planned production into a draft Reel.
 
   1. Claude plans the cut from the approved idea: which stretches of which clips to
      keep, at phrase boundaries (it sees every word with its timestamp), the hook
-     text, and the music brief. On a revision it also gets Bryan's notes.
+     text, and the music brief. On a revision it also gets Bryan's notes (and sorts
+     each into an editing problem, which Studio learns as a rule, or taste).
   2. Cut points are snapped to word edges with a little air, so no word is clipped.
+     Studio's checks on the ends (sentence_guard): never end on a stray word that
+     starts a new sentence, never open on the tail of one, no dead air at either end.
      Then pauses inside each kept stretch are cut down to a short breath (jump cuts),
      and lone "um"s go.
   3. Framing (framing.py): horizontal footage is cropped around the person's face,
      and talking shots punch in and out every few seconds.
   4. ffmpeg cuts every piece from the ORIGINAL files in one pass (one encode, so
      lips stay in sync) and frames it 1080x1920.
-  5. HyperFrames renders the captions (1-3 words, timed to each word) and the hook
-     as a transparent layer; ffmpeg lays it over the footage.
-  6. Music: Urban Makers posts get an Epidemic Sound track, ducked under the voice;
-     other accounts get a note on what to add in the Instagram app.
+  5. HyperFrames renders the captions (1-3 words in sentence case, timed to each word,
+     in a bundled font: STUDIO_CAPTION_FONT) and the hook as a transparent layer; cards
+     stay above the caption line and captions repeating a card's words are hidden.
+  6. Sound (mix_final): the voice is cleaned and levelled first, the music set well under
+     it (dipped while Bryan talks), the gap measured and guarded, then -14 LUFS. Urban
+     Makers posts get an Epidemic Sound track; other accounts get a note on what to add.
   7. Checks: the draft is re-transcribed to confirm every word survived the cuts,
-     and its loudness is measured. Then it lands in To review.
-  8. Studio's read (draft_review.py): Claude reviews the finished draft for Bryan.
+     and its loudness is measured (and corrected if it's off).
+  8. Studio's read (draft_review.py), then Studio's own fix rounds (self_fix.py) on the
+     fixes the editor can make, and only then To review.
 """
 import difflib
 import html
@@ -116,8 +122,10 @@ EDL_SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {"note_id": {"type": "integer"}, "how": {"type": "string"}},
-                "required": ["note_id", "how"],
+                "properties": {"note_id": {"type": "integer"}, "how": {"type": "string"},
+                               "kind": {"type": "string", "enum": ["editing", "taste"]},
+                               "rule": {"type": "string"}, "same_rule": {"type": "integer"}},
+                "required": ["note_id", "how", "kind", "rule", "same_rule"],
                 "additionalProperties": False,
             },
         },
@@ -143,8 +151,9 @@ words, never in the middle of one. Keep the payoff and anything that qualifies a
 - hook_text: at most 6 words shown on screen for the first ~2.5 seconds, or "" for none. It \
 should add to the spoken hook, not repeat it word for word.
 - music: describe the bed for this post (mood, a short catalogue search phrase, tempo). \
-volume_db is the music's level before it dips under speech; around -16 is typical, lower for \
-talk-heavy posts.
+volume_db is the music's level: -16 is the usual bed (Studio levels Bryan's voice and keeps the \
+music well under it while he talks, a little higher between phrases); go lower (-18 to -22) for a \
+quieter bed, higher (-12) only for music-led posts.
 - {music_rule}
 - graphics: 1 to 3 animated B-roll inserts (rendered with HyperFrames) that show what Bryan is \
 saying while he says it. Anchor each to the moment the words it illustrates are spoken: clip_id \
@@ -158,7 +167,18 @@ Leave the first 2.5 seconds clear for the hook. Use none if nothing in the speec
 (what, framing, roughly how long), each with why it would make the post better. Empty if none.
 - summary: two sentences on what you did, for Bryan.
 - On a revision, address every note and say how in notes_addressed. Notes are pinned to times \
-in the PREVIOUS draft; the previous cut list shows where each piece sat in that draft."""
+in the PREVIOUS draft; the previous cut list shows where each piece sat in that draft.
+- For each note also give its kind: "editing" when it is an editing craft problem a good editor \
+should never repeat on any post (a clipped word, ending on half a sentence, a slow opening, music \
+over the voice, a card or caption covering what matters, a dead pause), "taste" when it is Bryan's \
+judgement or preference about this post (which take, the message, a look he likes). For an \
+editing note from Bryan, rule is the general rule it teaches, as an instruction in at most 14 \
+words ("End on the last full sentence, never on a word that starts the next"), and same_rule is \
+the number of the learned rule it repeats (R3 = 3) or 0. Otherwise rule is "" and same_rule 0. \
+Studio's own fixes (a round of Studio's fixes, not Bryan's notes) are kind "editing", rule "" and \
+same_rule 0.
+- The playbook's "Editing rules Studio learned" are problems caught in earlier drafts: never \
+repeat them."""
 
 
 # ── Context for Claude ────────────────────────────────────────────────────────
@@ -186,7 +206,9 @@ def _clip_block(clip: dict, plan_segments: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _revision_block(conn, production: dict) -> str:
+def _revision_block(conn, production: dict, fixes: list[dict] | None = None) -> str:
+    """The previous draft and what to change: Bryan's open notes, or (a round of Studio's own
+    fixes, before Bryan has seen the draft) the fixes from Studio's read."""
     if not production["edl"]:
         return ""
     previous = json.loads(production["edl"])
@@ -198,16 +220,35 @@ def _revision_block(conn, production: dict) -> str:
                       + (" (pauses tightened)" if len(group) > 1 and any(
                           a["end"] < b["start"] - 0.001 for a, b in zip(group, group[1:])) else ""))
         offset += length
+    graphics = previous.get("graphics") or []
+    shown = ("\nPrevious graphics: " + "; ".join(
+        f"{g['start']:.1f}-{g['start'] + g['duration']:.1f}s {g['style']} \"{g['title']}\""
+        + (f" ({' / '.join(g['lines'])})" if g.get("lines") else "") for g in graphics if "start" in g)
+        if graphics else "")
+    head = ("\n\nThis is a revision of draft v{v}. Previous cut list:\n".format(v=production["version"])
+            + "\n".join(placed)
+            + f"\nPrevious hook text: {previous.get('hook_text') or '(none)'}" + shown
+            + f"\nPrevious music volume: {previous.get('music', {}).get('volume_db', 'n/a')} dB")
+    if fixes is not None:
+        # Studio's own round: Bryan hasn't seen this draft. Keep what his notes on the last
+        # version asked for (already done in it).
+        done = conn.execute(
+            """SELECT body FROM feedback WHERE target = 'production' AND target_id = ? AND status = 'addressed'
+               AND version = ? ORDER BY id""", (production["id"], production["version"] - 1)).fetchall()
+        lines = [f"  fix {f['id']}" + (f" at {f['at_seconds']:.1f}s" if f.get("at_seconds") is not None else "")
+                 + f": {f['body']}" for f in fixes]
+        return (head.replace(f"a revision of draft v{production['version']}",
+                             "a round of Studio's own fixes on the draft below, before Bryan sees it")
+                + "\n\nStudio's read of that draft found these problems you can fix from the footage. "
+                  "Fix every one, and keep everything else as it is:\n" + "\n".join(lines)
+                + ("\n\nBryan's notes on the version before, already done in this draft (keep them done):\n"
+                   + "\n".join(f"  - {r['body']}" for r in done) if done else ""))
     notes = conn.execute(
         "SELECT * FROM feedback WHERE target = 'production' AND target_id = ? AND status = 'open' ORDER BY id",
         (production["id"],)).fetchall()
     note_lines = [f"  note {n['id']}" + (f" at {n['at_seconds']:.1f}s" if n["at_seconds"] is not None else "")
                   + f": {n['body']}" for n in notes]
-    return ("\n\nThis is a revision of draft v{v}. Previous cut list:\n".format(v=production["version"])
-            + "\n".join(placed)
-            + f"\nPrevious hook text: {previous.get('hook_text') or '(none)'}"
-            + f"\nPrevious music volume: {previous.get('music', {}).get('volume_db', 'n/a')} dB"
-            + "\n\nBryan's notes on that draft:\n" + ("\n".join(note_lines) or "  (none)"))
+    return head + "\n\nBryan's notes on that draft:\n" + ("\n".join(note_lines) or "  (none)")
 
 
 def _parts(cuts: list[dict]) -> list[list[dict]]:
@@ -223,7 +264,10 @@ def _parts(cuts: list[dict]) -> list[list[dict]]:
     return groups
 
 
-def plan_edit(conn, production: dict, clips: dict[int, dict], client=None) -> dict:
+def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes: list[dict] | None = None,
+              ref: str | None = None) -> dict:
+    """Claude's edit plan (EDL). fixes: a round of Studio's own fixes instead of Bryan's notes;
+    ref: where its cost is recorded (Studio's own rounds are counted apart)."""
     plan = json.loads(production["plan"] or "{}")
     segments = plan.get("segments", [])
     music_rule = ("This account uses an Epidemic Sound track; your music brief is used to search for it."
@@ -241,7 +285,7 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None) -> di
                    for i, s in enumerate(plan["storyboard"], 1)) if plan.get("storyboard") else "")
             + "\n\nFootage:\n\n"
             + "\n\n".join(_clip_block(c, segments) for c in clips.values())
-            + _revision_block(conn, production))
+            + _revision_block(conn, production, fixes))
     pause_rule = ("- Pauses are tightened automatically after you plan: silences, breaths and lone \"um\"s "
                   "inside a cut are cut down to a short breath (jump cuts), and so is silence at the start and "
                   "end of a cut with speech. So keep whole phrases in one cut rather than splitting a cut just to "
@@ -258,7 +302,7 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None) -> di
         messages=[{"role": "user", "content": user}],
     )
     import usage
-    usage.record("edit", f"production:{production['id']}", response)
+    usage.record("edit", ref or f"production:{production['id']}", response)
     if response.stop_reason == "refusal":
         raise RuntimeError("Claude declined to plan this edit")
     if response.stop_reason == "max_tokens":
@@ -351,6 +395,64 @@ def tighten(cuts: list[dict], clips: dict[int, dict], max_pause: float | None = 
     return out
 
 
+SENTENCE_END = re.compile(r"[.!?。！？…]['\"”’)\]]*$")
+# A stray start of the next sentence at the very end (or the tail of the one before at the very
+# start) shorter than this is cut; a longer one is a deliberate part of the edit.
+MAX_DANGLING = 1.5
+# Silence before the first word or after the last one, longer than this, is trimmed.
+EDGE_SILENCE = 0.5
+
+
+def _inside(cut: dict, words: list[dict]) -> list[dict]:
+    return [w for w in words if w["start"] >= cut["start"] - 0.01 and w["end"] <= cut["end"] + 0.01]
+
+
+def sentence_guard(cuts: list[dict], clips: dict[int, dict]) -> tuple[list[dict], list[str]]:
+    """Studio's checks on the ends of the draft, before anything is rendered: it never ends on
+    a word that starts a new sentence (a stray "and" after the last full stop), never opens on
+    the tail of a sentence, and has no dead silence before the first word or after the last.
+    Returns the cuts and what it changed, in plain words."""
+    cuts = [dict(c) for c in cuts]
+    done = []
+    spoken = [i for i, c in enumerate(cuts) if _inside(c, _words(clips[c["clip_id"]]))]
+    if not spoken:
+        return cuts, done
+    # The end: the last cut that speaks (only silent pictures may follow it).
+    c = cuts[spoken[-1]]
+    words = _inside(c, _words(clips[c["clip_id"]]))
+    ends = [k for k, w in enumerate(words) if SENTENCE_END.search(w["word"].strip())]
+    if ends and ends[-1] < len(words) - 1:
+        last, tail = words[ends[-1]], words[ends[-1] + 1:]
+        new_end = min(last["end"] + TAIL_PAD, tail[0]["start"])
+        if tail[-1]["end"] - tail[0]["start"] <= MAX_DANGLING and new_end - c["start"] >= MIN_CUT:
+            c["end"] = round(new_end, 3)
+            stray = " ".join(w["word"].strip() for w in tail)
+            done.append(f"ended on the last full sentence (cut the stray \"{stray}\" at the end)")
+            words = words[:ends[-1] + 1]
+    if spoken[-1] == len(cuts) - 1 and c["end"] - words[-1]["end"] > EDGE_SILENCE:
+        c["end"] = round(words[-1]["end"] + TAIL_PAD, 3)
+        done.append("trimmed the silence after the last word")
+    # The start: the first cut that speaks, when it opens partway through a sentence.
+    c = cuts[spoken[0]]
+    all_words = _words(clips[c["clip_id"]])
+    words = _inside(c, all_words)
+    before = [w for w in all_words if w["end"] <= words[0]["start"] + 0.001 and w is not words[0]]
+    mid = before and words[0]["start"] - before[-1]["end"] < 1.0 and not SENTENCE_END.search(before[-1]["word"].strip())
+    if mid:
+        k = next((k for k, w in enumerate(words) if SENTENCE_END.search(w["word"].strip())), None)
+        if k is not None and k + 1 < len(words) and words[k]["end"] - words[0]["start"] <= MAX_DANGLING:
+            new_start = max(words[k]["end"], words[k + 1]["start"] - HEAD_PAD)
+            if c["end"] - new_start >= MIN_CUT:
+                c["start"] = round(new_start, 3)
+                stray = " ".join(w["word"].strip() for w in words[:k + 1])
+                done.append(f"opened on a full sentence (cut the end of the one before, \"{stray}\")")
+                words = words[k + 1:]
+    if spoken[0] == 0 and words[0]["start"] - c["start"] > EDGE_SILENCE:
+        c["start"] = round(max(c["start"], words[0]["start"] - HEAD_PAD), 3)
+        done.append("trimmed the silence before the first word")
+    return cuts, done
+
+
 def timeline(cuts: list[dict], clips: dict[int, dict]) -> list[dict]:
     """Every kept word on the draft's own clock."""
     out, offset = [], 0.0
@@ -392,12 +494,19 @@ def place_graphics(graphics: list[dict], cuts: list[dict], total: float) -> list
     return placed
 
 
+# A caption on screen for less than this can't be read: it joins the next one when they fit.
+MIN_CAPTION = 0.32
+CAPTION_CHARS, JOINED_CHARS = 18, 22
+
+
 def caption_chunks(words: list[dict], total: float) -> list[dict]:
-    """1-3 words per caption, split at punctuation and pauses, shown 2 frames early."""
+    """1-3 words per caption, split at punctuation and pauses, shown 2 frames early, in
+    sentence case (as Bryan says them, not all capitals). A caption that would flash by too
+    fast to read joins the next one."""
     chunks, current = [], []
     for i, w in enumerate(words):
         # Start a new caption rather than let this one grow too wide for the screen.
-        if current and len(" ".join(x["word"] for x in current + [w])) > 18:
+        if current and len(" ".join(x["word"] for x in current + [w])) > CAPTION_CHARS:
             chunks.append(current)
             current = []
         current.append(w)
@@ -406,15 +515,51 @@ def caption_chunks(words: list[dict], total: float) -> list[dict]:
         if len(current) == 3 or re.search(r"[.,!?;:]$", w["word"]) or pause or nxt is None:
             chunks.append(current)
             current = []
+    joined = []
+    for i, chunk in enumerate(chunks):
+        if joined and chunk:
+            prev = joined[-1]
+            shown = chunk[0]["start"] - prev[0]["start"]
+            text = " ".join(x["word"] for x in prev + chunk)
+            if (shown < MIN_CAPTION and len(text) <= JOINED_CHARS and len(prev) + len(chunk) <= 4
+                    and not SENTENCE_END.search(prev[-1]["word"].strip())):
+                joined[-1] = prev + chunk
+                continue
+        joined.append(chunk)
+    chunks = joined
     out = []
     for i, chunk in enumerate(chunks):
         start = max(0.0, chunk[0]["start"] - 2 / FPS)
         end = chunks[i + 1][0]["start"] - 2 / FPS if i + 1 < len(chunks) else min(total, chunk[-1]["end"] + 0.4)
         end = min(end, chunk[-1]["end"] + 0.8)  # don't hold a caption through a long silence
-        text = re.sub(r"[.,;:]+$", "", " ".join(w["word"] for w in chunk)).upper()
+        text = re.sub(r"[.,;:]+$", "", " ".join(w["word"].strip() for w in chunk)).strip()
+        if not out and text:
+            text = text[0].upper() + text[1:]
         if end - start > 0.05 and text:
             out.append({"text": text, "start": round(start, 3), "end": round(end, 3)})
     return out
+
+
+def _plain(text: str) -> set[str]:
+    return {w for w in re.findall(r"[\w']+", text.lower()) if len(w) > 1}
+
+
+def clear_of_cards(chunks: list[dict], graphics: list[dict]) -> tuple[list[dict], int]:
+    """While a full-screen card is up, its words are on screen already: a caption saying the
+    same words is dropped, so the card is never doubled up by the caption line. Returns the
+    captions and how many were dropped."""
+    cards = [g for g in graphics if g.get("style") == "card" and "start" in g]
+    if not cards:
+        return chunks, 0
+    out, dropped = [], 0
+    for c in chunks:
+        card = next((g for g in cards if c["start"] < g["start"] + g["duration"] and c["end"] > g["start"]), None)
+        words = _plain(c["text"])
+        if card and words and words <= _plain(" ".join([card["title"], *card.get("lines", [])])):
+            dropped += 1
+            continue
+        out.append(c)
+    return out, dropped
 
 
 # ── Rendering ─────────────────────────────────────────────────────────────────
@@ -531,33 +676,79 @@ def render_cut(cuts: list[dict], clips: dict[int, dict], out: Path) -> float:
     return sum(c["end"] - c["start"] for c in cuts)
 
 
+# The caption fonts are bundled (OFL, latin, variable weight) and loaded from local files, so a
+# render never depends on the machine's fonts or the network. STUDIO_CAPTION_FONT picks one.
+FONTS = render.RENDER_DIR / "captions" / "fonts"
+CAPTION_FONTS = {
+    "figtree": ("Figtree", render.RENDER_DIR / "carousel" / "fonts" / "Figtree-latin.woff2"),
+    "nunito": ("Nunito", FONTS / "Nunito-latin.woff2"),
+    "dm_sans": ("DM Sans", FONTS / "DMSans-latin.woff2"),
+    "outfit": ("Outfit", FONTS / "Outfit-latin.woff2"),
+}
+
+
+def caption_font(name: str | None = None) -> tuple[str, Path]:
+    """(family, woff2 file) of the caption font: the setting's, or Figtree."""
+    key = (name or settings.CAPTION_FONT or "figtree").lower().replace("-", "_").replace(" ", "_")
+    if key not in CAPTION_FONTS:
+        log.warning("Unknown caption font %r; using Figtree (choose from %s)", key, ", ".join(CAPTION_FONTS))
+        key = "figtree"
+    return CAPTION_FONTS[key]
+
+
+# Captions sit in the band from CAPTION_TOP down; a card's words stay above CARD_BOTTOM, so the
+# two never overlap.
+CAPTION_TOP, CARD_BOTTOM = 1240, 1150
+
 _OVERLAY_CSS = """
+@font-face{font-family:"Studio Caption";src:url("caption.woff2") format("woff2");font-weight:100 1000;font-display:block}
 html,body{margin:0;width:1080px;height:1920px;overflow:hidden;background:transparent}
 #overlay{position:relative;width:1080px;height:1920px;background:transparent}
-.cap,.hook{position:absolute;left:0;right:0;margin:0 auto;width:fit-content;text-align:center;color:#fff;
-  font-family:"Montserrat","Arial Black","Segoe UI Black","Segoe UI",Arial,sans-serif;font-weight:900;
-  background:rgba(0,0,0,.62);border:2px solid rgba(255,255,255,.38);border-radius:16px;white-space:nowrap}
-.cap{top:1240px;padding:12px 26px;font-size:64px;letter-spacing:1px;max-width:940px;white-space:normal}
-.hook{top:250px;padding:18px 30px;font-size:58px;max-width:920px;white-space:normal;line-height:1.15}
-.cap,.hook{z-index:3}
-.card{position:absolute;inset:0;z-index:1;overflow:hidden;color:#fff;
-  font-family:"Montserrat","Arial Black","Segoe UI Black","Segoe UI",Arial,sans-serif}
-.card .bg{position:absolute;inset:-60px;background:radial-gradient(circle at 30% 20%,#2a2a33,#0b0b0d 70%)}
-.card .inner{position:absolute;left:90px;right:90px;top:520px}
-.card .bar{width:120px;height:14px;border-radius:7px;background:var(--accent);margin-bottom:44px}
-.card .title{font-size:96px;font-weight:900;line-height:1.05;letter-spacing:-1px}
-.card ul{list-style:none;margin:56px 0 0;padding:0}
-.card li{font-size:58px;font-weight:800;margin:0 0 30px;display:flex;align-items:center;gap:26px}
-.card li::before{content:"";flex:0 0 26px;height:26px;border-radius:50%;background:var(--accent)}
-.callout{position:absolute;left:70px;right:70px;top:300px;z-index:2;padding:34px 40px;border-radius:24px;
-  background:rgba(11,11,13,.82);border-left:14px solid var(--accent);color:#fff;
-  font-family:"Montserrat","Arial Black","Segoe UI Black","Segoe UI",Arial,sans-serif}
-.callout .big{font-size:120px;font-weight:900;line-height:1}
-.callout .label{font-size:50px;font-weight:700;margin-top:14px;opacity:.9}
-"""
+.cap,.hook,.card,.callout{font-family:"Studio Caption","Noto Sans CJK SC","Noto Sans SC","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
+.cap,.hook{position:absolute;left:0;right:0;margin:0 auto;width:fit-content;text-align:center;color:var(--ink);
+  white-space:normal;text-wrap:balance;z-index:3}
+.cap{top:%(cap_top)dpx;padding:10px 26px 13px;font-size:56px;font-weight:700;line-height:1.2;max-width:900px;
+  background:rgba(var(--deep-rgb),.52);border-radius:22px;text-shadow:0 2px 10px rgba(0,0,0,.35)}
+.hook{top:250px;padding:20px 34px 22px;font-size:56px;font-weight:800;line-height:1.16;max-width:900px;
+  letter-spacing:-.005em;background:rgba(var(--deep-rgb),.84);border-radius:26px}
+.card{position:absolute;inset:0;z-index:1;overflow:hidden;color:var(--ink)}
+.card .bg{position:absolute;inset:-60px;background:radial-gradient(circle at 30%% 20%%,var(--card-hi),var(--card-lo) 72%%)}
+.card .inner{position:absolute;left:90px;right:90px;top:330px;bottom:%(card_gap)dpx;display:flex;flex-direction:column;
+  justify-content:center;overflow:hidden}
+.card .bar{flex:none;width:120px;height:14px;border-radius:7px;background:var(--accent);margin-bottom:44px}
+.card .title{font-weight:800;line-height:1.06;letter-spacing:-.01em;text-wrap:balance}
+.card ul{list-style:none;margin:52px 0 0;padding:0}
+.card li{font-weight:600;margin:0 0 28px;display:flex;align-items:center;gap:26px;line-height:1.15}
+.card li::before{content:"";flex:0 0 24px;height:24px;border-radius:50%%;background:var(--accent)}
+.callout{position:absolute;left:70px;right:70px;top:300px;z-index:2;padding:34px 40px;border-radius:26px;
+  background:rgba(var(--deep-rgb),.86);border-left:14px solid var(--accent);color:var(--ink)}
+.callout .big{font-size:112px;font-weight:800;line-height:1}
+.callout .label{font-size:48px;font-weight:600;margin-top:14px;opacity:.92}
+""" % {"cap_top": CAPTION_TOP, "card_gap": H - CARD_BOTTOM}
 
-# Accent colour per account for graphics (the dashboard's colours; swap for brand colours).
-ACCENT = {"urban_makers": "#f5a524", "personal": "#7c9cff"}
+# Each account's look for captions and graphics: Urban Makers' green, warm white and amber
+# (as on its carousels).
+THEME = {
+    "urban_makers": {"accent": "#f5a524", "ink": "#f6f4ee", "deep-rgb": "24,35,31", "card-hi": "#2f4540",
+                     "card-lo": "#18231f"},
+    "personal": {"accent": "#7c9cff", "ink": "#ffffff", "deep-rgb": "11,11,13", "card-hi": "#2a2a33",
+                 "card-lo": "#0b0b0d"},
+}
+ACCENT = {k: v["accent"] for k, v in THEME.items()}
+
+
+def _theme_css(accent: str) -> str:
+    theme = next((t for t in THEME.values() if t["accent"] == accent), THEME["urban_makers"])
+    return ":root{" + ";".join(f"--{k}:{v}" for k, v in {**theme, "accent": accent}.items()) + "}"
+
+
+def _card_sizes(title: str, lines: list[str]) -> tuple[int, int]:
+    """Headline and point sizes for a card, by how much text it has, so it stays clear of the
+    caption band (the box also hides any overflow)."""
+    line = max((len(x) for x in lines), default=0)
+    title_px = 100 if len(title) <= 14 else 92 if len(title) <= 20 else 80
+    return title_px, 62 if line <= 16 else 56 if line <= 24 else 48
 
 
 def _graphic_html(i: int, g: dict) -> tuple[str, str]:
@@ -565,9 +756,11 @@ def _graphic_html(i: int, g: dict) -> tuple[str, str]:
     s, d, gid = g["start"], g["duration"], f"g{i}"
     attrs = f'id="{gid}" data-start="{s:.3f}" data-duration="{d:.3f}" data-track-index="{2 + i}"'
     if g["style"] == "card":
-        lines = "".join(f"<li>{html.escape(line)}</li>" for line in g["lines"])
+        title_px, line_px = _card_sizes(g["title"], g["lines"])
+        lines = "".join(f'<li style="font-size:{line_px}px">{html.escape(line)}</li>' for line in g["lines"])
         markup = (f'<div {attrs} class="card clip"><div class="bg"></div><div class="inner"><div class="bar"></div>'
-                  f'<div class="title">{html.escape(g["title"])}</div><ul>{lines}</ul></div></div>')
+                  f'<div class="title" style="font-size:{title_px}px">{html.escape(g["title"])}</div>'
+                  f'<ul>{lines}</ul></div></div>')
         anim = (f"tl.from('#{gid}',{{opacity:0,duration:.25}},{s:.3f});"
                 f"tl.fromTo('#{gid} .bg',{{scale:1.12}},{{scale:1,duration:{d:.3f},ease:'none'}},{s:.3f});"
                 f"tl.from('#{gid} .bar',{{scaleX:0,transformOrigin:'left',duration:.4,ease:'power3.out'}},{s + .05:.3f});"
@@ -583,13 +776,15 @@ def _graphic_html(i: int, g: dict) -> tuple[str, str]:
 
 
 def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
-                   graphics: list[dict] = (), accent: str = "#ff4d6d", fmt: str = "webm") -> None:
+                   graphics: list[dict] = (), accent: str = "#f5a524", fmt: str = "webm", font: str | None = None) -> None:
     """Captions, hook and B-roll graphics as a transparent video (HyperFrames, headless Chrome):
-    VP9 WebM for the draft, ProRes 4444 MOV (fmt="mov") for DaVinci Resolve."""
+    VP9 WebM for the draft, ProRes 4444 MOV (fmt="mov") for DaVinci Resolve. The font is one
+    of the bundled ones (caption_font), copied next to the page."""
     with tempfile.TemporaryDirectory(prefix="studio-overlay-") as tmp:
         project = Path(tmp) / "overlay"
         project.mkdir()
         shutil.copy(render.RENDER_DIR / "node_modules" / "gsap" / "dist" / "gsap.min.js", project)
+        shutil.copy(caption_font(font)[1], project / "caption.woff2")
         clips = []
         if hook.strip():
             clips.append(f'<div id="hook" class="hook clip" data-start="0" data-duration="{min(2.6, total):.3f}" '
@@ -604,7 +799,7 @@ def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
             animations.append(anim)
         (project / "index.html").write_text(
             '<!doctype html><html><head><meta charset="utf-8"><script src="gsap.min.js"></script>'
-            f"<style>:root{{--accent:{accent}}}{_OVERLAY_CSS}</style></head><body>"
+            f"<style>{_theme_css(accent)}{_OVERLAY_CSS}</style></head><body>"
             f'<div id="overlay" data-composition-id="overlay" data-start="0" data-duration="{total:.3f}" '
             f'data-width="{W}" data-height="{H}">' + "".join(clips) + "</div>"
             "<script>const tl=gsap.timeline({paused:true});" + "".join(animations) +
@@ -618,34 +813,220 @@ def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
             raise RuntimeError("caption render failed: " + ((result.stderr or "") + (result.stdout or "")).strip()[-400:])
 
 
+# The sound. The voice is levelled first: a gentle high-pass and noise reduction suited to speech,
+# then a fixed gain to VOICE_LUFS (measured, so nothing pumps) and a light compressor. The music
+# is set against that levelled voice: BED_BELOW under it when nobody talks, and dipped to
+# settings.MUSIC_GAP_DB under it while Bryan talks (smooth ramps from the words' own times).
+# Then the whole mix is brought to -14 LUFS / -1.5 dBTP in two passes (a fixed gain, no pumping).
+VOICE_LUFS = -16.0
+BED_BELOW = 9.0
+DUCK_ATTACK, DUCK_RELEASE = 0.25, 0.8
+SPEECH_JOIN = 0.8   # gaps between words shorter than this are still "talking"
+TARGET_LUFS, TARGET_TP = -14.0, -1.5
+_VOICE_CLEAN = "highpass=f=80,afftdn=nr=12:nf=-50:tn=1"
+_VOICE_SQUEEZE = "acompressor=threshold=0.1:ratio=2.5:attack=12:release=250:knee=4"
+_VOICE_LIMIT = "alimiter=limit=0.89:level=false"
+
+
+def speech_spans(words: list[dict], join: float = SPEECH_JOIN) -> list[tuple[float, float]]:
+    """When Bryan is talking, on the draft's clock (words closer than `join` run together)."""
+    spans = []
+    for w in sorted(words, key=lambda w: w["start"]):
+        if spans and w["start"] - spans[-1][1] <= join:
+            spans[-1][1] = max(spans[-1][1], w["end"])
+        else:
+            spans.append([w["start"], w["end"]])
+    return [(round(a, 3), round(b, 3)) for a, b in spans]
+
+
+def loudness(path: Path) -> float | None:
+    """Integrated loudness (LUFS) of a file's sound; None when it's silent."""
+    result = extract._run([settings.FFMPEG, "-hide_banner", "-nostats", "-i", str(path), "-vn",
+                           "-af", "ebur128", "-f", "null", "-"])
+    found = re.findall(r"I:\s+(-?[\d.]+) LUFS", result.stderr)
+    value = float(found[-1]) if found else None
+    return value if value is not None and value > -69 else None
+
+
+def _duck_expr(spans: list[tuple[float, float]], gain_db: float, depth_db: float) -> str:
+    """ffmpeg volume expression of t: gain_db, dipped by depth_db while Bryan talks, with smooth
+    ramps (DUCK_ATTACK before he starts, DUCK_RELEASE after he stops)."""
+    if not spans or depth_db <= 0:
+        return f"{10 ** (gain_db / 20):.6f}"
+    a, r = DUCK_ATTACK, DUCK_RELEASE
+    parts = [f"clip(min((t-{s - a:.3f})/{a},({e + r:.3f}-t)/{r}),0,1)" for s, e in spans]
+    while len(parts) > 1:  # a balanced tree of max(), so long posts don't nest deeply
+        parts = [f"max({x},{y})" if y else x for x, y in itertools.zip_longest(parts[::2], parts[1::2])]
+    return f"pow(10,({gain_db:.2f}-{depth_db:.2f}*{parts[0]})/20)"
+
+
+# The ear's weighting loudness meters use (EBU R128 K-weighting at 48 kHz), so the gap is measured
+# the way it's heard and matches the levels the mix is set in (bass-heavy music isn't over-read).
+_K_WEIGHT = ("biquad=b0=1.53512485958697:b1=-2.69169618940638:b2=1.19839281085285:a0=1:a1=-1.69065929318241:"
+             "a2=0.73248077421585,biquad=b0=1:b1=-2:b2=1:a0=1:a1=-1.99004745483398:a2=0.99007225036621")
+
+
+def _read_raw(path: Path, weighted: bool = True):
+    """A raw float stereo file as mono samples, K-weighted unless asked not to."""
+    import numpy as np
+    if weighted:
+        out = path.with_name(path.stem + "_k.f32")
+        extract._run([settings.FFMPEG, "-y", "-v", "error", "-f", "f32le", "-ar", str(RATE), "-ac", "2", "-i", str(path),
+                      "-af", _K_WEIGHT, "-f", "f32le", str(out)])
+        samples = np.fromfile(out, dtype="<f4").reshape(-1, 2).mean(axis=1)
+        out.unlink(missing_ok=True)
+        return samples
+    return np.fromfile(path, dtype="<f4").reshape(-1, 2).mean(axis=1)
+
+
+def _db(x) -> float:
+    import numpy as np
+    power = float(np.mean(np.square(x, dtype="float64"))) if len(x) else 0.0
+    return 10 * np.log10(power) if power > 1e-12 else -120.0
+
+
+def speech_music_gap(voice, music, words: list[dict], total: float, rate: int = RATE) -> dict:
+    """How far the music sits under the voice while Bryan talks (dB, on the words themselves),
+    and how far under his talking level it plays where nobody talks (the bed), from the two
+    sounds before they're mixed (raw float stereo files, measured K-weighted; or arrays of
+    samples, taken as they are)."""
+    import numpy as np
+    v = _read_raw(voice) if isinstance(voice, Path) else voice
+    m = _read_raw(music) if isinstance(music, Path) else music
+    n = min(len(v), len(m))
+    talk = np.zeros(n, bool)
+    for w in words:
+        talk[int(w["start"] * rate):int(w["end"] * rate)] = True
+    quiet = np.ones(n, bool)  # well away from any talking (past the ramps)
+    for s, e in speech_spans(words):
+        quiet[max(0, int((s - DUCK_ATTACK - 0.3) * rate)):int((e + DUCK_RELEASE + 0.3) * rate)] = False
+    quiet[:int(0.6 * rate)] = False                       # the music's fade in
+    quiet[max(0, int((total - 1.6) * rate)):] = False     # and its fade out
+    out = {"voice_db": None, "music_under_voice_db": None, "gap_db": None, "bed_db": None, "bed_below_db": None}
+    if talk[:n].any():
+        voice_db, music_db = _db(v[:n][talk]), _db(m[:n][talk])
+        out.update(voice_db=round(voice_db, 1), music_under_voice_db=round(music_db, 1),
+                   gap_db=round(voice_db - music_db, 1))
+    if quiet.sum() > rate:  # at least a second of music on its own
+        out["bed_db"] = round(_db(m[:n][quiet]), 1)
+        if out["voice_db"] is not None:
+            out["bed_below_db"] = round(out["voice_db"] - out["bed_db"], 1)
+    return out
+
+
+def _loudnorm_args(measure: dict) -> str:
+    return (f"loudnorm=I={TARGET_LUFS}:TP={TARGET_TP}:LRA=11:measured_I={measure['input_i']}:"
+            f"measured_LRA={measure['input_lra']}:measured_TP={measure['input_tp']}:"
+            f"measured_thresh={measure['input_thresh']}:offset={measure['target_offset']}:linear=true:print_format=none")
+
+
+def _measure_loudnorm(args: list[str]) -> dict:
+    """loudnorm's first pass over the sound from these input args."""
+    result = extract._run([settings.FFMPEG, "-hide_banner", "-nostats", *args,
+                           "-af", f"loudnorm=I={TARGET_LUFS}:TP={TARGET_TP}:LRA=11:print_format=json", "-f", "null", "-"])
+    text = result.stderr
+    return json.loads(text[text.rindex("{"):text.rindex("}") + 1])
+
+
 def mix_final(cut: Path, overlay: Path | None, music_file: Path | None, volume_db: float, total: float,
-              out: Path) -> None:
-    args = [settings.FFMPEG, "-y", "-v", "error", "-i", str(cut)]
-    graph, video = [], "0:v"
-    if overlay:
-        args += ["-c:v", "libvpx-vp9", "-i", str(overlay)]  # libvpx keeps the alpha channel
-        graph.append("[0:v][1:v]overlay=0:0:format=auto:shortest=1[v]")
-        video = "[v]"
-    if music_file:
-        m = 2 if overlay else 1
-        args += ["-stream_loop", "-1", "-i", str(music_file)]
-        fade_at = max(0.0, total - 1.5)
-        graph += [
-            f"[{m}:a]atrim=duration={total:.3f},asetpts=PTS-STARTPTS,aresample=48000,"
-            f"aformat=channel_layouts=stereo,volume={volume_db:.1f}dB,afade=t=in:d=0.4,"
-            f"afade=t=out:st={fade_at:.3f}:d=1.5[m]",
-            "[0:a]asplit=2[voice][key]",
-            # The music dips whenever Bryan speaks.
-            "[m][key]sidechaincompress=threshold=0.02:ratio=8:attack=15:release=400[ducked]",
-            "[voice][ducked]amix=inputs=2:duration=first:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]",
-        ]
-    else:
-        graph.append("[0:a]loudnorm=I=-14:TP=-1.5:LRA=11[a]")
-    args += ["-filter_complex", ";".join(graph), "-map", video, "-map", "[a]",
-             "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p",
-             "-r", str(FPS), "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart",
-             "-t", f"{total:.3f}", str(out)]
-    extract._run(args)
+              out: Path, words: list[dict] = ()) -> dict:
+    """The final draft: footage, the caption layer, and the sound (the voice levelled, the
+    music set under it, see VOICE_LUFS). Returns what it measured and did."""
+    raw = ["-f", "f32le", "-ar", str(RATE), "-ac", "2"]
+    with tempfile.TemporaryDirectory(prefix="studio-mix-") as tmp:
+        work = Path(tmp)
+        clean = work / "voice_clean.wav"
+        extract._run([settings.FFMPEG, "-y", "-v", "error", "-i", str(cut), "-vn", "-af",
+                      f"aresample={RATE},aformat=channel_layouts=stereo,{_VOICE_CLEAN}", "-c:a", "pcm_f32le", str(clean)])
+        heard = loudness(clean)
+        talking = bool(words) and heard is not None
+        voice_gain = min(max(VOICE_LUFS - heard, -12.0), 30.0) if talking else 0.0
+        makeup = 0.0
+        if talking:  # the compressor takes some level off: measure again and make it up after it
+            levelled = work / "voice_levelled.wav"
+            extract._run([settings.FFMPEG, "-y", "-v", "error", "-i", str(clean), "-af",
+                          f"volume={voice_gain:.2f}dB,{_VOICE_SQUEEZE}", "-c:a", "pcm_f32le", str(levelled)])
+            makeup = min(max(VOICE_LUFS - (loudness(levelled) or VOICE_LUFS), 0.0), 12.0)
+        report = {"voice_lufs_recorded": heard, "voice_gain_db": round(voice_gain + makeup, 1), "music": bool(music_file)}
+        voice_raw, music_raw = work / "voice.f32", work / "music.f32"
+        args = [settings.FFMPEG, "-y", "-v", "error", "-i", str(clean)]
+        graph = [f"[0:a]volume={voice_gain:.2f}dB,{_VOICE_SQUEEZE},volume={makeup:.2f}dB,{_VOICE_LIMIT},"
+                 f"apad=whole_len={round(total * RATE)},atrim=end_sample={round(total * RATE)}[v]"]
+        outputs = ["-map", "[v]", *raw, str(voice_raw)]
+        if music_file:
+            bed_track = work / "music.wav"
+            extract._run([settings.FFMPEG, "-y", "-v", "error", "-stream_loop", "-1", "-i", str(music_file), "-t",
+                          f"{total:.3f}", "-af", f"aresample={RATE},aformat=channel_layouts=stereo", "-c:a", "pcm_f32le",
+                          str(bed_track)])
+            track = loudness(bed_track) or -20.0
+            # Claude's volume_db: -16 is the usual bed, lower for a quieter one.
+            offset = min(max((volume_db if volume_db is not None else -16.0) + 16.0, -8.0), 4.0)
+            if talking:
+                bed = VOICE_LUFS - BED_BELOW + offset
+                depth = max(4.0, bed - (VOICE_LUFS - settings.MUSIC_GAP_DB))
+            else:  # nobody talks: the music carries the post
+                bed, depth = VOICE_LUFS + offset, 0.0
+            music_gain = bed - track
+            spans = speech_spans(words)
+            fade_at = max(0.0, total - 1.5)
+            args += ["-i", str(bed_track)]
+            graph.append(f"[1:a]asetnsamples=n=256,volume='{_duck_expr(spans, music_gain, depth)}':eval=frame,"
+                         f"afade=t=in:d=0.4,afade=t=out:st={fade_at:.3f}:d=1.5[m]")
+            outputs += ["-map", "[m]", *raw, str(music_raw)]
+            report.update(music_track_lufs=track, music_gain_db=round(music_gain, 1), music_bed_lufs=round(bed, 1),
+                          duck_db=round(depth, 1))
+        extract._run(args + ["-filter_complex", ";".join(graph), *outputs])
+        lowered = 0.0
+        if music_file:
+            gap = speech_music_gap(voice_raw, music_raw, list(words), total)
+            # The check that can't regress: never less than the gap the setting asks for.
+            if gap["gap_db"] is not None and gap["gap_db"] < settings.MUSIC_GAP_DB - 1.0:
+                lowered = round(settings.MUSIC_GAP_DB - gap["gap_db"], 1)
+                gap = {k: (round(v - lowered, 1) if k in ("music_under_voice_db", "bed_db") and v is not None
+                           else round(v + lowered, 1) if k in ("gap_db", "bed_below_db") and v is not None else v)
+                       for k, v in gap.items()}
+            report.update(gap, music_lowered_db=lowered)
+        sound_in = [*raw, "-i", str(voice_raw)] + ([*raw, "-i", str(music_raw)] if music_file else [])
+        if music_file:
+            mix = ((f"[1:a]volume=-{lowered}dB[ml];[0:a][ml]" if lowered else "[0:a][1:a]")
+                   + "amix=inputs=2:duration=first:normalize=0")
+        else:
+            mix = "[0:a]anull"
+        mixed = work / "mix.wav"
+        extract._run([settings.FFMPEG, "-y", "-v", "error", *sound_in, "-filter_complex", mix + "[a]", "-map", "[a]",
+                      "-c:a", "pcm_f32le", str(mixed)])
+        measure = _measure_loudnorm(["-i", str(mixed)])
+        report["mix_lufs_before"] = float(measure["input_i"])
+
+        args = [settings.FFMPEG, "-y", "-v", "error", "-i", str(cut)]
+        graph, video = [], "0:v"
+        if overlay:
+            args += ["-c:v", "libvpx-vp9", "-i", str(overlay)]  # libvpx keeps the alpha channel
+            graph.append("[0:v][1:v]overlay=0:0:format=auto:shortest=1[v]")
+            video = "[v]"
+        args += ["-i", str(mixed)]
+        graph.append(f"[{2 if overlay else 1}:a]{_loudnorm_args(measure)},aresample={RATE}[a]")
+        args += ["-filter_complex", ";".join(graph), "-map", video, "-map", "[a]",
+                 "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p",
+                 "-r", str(FPS), "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart",
+                 "-t", f"{total:.3f}", str(out)]
+        extract._run(args)
+    return report
+
+
+def fix_loudness(final: Path, measured: dict) -> bool:
+    """A last check on the finished file: if its loudness is off Instagram's level by more than
+    1 LU or its peaks are too hot, the sound is corrected in place (the picture is copied)."""
+    lufs, peak = measured.get("lufs"), measured.get("true_peak")
+    if lufs is None or (abs(lufs - TARGET_LUFS) <= 1.0 and (peak is None or peak <= -1.0)):
+        return False
+    fixed = final.with_name(final.stem + "_level" + final.suffix)
+    measure = _measure_loudnorm(["-i", str(final)])
+    extract._run([settings.FFMPEG, "-y", "-v", "error", "-i", str(final), "-map", "0:v", "-map", "0:a", "-c:v", "copy",
+                  "-af", _loudnorm_args(measure) + f",aresample={RATE}", "-c:a", "aac", "-b:a", "192k",
+                  "-movflags", "+faststart", str(fixed)])
+    fixed.replace(final)
+    return True
 
 
 # ── Checks ────────────────────────────────────────────────────────────────────
@@ -680,26 +1061,47 @@ def check_loudness(final: Path) -> dict:
 
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
+def _clips_for(conn, ids: list[int]) -> dict[int, dict]:
+    rows = conn.execute(f"SELECT * FROM clips WHERE id IN ({','.join('?' * len(ids))})", ids).fetchall() if ids else []
+    return {r["id"]: dict(r) for r in rows if Path(r["video_path"]).exists()}
+
+
 def edit(conn, production_id: int, client=None, find_track=None) -> Path:
-    """Make the next draft of a production. Returns the rendered file."""
+    """Make the next draft of a production. Returns the rendered file. Studio's read, its own
+    fix rounds (self_fix.py) and the move to To review follow."""
     production = dict(conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone())
     plan = json.loads(production["plan"] or "{}")
     ids = list(dict.fromkeys(s["clip_id"] for s in plan.get("segments", [])))
     if not ids:
         raise RuntimeError("this production has no plan to edit from")
-    rows = conn.execute(f"SELECT * FROM clips WHERE id IN ({','.join('?' * len(ids))})", ids).fetchall()
-    clips = {r["id"]: dict(r) for r in rows if Path(r["video_path"]).exists()}
+    clips = _clips_for(conn, ids)
     if not clips:
         raise RuntimeError("none of the planned clips are in the library any more")
     catalog.set_production_status(conn, production_id, "producing")
     version = production["version"] + 1
+    notes = [dict(r) for r in conn.execute(
+        "SELECT * FROM feedback WHERE target = 'production' AND target_id = ? AND status = 'open' ORDER BY id",
+        (production_id,))]
 
     edl = plan_edit(conn, production, clips, client)
+    edl["cuts"] = _cut(edl, clips)
+    _render(conn, production, clips, edl, plan, version, find_track)
+    if notes:  # Bryan's editing notes become rules Studio keeps (learning.py)
+        import learning
+        learning.from_notes(conn, notes, edl.get("notes_addressed", []), "reel")
+    import self_fix
+    return Path(self_fix.deliver(conn, production_id, client, find_track)["video_path"])
+
+
+def _cut(edl: dict, clips: dict[int, dict]) -> list[dict]:
+    """Claude's cut list made exact: snapped to the gaps between words, Studio's checks on the
+    ends (sentence_guard), then jump cuts and framing. What the checks changed goes in
+    edl["checks"]."""
     cuts = [s for s in (snap(c, clips[c["clip_id"]]) for c in edl["cuts"] if c["clip_id"] in clips) if s]
     if not cuts:
         raise RuntimeError("the edit plan kept no usable footage")
-    edl["cuts"] = finish_cuts(cuts, clips, edl)
-    return _render(conn, production, clips, edl, plan, version, find_track)
+    cuts, edl["checks"] = sentence_guard(cuts, clips)
+    return finish_cuts(cuts, clips, edl)
 
 
 def finish_cuts(cuts: list[dict], clips: dict[int, dict], edl: dict) -> list[dict]:
@@ -732,6 +1134,20 @@ def finish_cuts(cuts: list[dict], clips: dict[int, dict], edl: dict) -> list[dic
     return cuts
 
 
+def _same_music(production: dict, plan: dict, find_track=None):
+    """find_track and plan for a render that keeps the draft's music (a re-render, or one of
+    Studio's own fix rounds): the same file when it's still there, else the same track."""
+    music_before = json.loads(production["music"] or "{}")
+    kept = Path(music_before["file"]) if music_before.get("file") else None
+    if kept and kept.exists():
+        find_track = lambda brief, seconds, out_dir, ref="": (kept, music_before)  # noqa: E731 - same track again
+    if music_before.get("recording_id") and not (kept and kept.exists()):
+        plan.setdefault("music_plan", {})["chosen"] = {
+            "title": music_before.get("title", ""), "artist": music_before.get("artist", ""),
+            "recording_id": music_before["recording_id"]}
+    return find_track, plan
+
+
 def rerender(conn, production_id: int, find_track=None) -> Path:
     """Render the current draft again from its edit plan, as a new version: picks up
     changed transcripts (captions) with no new Claude plan. Keeps the draft's music."""
@@ -740,30 +1156,49 @@ def rerender(conn, production_id: int, find_track=None) -> Path:
         raise RuntimeError("this production has no finished draft to render again")
     edl = json.loads(production["edl"])
     ids = list(dict.fromkeys(c["clip_id"] for c in edl["cuts"]))
-    rows = conn.execute(f"SELECT * FROM clips WHERE id IN ({','.join('?' * len(ids))})", ids).fetchall()
-    clips = {r["id"]: dict(r) for r in rows if Path(r["video_path"]).exists()}
+    clips = _clips_for(conn, ids)
     if set(ids) - set(clips):
         raise RuntimeError("some of the draft's clips are no longer in the library")
-    music_before = json.loads(production["music"] or "{}")
-    kept = Path(music_before["file"]) if music_before.get("file") else None
-    if kept and kept.exists():
-        find_track = lambda brief, seconds, out_dir, ref="": (kept, music_before)  # noqa: E731 - same track again
-    plan = json.loads(production["plan"] or "{}")
-    if music_before.get("recording_id") and not (kept and kept.exists()):
-        plan.setdefault("music_plan", {})["chosen"] = {
-            "title": music_before.get("title", ""), "artist": music_before.get("artist", ""),
-            "recording_id": music_before["recording_id"]}
+    find_track, plan = _same_music(production, json.loads(production["plan"] or "{}"), find_track)
     catalog.set_production_status(conn, production_id, "producing")
-    return _render(conn, production, clips, edl, plan, production["version"] + 1, find_track, placed=True)
+    final = _render(conn, production, clips, edl, plan, production["version"] + 1, find_track, placed=True)
+    import self_fix
+    self_fix.deliver(conn, production_id, rounds=0, count=False)  # the same edit: Studio's read, no rounds
+    return final
+
+
+def self_revise(conn, production_id: int, fixes: list[dict], round_no: int, client=None, find_track=None) -> Path:
+    """One of Studio's own fix rounds, before Bryan sees the draft: the editor plans it again
+    with the read's fixes (fixes: [{id, at_seconds, body}]) instead of Bryan's notes, keeps
+    the music, and renders it as the same version (a file of its own). Its cost is counted
+    apart (self_fix.ref)."""
+    import self_fix
+    production = dict(conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone())
+    plan = json.loads(production["plan"] or "{}")
+    previous = json.loads(production["edl"] or "{}")
+    ids = list(dict.fromkeys([c["clip_id"] for c in previous.get("cuts", [])]
+                             + [s["clip_id"] for s in plan.get("segments", [])]))
+    clips = _clips_for(conn, ids)
+    if not clips:
+        raise RuntimeError("none of the draft's clips are in the library any more")
+    edl = plan_edit(conn, production, clips, client, fixes=fixes, ref=self_fix.ref(production_id))
+    edl["cuts"] = _cut(edl, clips)
+    find_track, plan = _same_music(production, plan, find_track)
+    return _render(conn, production, clips, edl, plan, production["version"], find_track,
+                   suffix=f"_fix{round_no}", address_notes=False)
 
 
 def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version: int, find_track=None,
-            placed: bool = False) -> Path:
-    """Render an edit plan (EDL) to the next draft: cut, captions, graphics, music, QA."""
+            placed: bool = False, suffix: str = "", address_notes: bool = True) -> Path:
+    """Render an edit plan (EDL) to the next draft: cut, captions, graphics, music, QA. The
+    draft is stored but stays 'producing': self_fix.deliver sends it to To review."""
     production_id = production["id"]
     cuts = edl["cuts"]
+    # What Studio's own checks changed: editing problems (counted in Review's "caught" line) and
+    # sound fixes (the recording's level, not an editing mistake).
+    checks = [{"did": c, "counted": True} for c in edl.get("checks") or []]
     RENDERS.mkdir(parents=True, exist_ok=True)
-    final = RENDERS / f"production_{production_id}_v{version}.mp4"
+    final = RENDERS / f"production_{production_id}_v{version}{suffix}.mp4"
     with tempfile.TemporaryDirectory(prefix="studio-edit-") as tmp:
         work = Path(tmp)
         total = render_cut(cuts, clips, work / "cut.mp4")
@@ -772,10 +1207,14 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         overlay = None
         graphics = edl.get("graphics", []) if placed else place_graphics(edl.get("graphics", []), cuts, total)
         edl["graphics"] = graphics
+        chunks, doubled = clear_of_cards(chunks, graphics)
+        if doubled:
+            checks.append({"did": f"hid {doubled} caption{'s' if doubled != 1 else ''} repeating a card's own words",
+                           "counted": True})
         if chunks or edl["hook_text"].strip() or graphics:
             overlay = work / "overlay.webm"
             render_overlay(chunks, edl["hook_text"], total, overlay, graphics,
-                           ACCENT.get(production["brand"], "#ff4d6d"))
+                           ACCENT.get(production["brand"], ACCENT["urban_makers"]))
 
         music_info, music_file = {"mood": edl["music"]["mood"], "tempo_bpm": edl["music"]["tempo_bpm"]}, None
         chosen = (plan.get("music_plan") or {}).get("chosen")
@@ -796,24 +1235,35 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
                               note=f"Add music in the Instagram app: {edl['music']['mood']}, around "
                                    f"{edl['music']['tempo_bpm']:.0f} BPM, kept low under your voice.")
 
-        mix_final(work / "cut.mp4", overlay, music_file, edl["music"]["volume_db"], total, final)
-        qa = {**check_loudness(final), **check_words(final, words, work)}
+        sound = mix_final(work / "cut.mp4", overlay, music_file, edl["music"]["volume_db"], total, final, words)
+        if sound.get("music_gain_db") is not None:
+            music_info["gain_db"] = sound["music_gain_db"]  # the track's level in the mix (for Resolve)
+        if sound.get("voice_gain_db", 0) >= 6:
+            checks.append({"did": f"brought your voice up {sound['voice_gain_db']:.0f} dB to a steady level "
+                                  "and cleaned up the background noise", "counted": False})
+        if sound.get("music_lowered_db"):
+            checks.append({"did": f"turned the music down {sound['music_lowered_db']:.0f} dB more so it stays "
+                                  "under your voice", "counted": False})
+        loud = check_loudness(final)
+        if fix_loudness(final, loud):
+            loud = check_loudness(final)
+            checks.append({"did": "set the loudness to Instagram's level", "counted": False})
+        qa = {**loud, **check_words(final, words, work), "sound": sound, "checks": checks}
 
     thumb = final.with_suffix(".jpg")
     extract._run([settings.FFMPEG, "-y", "-v", "error", "-ss", f"{min(1.0, total / 2):.2f}", "-i", str(final),
                   "-frames:v", "1", "-q:v", "3", str(thumb)])
     conn.execute(
-        """UPDATE productions SET status = 'ready', version = ?, video_path = ?, thumb_path = ?, duration = ?,
-               edl = ?, qa = ?, music = ?, error = NULL, updated_at = ? WHERE id = ?""",
+        """UPDATE productions SET version = ?, video_path = ?, thumb_path = ?, duration = ?,
+               edl = ?, qa = ?, music = ?, error = NULL, updated_at = ?, self_fix = ? WHERE id = ?""",
         (version, str(final), str(thumb), round(total, 2), json.dumps(edl), json.dumps(qa),
-         json.dumps(music_info), catalog.now(), production_id))
-    conn.execute("""UPDATE feedback SET status = 'addressed'
-                    WHERE target = 'production' AND target_id = ? AND status = 'open'""", (production_id,))
+         json.dumps(music_info), catalog.now(), json.dumps({"version": version, "pending": True}), production_id))
+    if address_notes:
+        conn.execute("""UPDATE feedback SET status = 'addressed'
+                        WHERE target = 'production' AND target_id = ? AND status = 'open'""", (production_id,))
     conn.commit()
-    log.info("Production %s v%d rendered: %.1fs, words %s, %s LUFS", production_id, version, total,
-             qa.get("match"), qa.get("lufs"))
-    import draft_review
-    draft_review.safe_run(conn, production_id)  # Studio's read; a failure leaves the draft as it is
+    log.info("Production %s v%d%s rendered: %.1fs, words %s, %s LUFS, voice %s dB over the music", production_id,
+             version, suffix, total, qa.get("match"), qa.get("lufs"), sound.get("gap_db"))
     return final
 
 
