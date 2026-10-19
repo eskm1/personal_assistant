@@ -77,6 +77,20 @@ export async function kindsQuery(run) {
     }
   }
 }
+// clips.archived_at (Review's clean-up) comes with a later database update: footage pickers ask for
+// it and leave archived clips out; until it's there they ask without it.
+schema.archived = true;
+export async function liveClips(run) {
+  for (;;) {
+    try {
+      const rows = await run(schema.archived ? ",archived_at" : "");
+      return rows.filter((c) => !c.archived_at);
+    } catch (err) {
+      if (schema.archived && missingTable(err) && /archived_at/.test(err?.message || "")) { schema.archived = false; continue; }
+      throw err;
+    }
+  }
+}
 export const VERDICT = { good: "Good", check: "Check", retake: "Retake" };
 // The laptop's production status, written into ideas.production.
 export const PRODUCTION = {
@@ -447,8 +461,8 @@ export function syncInert() {
   document.body.classList.toggle("idea-page", page);
   $("#viewer").toggleAttribute("aria-modal", viewer && !page);
   $("#viewer").setAttribute("role", page ? "region" : "dialog");
-  $("#shell-top").inert = overlay;
-  // Today on site is one of the phone tabs, so the tab bar stays usable over it.
+  // Today on site sits under the top bar (and above the phone tab bar), so both stay usable over it.
+  $("#shell-top").inert = viewer && !page;
   $("#shell-tabbar").inert = viewer && !page;
   $("#main").inert = overlay;
   $("#app").inert = !$("#modal").hidden;

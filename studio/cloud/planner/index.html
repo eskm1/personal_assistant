@@ -9,7 +9,9 @@
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
   <meta name="apple-mobile-web-app-title" content="Studio">
-  <meta name="theme-color" content="#0b0b0d">
+  <meta name="theme-color" content="#FBFAF7">
+  <link rel="preload" href="fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="theme.css">
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="shell.css">
 </head>
@@ -18,6 +20,7 @@
 
   <!-- Sign in, forgotten password, set a password from an invite or reset link -->
   <div class="auth" id="auth" hidden>
+    <div class="auth-brand" aria-hidden="true"><span class="wordmark">URBAN MAKERS</span><span class="studio-tag">Studio</span></div>
     <main class="auth-card" id="auth-card" aria-live="polite"></main>
   </div>
 
@@ -25,7 +28,8 @@
     <div class="shell" id="shell" data-half="plan"></div>
 
     <main id="main">
-      <section class="planner" id="planner" aria-label="Plan"></section>
+      <section class="home" id="home" aria-label="Plan" hidden></section>
+      <section class="planner" id="planner" aria-label="Ideas"></section>
       <section class="team-page" id="team" aria-label="Team" hidden></section>
       <section class="refs-page" id="refs" aria-label="References and style guide" hidden></section>
       <section class="month-page" id="month" aria-label="Content plan" hidden></section>

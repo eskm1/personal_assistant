@@ -8,22 +8,26 @@
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <meta name="apple-mobile-web-app-title" content="Studio">
-  <meta name="theme-color" content="#0b0b0d">
+  <meta name="theme-color" content="#FBFAF7">
+  <link rel="stylesheet" href="/static/theme.css">
+  <link rel="stylesheet" href="/static/shell.css">
   <style>
-    :root { --bg: #0b0b0d; --surface: #16161a; --line: #2c2c34; --text: #f2f2f5; --muted: #9a9aa6; --accent: #ff4d6d; --bad: #ff5c5c;
-            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color-scheme: dark; }
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text); padding: 16px; }
-    main { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 28px 24px; }
-    h1 { margin: 0 0 4px; font-size: 22px; } p { color: var(--muted); line-height: 1.5; margin: 0 0 18px; }
-    label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
-    input { width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; }
-    input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
-    button { width: 100%; margin-top: 20px; font: inherit; font-weight: 700; color: #fff; background: var(--accent); border: 0; border-radius: 10px; padding: 12px; cursor: pointer; }
-    .error { color: var(--bad); background: rgba(255, 92, 92, .08); border: 1px solid rgba(255, 92, 92, .3); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+    /* The quotation tool's sign-in: the wordmark over one white card on paper. Tokens: theme.css. */
+    body { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px 16px; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    main { width: 100%; max-width: 400px; background: var(--um-card); border: 1px solid var(--um-line); border-radius: var(--um-radius); padding: 28px 24px; }
+    h1 { margin: 0 0 4px; font-family: var(--um-font-display); font-size: var(--um-fs-title); font-weight: 600; line-height: 1.2; }
+    p { color: var(--ink-soft); line-height: 1.5; margin: 0 0 18px; }
+    label { display: block; font-size: var(--um-fs-meta); font-weight: 500; color: var(--ink-soft); margin: 14px 0 6px; }
+    input { width: 100%; font-size: 16px; min-height: 40px; }
+    button { width: 100%; min-height: 44px; margin-top: 20px; font-size: var(--um-fs-body); font-weight: 600; color: var(--um-paper); background: var(--um-ink);
+             border: 0; border-radius: var(--um-radius-sm); padding: 0 16px; }
+    button:hover { opacity: .9; }
+    .error { color: var(--um-danger); background: var(--um-danger-tint); border: 1px solid var(--um-danger-line); border-radius: var(--um-radius-sm); padding: 10px 12px; margin-bottom: 8px; }
   </style>
 </head>
 <body>
+<div class="brand" aria-hidden="true"><span class="wordmark">URBAN MAKERS</span><span class="studio-tag">Studio</span></div>
 <main>
   {% if mode == "login" %}
     <h1>Studio</h1><p>Sign in to plan, review and comment.{% if planner %} Use your planner email and password.{% endif %}</p>

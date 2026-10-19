@@ -5,7 +5,7 @@
 // <div id="shell" class="shell" data-half="plan|review"> is filled in when this script
 // runs, before the page's own script. The page then fills the status pill (#laptop-*)
 // and the account menu (#account-menu), and tells the shell where it is:
-//   StudioShell.setCurrent("plan" | "today" | "review" | "refs" | "style" | "content" | "questions" | "library" | "")
+//   StudioShell.setCurrent("plan" | "ideas" | "today" | "review" | "refs" | "style" | "content" | "questions" | "library" | "")
 //   StudioShell.setLinks({ today: "#/today/3", ... })   ("" hides that item)
 //   StudioShell.setBadge(2)                              (drafts waiting for review)
 "use strict";
@@ -27,6 +27,7 @@ window.StudioShell = (() => {
   const planner = half === "plan" ? "" : "/plan/";
   const links = {
     plan: `${planner}#/`,
+    ideas: `${planner}#/ideas`,
     today: `${planner}#/today`,
     review: dash && `${dash}#/tab/review`,
     refs: `${planner}#/references`,
@@ -40,6 +41,7 @@ window.StudioShell = (() => {
   // Stroke icons for the phone tab bar and the More sheet.
   const ICONS = {
     plan: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3h6v3H9zM9 11h6M9 15h4"/>',
+    ideas: '<rect x="3.5" y="4" width="7" height="16" rx="1.5"/><rect x="13.5" y="4" width="7" height="10" rx="1.5"/>',
     today: '<rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/><circle cx="12" cy="15" r="1.6"/>',
     review: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M10 9l5 3-5 3z"/>',
     more: '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
@@ -52,13 +54,21 @@ window.StudioShell = (() => {
   const icon = (name) => `<svg class="shell-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[name]}</svg>`;
   const badge = `<span class="shell-badge" data-badge hidden></span>`;
 
+  // The sections behind More: on a computer a menu under More, on a phone the More sheet.
+  const MORE = [["refs", "References"], ["style", "Style guide"], ["content", "Content plan"], ["questions", "Client questions"],
+    ["today", "Today on site"], ["library", "Library"]];
   root.innerHTML = `<header class="shell-top" id="shell-top">
-      <a class="shell-mark" data-sec="plan" href="#">Studio</a>
+      <a class="shell-mark" data-sec="plan" href="#" aria-label="Studio: Plan"><span class="wordmark">URBAN MAKERS</span><span class="studio-tag">Studio</span></a>
       <nav class="shell-nav" aria-label="Studio">
         <a data-sec="plan" href="#">Plan</a>
+        <a data-sec="ideas" href="#">Ideas</a>
         <a data-sec="review" href="#">Review${badge}</a>
-        <a data-sec="refs" href="#">References</a>
-        <a data-sec="style" href="#">Style guide</a>
+        <div class="shell-more">
+          <button type="button" class="shell-more-btn" id="shell-more-btn" aria-haspopup="true" aria-expanded="false" aria-controls="shell-more-menu">More</button>
+          <div class="menu shell-more-menu" id="shell-more-menu" hidden>
+            ${MORE.map(([sec, label]) => `<a data-sec="${sec}" href="#">${label}</a>`).join("")}
+          </div>
+        </div>
       </nav>
       <div class="shell-right">
         <div class="laptop" id="laptop">
@@ -73,7 +83,7 @@ window.StudioShell = (() => {
     </header>
     <nav class="shell-tabbar" id="shell-tabbar" aria-label="Studio sections">
       <a class="shell-tab" data-sec="plan" href="#">${icon("plan")}<span>Plan</span></a>
-      <a class="shell-tab" data-sec="today" href="#">${icon("today")}<span>Today</span></a>
+      <a class="shell-tab" data-sec="ideas" href="#">${icon("ideas")}<span>Ideas</span></a>
       <a class="shell-tab" data-sec="review" href="#">${icon("review")}<span>Review</span>${badge}</a>
       <button type="button" class="shell-tab" id="shell-more" aria-haspopup="dialog" aria-expanded="false" aria-controls="shell-sheet">${icon("more")}<span>More</span></button>
     </nav>
@@ -82,11 +92,7 @@ window.StudioShell = (() => {
         <div class="shell-sheet-head"><h2 id="shell-sheet-title">More</h2>
           <button type="button" class="shell-sheet-close" data-sheet-close aria-label="Close">&times;</button></div>
         <nav class="shell-sheet-links" aria-label="More sections">
-          <a data-sec="refs" href="#">${icon("refs")}<span>References</span></a>
-          <a data-sec="style" href="#">${icon("style")}<span>Style guide</span></a>
-          <a data-sec="content" href="#">${icon("content")}<span>Content plan</span></a>
-          <a data-sec="questions" href="#">${icon("questions")}<span>Client questions</span></a>
-          <a data-sec="library" href="#">${icon("library")}<span>Library</span></a>
+          ${MORE.map(([sec, label]) => `<a data-sec="${sec}" href="#">${icon(sec)}<span>${label}</span></a>`).join("")}
         </nav>
         <div class="shell-sheet-account" id="shell-sheet-account"></div>
       </div>
@@ -105,16 +111,18 @@ window.StudioShell = (() => {
     Object.assign(links, next || {});
     paintLinks();
   }
-  // The highlighted section. On the top bar Today, the Content plan and Client questions count
-  // as Plan and Library as Review; on the phone bar References, Style guide, Content plan,
-  // Client questions and Library live under More.
+  // The highlighted section: Plan, Ideas, Review, or More for the sections behind it (on the top
+  // bar Library counts as Review, one of its stages).
+  const IN_MORE = MORE.map(([sec]) => sec);
   function setCurrent(sec) {
     current = sec || "";
-    const top = { today: "plan", content: "plan", questions: "plan", library: "review" }[current] || current;
-    for (const a of $$(".shell-nav a")) mark(a, a.dataset.sec === top);
+    const top = current === "library" ? "review" : current;
+    for (const a of $$(".shell-nav > a")) mark(a, a.dataset.sec === top);
+    for (const a of $$(".shell-more-menu a")) mark(a, a.dataset.sec === current);
+    $("#shell-more-btn").classList.toggle("on", IN_MORE.includes(top));
     for (const a of $$(".shell-tabbar a")) mark(a, a.dataset.sec === current);
     for (const a of $$(".shell-sheet-links a")) mark(a, a.dataset.sec === current);
-    $("#shell-more").classList.toggle("on", ["refs", "style", "content", "questions", "library"].includes(current));
+    $("#shell-more").classList.toggle("on", IN_MORE.includes(current));
   }
   function mark(a, on) {
     if (on) a.setAttribute("aria-current", "page");
@@ -129,7 +137,7 @@ window.StudioShell = (() => {
   }
 
   // ── Pop-overs: the status pill and the account menu ────────────────────────
-  const POPS = { laptop: ["#laptop-btn", "#laptop-info"], account: ["#account-btn", "#account-menu"] };
+  const POPS = { laptop: ["#laptop-btn", "#laptop-info"], account: ["#account-btn", "#account-menu"], more: ["#shell-more-btn", "#shell-more-menu"] };
   function setPop(which, open) {
     const [btn, menu] = POPS[which];
     $(menu).hidden = !open;
@@ -137,17 +145,22 @@ window.StudioShell = (() => {
     if (open) $(menu).querySelector("button, a")?.focus();
   }
   const popOpen = (which) => !$(POPS[which][1]).hidden;
-  $("#laptop-btn").addEventListener("click", () => { setPop("account", false); setPop("laptop", !popOpen("laptop")); });
-  $("#account-btn").addEventListener("click", () => { setPop("laptop", false); setPop("account", !popOpen("account")); });
+  const toggle = (which) => { for (const w of Object.keys(POPS)) if (w !== which) setPop(w, false); setPop(which, !popOpen(which)); };
+  $("#laptop-btn").addEventListener("click", () => toggle("laptop"));
+  $("#account-btn").addEventListener("click", () => toggle("account"));
+  $("#shell-more-btn").addEventListener("click", () => toggle("more"));
+  // A section chosen from More closes it.
+  $("#shell-more-menu").addEventListener("click", (e) => { if (e.target.closest("a")) setPop("more", false); });
   // A choice in the account menu closes it (the page acts on it).
   $("#account-menu").addEventListener("click", (e) => { if (e.target.closest("[data-account]")) setPop("account", false); });
   document.addEventListener("click", (e) => {
     if (!e.target.closest("#laptop")) setPop("laptop", false);
     if (!e.target.closest("#account")) setPop("account", false);
+    if (!e.target.closest(".shell-more")) setPop("more", false);
   });
 
   // ── More (phones) ──────────────────────────────────────────────────────────
-  // References, Style guide, Content plan, Library and the account menu's items, as a sheet.
+  // References, Style guide, Content plan, Client questions, Today on site, Library and the account menu's items, as a sheet.
   const sheet = $("#shell-sheet");
   let sheetReturn = null;
   function openSheet() {

@@ -1062,6 +1062,8 @@ def check_loudness(final: Path) -> dict:
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
 def _clips_for(conn, ids: list[int]) -> dict[int, dict]:
+    import onedrive
+    onedrive.ensure_originals(conn, ids)  # originals the clean-up freed come back from OneDrive first
     rows = conn.execute(f"SELECT * FROM clips WHERE id IN ({','.join('?' * len(ids))})", ids).fetchall() if ids else []
     return {r["id"]: dict(r) for r in rows if Path(r["video_path"]).exists()}
 

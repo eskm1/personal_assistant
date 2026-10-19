@@ -1,24 +1,20 @@
-// The content plan: the "This month" strip at the top of Plan (how this month is tracking
-// against the mix Bryan set), a page per kind of post (#/month/<kind>: the posts that count
-// this month and the ones waiting for a decision), and the Content plan page
-// (#/content-plan: the monthly targets per kind and the offers; the owner edits, the team
-// reads). The counting is the database's content_month() (CONTRACT "Content plan"). Under the
-// meters, "Studio suggests" (suggested topics for the gaps) and #/questions, the Client questions
-// page, live in topics.js.
+// The content plan: this month's numbers (Plan's home shows them as post slots, home.js), a page
+// per kind of post (#/month/<kind>: the posts that count this month and the ones waiting for a
+// decision), and the Content plan page (#/content-plan: the monthly targets per kind and the
+// offers; the owner edits, the team reads). The counting is the database's content_month()
+// (CONTRACT "Content plan"). Suggested topics and #/questions, the Client questions page, live in
+// topics.js.
 import {
-  $, esc, sb, must, toast, recall, store, plural, isOwner, ownerName, missingTable, shortDate, PRODUCTION,
+  $, esc, sb, must, toast, plural, isOwner, ownerName, missingTable, shortDate, PRODUCTION,
   POST_TYPES, POST_TYPE, KIND_INFO, kindDot, DECISION, typingIn, sentence, keepDrafts,
 } from "./core.js";
-import {
-  topics, loadSuggestions, suggestRowHTML, suggestSig, suggestClick, loadQuestions, questionsPageHTML, questionsEvent,
-} from "./topics.js";
+import { topics, loadSuggestions, loadQuestions, questionsPageHTML, questionsEvent } from "./topics.js";
 
 const root = () => $("#month");
 const MAX_OFFERS = 10;
 
 export const month = {
-  data: null, plan: null, missing: false, loaded: false, stripSig: "", pageSig: "",
-  closed: recall("studio.monthClosed") === "1",
+  data: null, plan: null, missing: false, loaded: false, pageSig: "",
   route: null, ideas: null, projects: null, draft: null, dirty: false, error: "",
 };
 export const monthOpen = () => !root().hidden;
@@ -66,63 +62,6 @@ function meterBar(c, k) {
   if (!got && !want) return `<span class="pbar thin meter-bar none"></span>`;
   return `<span class="pbar thin meter-bar">${got ? `<i class="k ${k}" data-f="${Math.min(got, Math.max(want, got))}"></i>` : ""}${got < want ? `<i class="needed" data-f="${want - got}"></i>` : ""}</span>`;
 }
-
-// ── The strip on Plan ───────────────────────────────────────────────────────
-
-export function renderStrip(force = false) {
-  const box = $("#month-strip");
-  if (!box) return;
-  const d = month.data;
-  if (!d || month.missing) { box.innerHTML = ""; month.stripSig = ""; return; }
-  const sig = JSON.stringify([d, month.closed, suggestSig()]);
-  if (!force && sig === month.stripSig && box.firstChild) return;
-  month.stripSig = sig;
-  const kinds = kindsOf(d);
-  const name = monthName(d.month);
-  const summary = `${esc(d.planned ?? 0)} of ${esc(d.target ?? 0)} planned · ${esc(d.ready ?? 0)} ready`;
-  const meters = POST_TYPES.map((k) => {
-    const c = kinds[k] || {};
-    const short = shortOf(c);
-    const label = `${POST_TYPE[k]}: ${planned(c)} of ${target(c)} this month${short ? `, ${short} short` : ""}. Show them`;
-    return `<a class="meter${short ? " short" : ""}" href="#/month/${k}" aria-label="${esc(label)}">
-      <span class="meter-name">${kindDot(k)}${esc(POST_TYPE[k])}</span>
-      ${meterBar(c, k)}
-      <span class="meter-num">${countHTML(c)}</span></a>`;
-  }).join("");
-  const untyped = Number(d.untyped) || 0;
-  box.innerHTML = `<section class="month${month.closed ? " closed" : ""}" aria-labelledby="month-title">
-    <div class="month-head">
-      <h2 id="month-title"><button type="button" class="month-toggle" data-month-toggle aria-expanded="${!month.closed}" aria-controls="month-meters">${esc(name)}</button></h2>
-      <span class="month-sum">${summary}</span>
-      <a class="month-link" href="#/content-plan">Targets and offers</a>
-    </div>
-    <div class="meters" id="month-meters" ${month.closed ? "hidden" : ""}>${meters}</div>
-    ${untyped && !month.closed ? `<p class="month-note muted small">${esc(plural(untyped, "planned post"))} ${untyped === 1 ? "has" : "have"} no kind yet: Studio sorts ${untyped === 1 ? "it" : "them"} soon, or pick one on the post.</p>` : ""}
-    ${month.closed ? "" : suggestRowHTML()}
-  </section>`;
-}
-
-// Go / Park / Dismiss on a suggestion, and "Suggest topics".
-document.addEventListener("click", async (e) => {
-  const t = e.target.closest?.("#month-strip [data-sugg-act], #month-strip [data-suggest-topics]");
-  if (!t) return;
-  try {
-    await suggestClick(t, () => renderStrip(true));
-    if (t.dataset.suggAct === "go") { await loadMonth(); renderStrip(true); }
-  } catch (err) {
-    toast(`Couldn't do that: ${err.message}`);
-    renderStrip(true);
-  }
-});
-
-document.addEventListener("click", (e) => {
-  const t = e.target.closest?.("[data-month-toggle]");
-  if (!t) return;
-  month.closed = !month.closed;
-  store("studio.monthClosed", month.closed ? "1" : "0");
-  renderStrip(true);
-  $("[data-month-toggle]")?.focus();
-});
 
 // ── Pages ───────────────────────────────────────────────────────────────────
 
@@ -275,8 +214,8 @@ function planPageHTML() {
   const offerRows = offers.map((o, n) => owner ? `<li class="offer-row" data-offer="${n}">
       <div class="offer-fields">
         <label>Offer<input data-offer-field="name" maxlength="80" value="${esc(o.name)}" placeholder="e.g. Free consultation"></label>
-        <label>What's included <span class="muted">(optional)</span><textarea data-offer-field="details" rows="2" maxlength="500" placeholder="Only what's true and agreed: no prices unless you write them here">${esc(o.details)}</textarea></label>
-        <label>The ask <span class="muted">(how a post words it)</span><input data-offer-field="ask" maxlength="200" value="${esc(o.ask)}" placeholder="e.g. Book a free consultation"></label>
+        <label><span>What's included <span class="muted">(optional)</span></span><textarea data-offer-field="details" rows="2" maxlength="500" placeholder="Only what's true and agreed: no prices unless you write them here">${esc(o.details)}</textarea></label>
+        <label><span>The ask <span class="muted">(how a post words it)</span></span><input data-offer-field="ask" maxlength="200" value="${esc(o.ask)}" placeholder="e.g. Book a free consultation"></label>
       </div>
       <button type="button" class="icon-btn danger" data-offer-remove="${n}" aria-label="Remove the offer ${esc(o.name || n + 1)}" title="Remove">×</button>
     </li>` : `<li class="offer-row read"><strong>${esc(o.name)}</strong>${o.details ? `<p>${esc(o.details)}</p>` : ""}${o.ask ? `<p class="muted small">Ask: “${esc(o.ask)}”</p>` : ""}</li>`).join("");
@@ -361,7 +300,6 @@ async function save() {
   month.draft = null;
   toast("Content plan saved.");
   await loadMonthPage();
-  renderStrip(true);
 }
 
 root().addEventListener("input", (e) => {

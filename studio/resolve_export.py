@@ -263,6 +263,8 @@ def build(conn, production_id: int) -> Path:
     edl = json.loads(production["edl"])
     cuts = edl["cuts"]
     ids = list(dict.fromkeys(c["clip_id"] for c in cuts))
+    import onedrive
+    onedrive.ensure_originals(conn, ids)  # the timeline points at the originals: freed ones come back first
     rows = conn.execute(f"SELECT * FROM clips WHERE id IN ({','.join('?' * len(ids))})", ids).fetchall()
     clips = {r["id"]: dict(r) for r in rows}
     gone = [i for i in ids if i not in clips or not Path(clips[i]["video_path"]).exists()]

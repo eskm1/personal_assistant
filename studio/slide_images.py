@@ -200,6 +200,9 @@ class ClipStill(Source):
     def picture(self, image: dict, conn) -> Path:
         if not isinstance(image.get("clip_id"), int):
             raise Unavailable("no clip picked")
+        if not still_path(image["clip_id"], float(image.get("at") or 0)).exists():
+            import onedrive
+            onedrive.ensure_originals(conn, [image["clip_id"]])  # a sharp still needs the original: freed ones come back
         return clip_still(conn, image["clip_id"], float(image.get("at") or 0))[0]
 
 

@@ -469,7 +469,7 @@ def _project_remote_ids(conn) -> dict[int, int]:
 
 
 def _clip_summary(r, project_remote: dict[int, int], idea_remote: dict[int, int] | None = None,
-                  usable: bool = False) -> dict:
+                  usable: bool = False, archived: bool = False) -> dict:
     q = json.loads(r["quality"] or "{}")
     summary = {
         "id": r["id"], "title": (r["title"] or r["source_name"] or "")[:300], "recorded_at": _ts(r["recorded_at"]),
@@ -482,6 +482,8 @@ def _clip_summary(r, project_remote: dict[int, int], idea_remote: dict[int, int]
         summary["idea_id"] = idea_remote[r["idea_id"]]
     if usable:  # the planner's clips.flagged = a retake, or not usable (migration 20261019000000)
         summary["usable"] = None if r["usable"] is None else bool(r["usable"])
+    if archived:  # archived in Review's Library: the planner's footage pickers leave it out (migration 20261024000000)
+        summary["archived_at"] = _ts(r["archived_at"]) if r["archived_at"] else None
     return summary
 
 
@@ -496,7 +498,7 @@ def push_clips(api: Client, conn) -> int:
                    if _shoot_plan_online else None)
     batch = []
     for r in conn.execute("SELECT * FROM clips WHERE status IN ('tagged', 'transcribed') ORDER BY id").fetchall():
-        summary = _clip_summary(r, project_remote, idea_remote, _footage_online)
+        summary = _clip_summary(r, project_remote, idea_remote, _footage_online, _cleanup_online)
         frame = _middle_frame(r["clip_dir"])
         frame_key = _frame_key(frame)
         uploaded = r["cloud_thumb"]
@@ -740,6 +742,26 @@ def check_footage_ideas(api: Client) -> bool:
             raise
         log.warning("%s (clips.flagged and the planner's \"ideas from footage\" button wait for it)", NEEDS_UPDATE)
     return _footage_online
+
+
+_cleanup_online = False       # migration 20261024000000 (clips.archived_at, Review's clean-up) is online
+_cleanup_checked = 0.0
+
+
+def check_cleanup(api: Client) -> bool:
+    """Is the clean-up migration online? Asked again every 10 minutes while it isn't."""
+    global _cleanup_online, _cleanup_checked
+    if _cleanup_online or time.time() - _cleanup_checked < SCHEMA_RECHECK_SECONDS:
+        return _cleanup_online
+    _cleanup_checked = time.time()
+    try:
+        api.request("GET", "/rest/v1/clips", params={"select": "archived_at", "limit": 1})
+        _cleanup_online = True
+    except CloudError as e:
+        if "HTTP 400" not in str(e) and not _missing_table(e):
+            raise
+        log.warning("%s (archived clips stay in the planner's footage pickers until then)", NEEDS_UPDATE)
+    return _cleanup_online
 
 
 _content_plan_online = False  # migration 20261020000000 (ideas.post_type, content_plan) is online
@@ -1378,6 +1400,7 @@ def sync_once(conn, api: Client | None = None) -> dict:
     content = check_content_plan(api)
     carousels = check_carousels(api)
     topics_on = check_topics(api)
+    check_cleanup(api)
     counts["pulled"] = pulled["stats"]
     counts["clips_pushed"] = push_clips(api, conn)
     new_takes = push_takes(api, conn)

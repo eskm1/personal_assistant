@@ -378,10 +378,12 @@ def _clip_item(row: sqlite3.Row, open_notes: dict[int, int]) -> dict:
         "verdict": quality.get("verdict") if quality else None,
         "flagged": clip_flagged(quality, row["usable"]),
         "project_id": row["project_id"],
+        # Clean-up: hidden from the Library until brought back; the original kept only in OneDrive.
+        "archived": bool(row["archived_at"]), "freed": bool(row["freed_at"]),
         "error": row["error"], "open_notes": open_notes.get(row["id"], 0),
         "thumb": f"/media/clip/{row['id']}/thumb" if files["thumb"] else None,
         "video": f"/media/clip/{row['id']}/video" if row["status"] != "processing" else None,
-        "original": f"/media/clip/{row['id']}/original" if row["status"] != "processing" else None,
+        "original": f"/media/clip/{row['id']}/original" if row["status"] != "processing" and not row["freed_at"] else None,
         "updated": row["ingested_at"],
     }
 
@@ -396,7 +398,7 @@ def _production_item(row: sqlite3.Row, open_notes: dict[int, int]) -> dict:
         # ?v= makes the browser fetch the new render after each revision.
         "thumb": f"/media/production/{row['id']}/thumb?v={row['version']}" if row["thumb_path"] else None,
         "video": f"/media/production/{row['id']}/video?v={row['version']}" if row["video_path"] else None,
-        "updated": row["updated_at"],
+        "updated": row["updated_at"], "archived": bool(row["archived_at"]), "removed": bool(row["removed_at"]),
     }
 
 
@@ -410,6 +412,7 @@ def _carousel_item(row: sqlite3.Row, open_notes: dict[int, int]) -> dict:
         "version": row["version"], "duration": None, "open_notes": open_notes.get(row["id"], 0),
         "thumb": f"/media/production/{row['id']}/thumb?v={row['version']}" if row["thumb_path"] else None,
         "video": None, "slides_count": count, "updated": row["updated_at"],
+        "archived": bool(row["archived_at"]), "removed": bool(row["removed_at"]),
     }
 
 
@@ -509,6 +512,28 @@ def nav():
     (it answered, so it is; last_sync is the planner sync)."""
     waiting = db().execute("SELECT COUNT(*) FROM productions WHERE status = 'ready'").fetchone()[0]
     response = jsonify({"review": waiting, "studio": {"on": True, "last_sync": cloud_sync.status.get("last_ok")}})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/api/home")
+def home():
+    """For Plan's home page under /plan/: the drafts waiting for review (with their still and
+    how many things Studio fixed itself) and edits that failed. The planner also knows them
+    from ideas.production; this adds what only this machine has."""
+    import self_fix
+    rows = db().execute("""SELECT * FROM productions WHERE status IN ('ready', 'failed')
+                           AND archived_at IS NULL ORDER BY updated_at DESC LIMIT 40""").fetchall()
+    review, failed = [], []
+    for r in rows:
+        if r["status"] == "failed":
+            failed.append({"id": r["id"], "title": r["title"], "error": (r["error"] or "")[:200]})
+            continue
+        item = _production_item(r, {})
+        fixes = self_fix.summary(r) or {}
+        review.append({k: item.get(k) for k in ("id", "title", "format", "duration", "version", "thumb", "slides_count")}
+                      | {"fixed": len(fixes.get("fixed") or []), "updated": r["updated_at"]})
+    response = jsonify({"review": review, "failed": failed})
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -967,7 +992,11 @@ def decide(production_id: int):
     if decision == "reopen":  # undo an approve or reject by mistake
         if row["status"] not in ("approved", "rejected") or not (row["video_path"] or row["slides"]):
             return jsonify({"error": "only an approved or rejected draft can go back to review"}), 400
+        if row["removed_at"]:
+            return jsonify({"error": "its files were removed in the clean-up, so it can't go back to review"}), 409
         catalog.set_production_status(db(), production_id, "ready", caption)
+        db().execute("UPDATE productions SET archived_at = NULL WHERE id = ?", (production_id,))
+        db().commit()
     elif decision == "changes":
         open_notes = db().execute(
             "SELECT COUNT(*) FROM feedback WHERE target = 'production' AND target_id = ? AND status = 'open'",
@@ -1109,11 +1138,13 @@ from plan_routes import bp as _plan_bp  # noqa: E402 - its own module; shares we
 from planner_site import bp as _planner_bp  # noqa: E402 - the online planner at /plan/
 from uploads import bp as _uploads_bp  # noqa: E402 - footage uploaded from the planner to a shot
 from ig_signin import bp as _signin_bp  # noqa: E402 - the owner's Instagram sign-in for reference downloads
+from cleanup import bp as _cleanup_bp  # noqa: E402 - Review's clean-up: remove, archive, free up space
 
 app.register_blueprint(_plan_bp)
 app.register_blueprint(_planner_bp)
 app.register_blueprint(_uploads_bp)
 app.register_blueprint(_signin_bp)
+app.register_blueprint(_cleanup_bp)
 
 
 # ── Serve ─────────────────────────────────────────────────────────────────────

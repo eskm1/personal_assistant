@@ -8,7 +8,6 @@ import {
   isCarousel,
 } from "./core.js";
 import { shoot, loadShoot, renderShoot } from "./shoot.js";
-import { loadMonth, renderStrip } from "./month.js";
 
 export const plan = {
   projects: [], pid: null, board: null, sig: "", topSig: "", shellFor: null, order: [],
@@ -57,15 +56,13 @@ export async function loadBoard() {
   const stale = () => pid !== plan.pid || seq !== plan.seq;
   // The shoot plan's tables come with a database update: if they're missing, the board still works.
   const shootLoad = loadShoot(pid).catch((err) => { shoot.error = err.message; return null; });
-  // This month's mix (the strip above the plan) comes with a database update too.
-  const monthLoad = loadMonth().catch(() => null);
   const [arcs, ideas, folders] = await Promise.all([
     sb.from("arcs").select("*").eq("project_id", pid).order("position").order("id").then(must),
     kindsQuery(() => sb.from("ideas").select(withKinds(IDEA_COLS)).eq("project_id", pid).neq("status", "dismissed")
       .order("position").order("id").then(must)),
     sb.from("ideas").select("id,folder").eq("project_id", pid).eq("decision", "go").neq("folder", "").then(must).catch(() => []),
   ]);
-  await Promise.all([shootLoad, monthLoad]);
+  await shootLoad;
   const ids = ideas.map((i) => i.id);
   const jobs = must(await sb.from("jobs").select(JOB_COLS).in("kind", ["organise", "develop", "ideas"])
     .or(ids.length ? `project_id.eq.${pid},idea_id.in.(${ids.join(",")})` : `project_id.eq.${pid}`)
@@ -111,9 +108,9 @@ export function renderPlanner(force = false) {
   const root = $("#planner");
   if (!plan.projects.length) {
     plan.shellFor = null;
-    root.innerHTML = `<div id="month-strip"></div><div class="plan-empty"><h2>Start a plan</h2>
+    root.innerHTML = `<div class="plan-empty"><h2>Start a plan</h2>
       <p class="muted">A project is one job, like Kensington. Throw post ideas at it, let Claude sort them into series with a shot list for each, then tick shots off on site.</p>
-      <button class="btn primary" id="plan-new">New project</button></div>`;
+      <button class="btn act lg" id="plan-new">New project</button></div>`;
     return;
   }
   // The shell (project bar, brief, dump) is rebuilt only for another project.
@@ -136,7 +133,6 @@ export function renderPlanner(force = false) {
     if (mode === "shoot") $("#shoot-view").innerHTML = `<p class="muted"><span class="spin"></span> Loading the shoot plan…</p>`;
     return;
   }
-  renderStrip(force || rebuilt);
   renderPlanTop();
   if (mode === "shoot") renderShoot(force || rebuilt);
   else renderPlanBoard(force || rebuilt, rebuilt);
@@ -148,13 +144,13 @@ function plannerShellHTML() {
   const archived = plan.projects.filter((x) => x.status !== "active");
   const opt = (x) => `<option value="${esc(x.id)}" ${x.id === plan.pid ? "selected" : ""}>${esc(x.name)}</option>`;
   return `<div class="plan-bar">
-      <h1 class="plan-title">Plan</h1>
+      <h1 class="plan-title">Ideas</h1>
       <select id="plan-project" aria-label="Project">${active.map(opt).join("")}
         ${archived.length ? `<optgroup label="Archived">${archived.map(opt).join("")}</optgroup>` : ""}</select>
       <span class="chip" id="plan-archived" ${p.status === "archived" ? "" : "hidden"}>Archived</span>
       <span class="plan-progress" id="plan-progress"></span>
       <div class="plan-bar-actions">
-        <button class="btn primary" id="plan-add-one" title="Add one idea to this project: a line, and a link if you have one">New idea</button>
+        <button class="btn act" id="plan-add-one" title="Add an idea to this project, or several at once (Claude can organise them)">+ New idea</button>
         <button class="btn" id="plan-checklist" title="What to film on today's (or the next) site visit, made for phones">Today on site</button>
         <button class="btn" id="plan-new">New project</button>
       </div>
@@ -163,7 +159,6 @@ function plannerShellHTML() {
         <button data-plan-mode="ideas" aria-pressed="false">Ideas</button>
       </div>
     </div>
-    <div id="month-strip"></div>
     <details class="plan-details" id="plan-details">
       <summary><strong>Brief</strong> <span class="muted" id="brief-preview">${briefPreview(p)}</span></summary>
       <div class="plan-details-body">
@@ -183,16 +178,8 @@ function plannerShellHTML() {
     <div id="footage-news"></div>
     <section class="shoot" id="shoot-view" aria-label="Shoot plan" hidden></section>
     <div id="ideas-view">
-    <div class="dump" id="plan-dump-box">
-      <label class="sr-only" for="plan-dump">Ideas to add</label>
-      <textarea id="plan-dump" data-draft rows="3" maxlength="20000" placeholder="Throw ideas in: one per line, or paste a messy brain-dump"></textarea>
-      <div class="row">
-        <button class="btn" id="plan-quick" title="Each line becomes an idea in Unsorted, as written. Free.">Add as ideas</button>
-        <button class="btn primary" id="plan-organise" title="Claude sorts them into series (arcs) and gives each idea a hook and a storyboard. A minute or two; costs a few cents.">Organise with Claude</button>
-        <span class="muted small" id="organise-status" aria-live="polite"></span>
-      </div>
-      <div id="organise-result" aria-live="polite"></div>
-    </div>
+    <p class="muted small organise-status" id="organise-status" aria-live="polite" hidden></p>
+    <div id="organise-result" aria-live="polite"></div>
     <div class="board-head">
       <label class="check"><input type="checkbox" id="plan-hide-parked" ${plan.hideParked ? "checked" : ""}> Hide parked</label>
       <span class="muted small hide-mobile">Drag a card to another column to move it, or open it to change its arc.</span>
@@ -260,8 +247,7 @@ export function renderPlanTop() {
     ? `${pbarHTML(total)}<span><strong>${total.got}</strong> of ${total.total} shots filmed</span>`
     : `<span class="muted">No shots planned yet</span>`;
   const running = jobActive(job);
-  $("#plan-organise").disabled = running;
-  $("#plan-organise").textContent = running ? "Organising…" : "Organise with Claude";
+  $("#organise-status").hidden = !running;
   $("#organise-status").innerHTML = running
     ? `<span class="spin"></span> Claude is organising your ideas. About a minute; the board updates when it's done.` : "";
   let html = "";
@@ -339,7 +325,7 @@ function footageSeen(news) {
   plan.sig = "";
 }
 
-function showFootageColumn() {
+export function showFootageColumn() {
   const news = plan.footageNews;
   footageSeen(news);
   if (planMode() !== "ideas") { plan.mode = "ideas"; store("studio.planMode", "ideas"); }
@@ -571,31 +557,23 @@ function dumpLines(text) {
     .filter(Boolean).map((l) => l.slice(0, 300));
 }
 
-async function addIdeas(organise) {
-  const box = $("#plan-dump");
-  const text = box.value.trim();
-  if (!text) { box.focus(); toast("Write some ideas first."); return; }
-  const p = currentProject();
+// Several ideas at once, into a project: each line as an idea in Unsorted (free), or the whole
+// text to Claude, which sorts it into series with a storyboard each.
+async function addIdeas(pid, text, organise) {
+  const p = plan.projects.find((x) => x.id === pid);
   if (organise) {
-    let res;
-    try {
-      res = await invoke("plan-organise", { body: { project_id: plan.pid, text } });
-    } catch (err) { toast(`Couldn't start: ${err.message}`, 6000); return; }
-    box.value = "";
-    if (plan.board && res?.job_id) {
+    const res = await invoke("plan-organise", { body: { project_id: pid, text } });
+    if (plan.board?.project?.id === pid && res?.job_id) {
       plan.board.organise = { id: res.job_id, kind: "organise", runner: "cloud", state: "queued", created_at: new Date().toISOString() };
       renderPlanTop();
     }
-    toast("Claude is organising them. About a minute.");
-    await refresh();
-  } else {
-    const lines = dumpLines(text);
-    const pos = Math.max(0, ...(plan.board?.ideas || []).map((i) => i.position || 0)) + 1;
-    must(await sb.from("ideas").insert(lines.map((title, k) => ({ project_id: plan.pid, title, brand: p?.brand || "urban_makers", position: pos + k }))));
-    box.value = "";
-    toast(`Added ${plural(lines.length, "idea")} to Unsorted.`);
-    await refresh(true);
+    return "Claude is organising them. About a minute.";
   }
+  const lines = dumpLines(text);
+  const known = plan.board?.project?.id === pid ? plan.board.ideas : must(await sb.from("ideas").select("position").eq("project_id", pid));
+  const pos = Math.max(0, ...known.map((i) => i.position || 0)) + 1;
+  must(await sb.from("ideas").insert(lines.map((title, k) => ({ project_id: pid, title, brand: p?.brand || "urban_makers", position: pos + k }))));
+  return `Added ${plural(lines.length, "idea")} to Unsorted${p && pid !== plan.pid ? ` in ${p.name}` : ""}.`;
 }
 
 async function saveProject(fields, message) {
@@ -610,9 +588,9 @@ export function openNewProject() {
     <form class="form">
       <label>Name<input id="np-name" maxlength="120" placeholder="e.g. Kensington" required></label>
       ${oneBrand ? "" : `<label>Account<select id="np-brand">${options(ACCOUNTS, BRAND, "urban_makers")}</select></label>`}
-      <label>Inbox folder <span class="muted">(optional)</span><input id="np-folder" maxlength="80" placeholder="Same as the name"></label>
+      <label><span>Inbox folder <span class="muted">(optional)</span></span><input id="np-folder" maxlength="80" placeholder="Same as the name"></label>
       <p class="muted small" id="np-hint">${folderHint("")}</p>
-      <label>Brief <span class="muted">(optional)</span><textarea id="np-brief" rows="4" maxlength="4000" placeholder="What's the job, who's the client, what should the posts show?"></textarea></label>
+      <label><span>Brief <span class="muted">(optional)</span></span><textarea id="np-brief" rows="4" maxlength="4000" placeholder="What's the job, who's the client, what should the posts show?"></textarea></label>
       <p class="error-text" id="modal-error" hidden></p>
       <div class="row end"><button type="button" class="btn" data-modal-close>Cancel</button><button type="submit" class="btn primary" id="np-save">Create project</button></div>
     </form>`, async (e) => {
@@ -635,42 +613,103 @@ export function openNewProject() {
   $("#np-folder").addEventListener("input", hint);
 }
 
-// One idea, phone-friendly: a full-screen sheet on narrow screens. Text, an optional
-// link (kept as the idea's first comment), and the series it belongs to.
-export function openQuickAdd() {
-  const arcs = plan.board?.arcs || [];
-  openModal(`<h2 id="modal-title">Add an idea</h2>
-    <form class="form">
-      <label>Idea<textarea id="qa-text" rows="4" maxlength="300" placeholder="e.g. Why we flood-test every bathroom for 24 hours" required></textarea></label>
-      <label>Link <span class="muted">(optional, e.g. a reel that inspired it)</span><input id="qa-link" type="url" inputmode="url" maxlength="500" placeholder="https://"></label>
-      ${schema.slides ? `<fieldset class="qa-format"><legend>Make it as</legend>
-        <label class="radio"><input type="radio" name="qa-format" value="reel" checked> A Reel <span class="muted small">(filmed)</span></label>
-        <label class="radio"><input type="radio" name="qa-format" value="carousel"> A carousel <span class="muted small">(slides; no filming)</span></label></fieldset>` : ""}
-      <label>Series<select id="qa-arc"><option value="">Unsorted</option>${arcs.map((a) => `<option value="${esc(a.id)}">${esc(a.title)}</option>`).join("")}</select></label>
-      ${schema.kinds ? `<label>Kind of post<select id="qa-kind">${options(POST_TYPES, POST_TYPE, "", "Let Studio decide")}</select></label>` : ""}
+// New idea, phone-friendly (a full-screen sheet on narrow screens): one idea (a line, an optional
+// link kept as its first comment, Reel or carousel, its series and kind), or several at once (a
+// list or a messy brain-dump, added as written or organised by Claude). From Plan's home it asks
+// which project; on Ideas it's the open project.
+export function openQuickAdd(opts = {}) {
+  const active = plan.projects.filter((p) => p.status === "active");
+  const cur = plan.projects.find((p) => p.id === plan.pid);
+  const pid = cur && (cur.status === "active" || opts.from !== "home") ? cur.id : active[0]?.id;
+  if (!pid) { openNewProject(); return; }
+  const choices = cur && cur.status !== "active" && opts.from !== "home" ? [cur, ...active] : active;
+  const projectField = choices.length > 1 || opts.from === "home"
+    ? `<label>Project<select id="qa-project">${choices.map((p) => `<option value="${esc(p.id)}" ${p.id === pid ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>` : "";
+  openModal(`<h2 id="modal-title">New idea</h2>
+    <form class="form" id="qa-form">
+      ${projectField}
+      <div class="seg qa-mode" role="group" aria-label="How many ideas">
+        <button type="button" data-qa-mode="one" class="on" aria-pressed="true">One idea</button>
+        <button type="button" data-qa-mode="many" aria-pressed="false">Several at once</button>
+      </div>
+      <div class="form" id="qa-one">
+        <label>Idea<textarea id="qa-text" rows="4" maxlength="300" placeholder="e.g. Why we flood-test every bathroom for 24 hours"></textarea></label>
+        <label><span>Link <span class="muted">(optional, e.g. a reel that inspired it)</span></span><input id="qa-link" type="url" inputmode="url" maxlength="500" placeholder="https://"></label>
+        ${schema.slides ? `<fieldset class="qa-format"><legend>Make it as</legend>
+          <label class="radio"><input type="radio" name="qa-format" value="reel" checked> A Reel <span class="muted small">(filmed)</span></label>
+          <label class="radio"><input type="radio" name="qa-format" value="carousel"> A carousel <span class="muted small">(slides; no filming)</span></label></fieldset>` : ""}
+        <label>Series<select id="qa-arc"><option value="">Unsorted</option></select></label>
+        ${schema.kinds ? `<label>Kind of post<select id="qa-kind">${options(POST_TYPES, POST_TYPE, "", "Let Studio decide")}</select></label>` : ""}
+      </div>
+      <div class="form" id="qa-many" hidden>
+        <label>Ideas<textarea id="plan-dump" rows="7" maxlength="20000" placeholder="One per line, or paste a messy brain-dump"></textarea></label>
+        <p class="muted small">Add as ideas puts each line in Unsorted as written. Organise with Claude sorts them into series and drafts a storyboard for each (a minute or two; a few cents).</p>
+      </div>
       <p class="error-text" id="modal-error" role="alert" hidden></p>
-      <div class="row end"><button type="button" class="btn" data-modal-close>Cancel</button><button type="submit" class="btn primary" id="qa-add">Add</button></div>
+      <div class="row end" id="qa-one-btns"><button type="button" class="btn" data-modal-close>Cancel</button><button type="submit" class="btn primary" id="qa-add">Add</button></div>
+      <div class="row end" id="qa-many-btns" hidden><button type="button" class="btn" data-modal-close>Cancel</button>
+        <button type="button" class="btn" id="plan-quick">Add as ideas</button>
+        <button type="submit" class="btn primary" id="plan-organise">Organise with Claude</button></div>
     </form>`, async (e) => {
-    if (e.target.id !== "qa-add") return;
+    const t = e.target.closest("button");
+    if (!t) return;
+    if (t.dataset.qaMode) { setMode(t.dataset.qaMode); return; }
+    const target = Number($("#qa-project")?.value || pid);
+    if (t.id === "plan-quick" || t.id === "plan-organise") {
+      const text = $("#plan-dump").value.trim();
+      if (!text) { $("#plan-dump").focus(); return formError("Write some ideas first."); }
+      t.disabled = true;
+      let message;
+      try { message = await addIdeas(target, text, t.id === "plan-organise"); } catch (err) { t.disabled = false; return formError(`Couldn't start: ${err.message}`); }
+      await closeModal();
+      toast(message, 4000);
+      // Claude's progress shows on that project's board.
+      if (t.id === "plan-organise" && location.hash !== `#/project/${target}`) location.hash = `#/project/${target}`;
+      else await refresh(true);
+      return;
+    }
+    if (t.id !== "qa-add") return;
     const title = $("#qa-text").value.replace(/\s+/g, " ").trim().slice(0, 300);
     const raw = $("#qa-link").value.trim();
-    if (!title) return formError("Write the idea first.");
+    if (!title) { $("#qa-text").focus(); return formError("Write the idea first."); }
     const link = raw ? httpsUrl(/^[a-z]+:/i.test(raw) ? raw : `https://${raw}`) : "";
     if (raw && !link) return formError("The link should start with https://");
-    e.target.disabled = true;
-    const p = currentProject();
-    const pos = Math.max(0, ...(plan.board?.ideas || []).map((i) => i.position || 0)) + 1;
+    t.disabled = true;
+    const p = plan.projects.find((x) => x.id === target);
+    const known = plan.board?.project?.id === target ? plan.board.ideas : [];
+    const pos = Math.max(0, ...known.map((i) => i.position || 0)) + 1;
     let row;
     try {
       const kind = $("#qa-kind")?.value || null;
       const carousel = document.querySelector("input[name=qa-format]:checked")?.value === "carousel";
-      row = must(await sb.from("ideas").insert({ project_id: plan.pid, title, brand: p?.brand || "urban_makers", arc_id: $("#qa-arc").value ? Number($("#qa-arc").value) : null, position: pos, ...(kind ? { post_type: kind } : {}), ...(carousel ? { format: "carousel" } : {}) }).select("id").single());
+      row = must(await sb.from("ideas").insert({ project_id: target, title, brand: p?.brand || "urban_makers", arc_id: $("#qa-arc").value ? Number($("#qa-arc").value) : null, position: pos, ...(kind ? { post_type: kind } : {}), ...(carousel ? { format: "carousel" } : {}) }).select("id").single());
       if (link) must(await sb.from("comments").insert({ idea_id: row.id, body: `Link: ${link}` }));
-    } catch (err) { e.target.disabled = false; return formError(err.message); }
+    } catch (err) { t.disabled = false; return formError(err.message); }
     closeModal();
-    toast("Idea added.");
+    toast(opts.from === "home" && target !== plan.pid ? `Idea added to ${p?.name || "the project"}.` : "Idea added.");
     await refresh(true);
   }, false, "sheet");
+  function setMode(mode) {
+    for (const b of document.querySelectorAll("[data-qa-mode]")) {
+      b.classList.toggle("on", b.dataset.qaMode === mode);
+      b.setAttribute("aria-pressed", String(b.dataset.qaMode === mode));
+    }
+    $("#qa-one").hidden = $("#qa-one-btns").hidden = mode !== "one";
+    $("#qa-many").hidden = $("#qa-many-btns").hidden = mode !== "many";
+    formError("");
+    (mode === "one" ? $("#qa-text") : $("#plan-dump")).focus();
+  }
+  // The series list follows the project.
+  async function fillArcs() {
+    const target = Number($("#qa-project")?.value || pid);
+    const arcs = plan.board?.project?.id === target ? plan.board.arcs
+      : await sb.from("arcs").select("id,title,position").eq("project_id", target).order("position").order("id").then(must).catch(() => []);
+    const sel = $("#qa-arc");
+    if (sel) sel.innerHTML = `<option value="">Unsorted</option>${arcs.map((a) => `<option value="${esc(a.id)}">${esc(a.title)}</option>`).join("")}`;
+  }
+  $("#qa-project")?.addEventListener("change", fillArcs);
+  fillArcs();
+  if (opts.mode === "many") setMode("many");
 }
 
 $("#planner").addEventListener("click", async (e) => {
@@ -685,8 +724,6 @@ $("#planner").addEventListener("click", async (e) => {
       store("studio.planMode", plan.mode);
       renderPlanner(true);
     } else if (t.id === "plan-add-one") openQuickAdd();
-    else if (t.id === "plan-quick") await addIdeas(false);
-    else if (t.id === "plan-organise") await addIdeas(true);
     else if (t.id === "proj-save") {
       const name = $("#proj-name").value.trim();
       await saveProject({ ...(name ? { name } : {}), brand: $("#proj-brand")?.value || ACCOUNTS[0], brief: $("#proj-brief").value.trim(), folder: folderName($("#proj-folder").value) }, "Project saved.");
@@ -776,9 +813,6 @@ $("#planner").addEventListener("keydown", (e) => {
     const d = e.target.closest("details.col-menu");
     d.open = false;
     d.querySelector("summary").focus();
-  } else if (e.target.id === "plan-dump" && e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-    e.preventDefault();
-    addIdeas(false).catch((err) => toast(`Couldn't add: ${err.message}`));
   }
 });
 

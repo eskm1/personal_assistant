@@ -195,7 +195,7 @@ def transcripts(conn, now: datetime | None = None) -> list:
     rows = conn.execute(
         """SELECT c.*, p.name AS project_name, p.remote_id AS project_ref, p.status AS project_status
            FROM clips c LEFT JOIN projects p ON p.id = c.project_id
-           WHERE c.status = 'tagged' AND COALESCE(c.usable, 1) = 1 AND c.cloud_hash IS NOT NULL
+           WHERE c.status = 'tagged' AND COALESCE(c.usable, 1) = 1 AND c.archived_at IS NULL AND c.cloud_hash IS NOT NULL
            AND LENGTH(COALESCE(c.transcript, '')) >= ? AND COALESCE(c.recorded_at, c.ingested_at) >= ?""",
         (MIN_SPEECH, since)).fetchall()
     def score(r):

@@ -162,6 +162,9 @@ function brandField(id, current) {
 
 function chips(item, short = false) {
   const out = [];
+  if (item.archived) out.push(`<span class="chip archived">Archived</span>`);
+  if (item.removed) out.push(`<span class="chip archived">Files removed</span>`);
+  if (item.freed) out.push(`<span class="chip archived" title="Studio's own copy of the original was deleted; OneDrive keeps it, and Studio fetches it back when an edit needs it">Original in OneDrive</span>`);
   if (item.brand && !oneBrand()) out.push(`<span class="chip ${esc(item.brand)}">${esc(BRAND[item.brand] || item.brand)}</span>`);
   if (item.kind === "production" && item.version) out.push(`<span class="chip">v${esc(item.version)}</span>`);
   if (item.open_notes) out.push(`<span class="chip notes">${esc(item.open_notes)} note${item.open_notes > 1 ? "s" : ""}</span>`);
@@ -214,7 +217,8 @@ function shellLinks() {
   }
   const online = safeSrc(state.cloud?.planner_url).replace(/\/+$/, "");
   shell.setLinks({
-    plan: "#/tab/plan", review: "#/tab/review", library: "#/tab/library",
+    plan: "#/tab/plan", ideas: "#/tab/plan", review: "#/tab/review", library: "#/tab/library",
+    content: online && `${online}/#/content-plan`, questions: online && `${online}/#/questions`,
     today: !state.cloud && plan.pid ? `#/checklist/${plan.pid}` : "#/tab/plan",
     refs: online && `${online}/#/references`, style: online && `${online}/#/style`,
   });
@@ -389,8 +393,11 @@ async function teamClick(e) {
 
 // ── Board ───────────────────────────────────────────────────────────────────
 
+// Archived drafts and clips (the clean-up) are out of Done and the Library and their counts; they
+// show under the Archived view of each.
 function visible(stage) {
-  return state.items.filter((i) => i.stage === stage && (!state.brand || i.brand === state.brand));
+  return state.items.filter((i) => i.stage === stage && (!state.brand || i.brand === state.brand)
+    && !(i.archived && (stage === "done" || stage === "library")));
 }
 
 // With planning online, ideas live in the planner only: Review has no Ideas stage. A
@@ -450,15 +457,35 @@ function tileHTML(item, index) {
 }
 
 function renderGrid() {
-  state.list = visible(state.stage);
   const grid = $("#grid");
-  grid.innerHTML = state.list.length
-    ? state.list.map(tileHTML).join("")
-    : `<div class="empty">Nothing here right now.</div>`;
+  renderTidyBar();
+  const tidyStage = state.stage === "done" || state.stage === "library";
+  if (!tidyStage) {
+    state.list = visible(state.stage);
+    grid.innerHTML = state.list.length ? state.list.map(tileHTML).join("") : `<div class="empty">Nothing here right now.</div>`;
+    return;
+  }
+  const list = tidyList(state.stage);
+  if (state.stage === "done" && tidy.view.done === "done") {
+    // The last 30 days; older ones fold away.
+    const cutoff = Date.now() - 30 * 864e5;
+    const recent = list.filter((i) => (Date.parse(i.updated || "") || 0) >= cutoff);
+    const older = list.filter((i) => !recent.includes(i));
+    state.list = [...recent, ...older];
+    grid.innerHTML = (recent.length ? recent.map(tidyTileHTML).join("") : `<div class="empty">Nothing approved, posted or rejected in the last 30 days.</div>`)
+      + (older.length ? `<details class="older-fold"${tidy.olderOpen ? " open" : ""}><summary>Older <span class="count">${esc(older.length)}</span></summary>
+          <div class="grid">${older.map((i, k) => tidyTileHTML(i, recent.length + k)).join("")}</div></details>` : "");
+    return;
+  }
+  state.list = list;
+  grid.innerHTML = list.length ? list.map(tidyTileHTML).join("")
+    : `<div class="empty">${state.stage === "library" && tidy.view.library === "tidy" ? "Nothing to tidy right now."
+      : tidy.view[state.stage] === "archived" ? "Nothing archived." : "Nothing here right now."}</div>`;
 }
 
 function render() {
   renderTabs();
+  if (state.stage === "done" || state.stage === "library") loadTidy();
   const planning = state.stage === "plan";
   $("#grid").hidden = planning;
   $("#planner").hidden = !planning;
@@ -594,8 +621,12 @@ $("#grid").addEventListener("mouseout", (e) => {
   tile.querySelector("video")?.pause();
 });
 $("#grid").addEventListener("click", (e) => {
+  if (e.target.closest("[data-tidy]")) return;  // a clean-up action under a tile (handled below)
   const tile = e.target.closest(".tile");
-  if (tile) openItem(state.list[Number(tile.dataset.index)]);
+  if (!tile) return;
+  const item = state.list[Number(tile.dataset.index)];
+  if (tidy.select && state.stage === "library") { togglePick(item); return; }
+  openItem(item);
 });
 $("#tabs").addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-stage]");
@@ -613,6 +644,212 @@ $("#brand-filter").addEventListener("click", (e) => {
   document.querySelectorAll("#brand-filter button").forEach((b) => b.classList.toggle("on", b === btn));
   render();
 });
+
+// ── Clean-up (Done and the Library; cleanup.py) ─────────────────────────────
+// Done: Remove a rejected draft's files (the record stays), Clear rejected all at once, Archive an
+// approved or posted one (hidden from Done; undo under Archived). Library: Archive clips, Free up
+// space (Studio's own copy of an original, only when OneDrive's archive has it), and "Suggested to
+// tidy". Bryan only; every delete asks once, in plain words, with what it frees.
+const tidy = { view: { done: "done", library: "all" }, select: false, picked: new Set(), info: null, at: 0, olderOpen: false };
+const WHY = { retake: "Retake", unused: "Unused 60+ days", "archived project": "Archived project" };
+
+function gb(bytes) {
+  const n = Number(bytes) || 0;
+  if (n >= 1e9) return `${(n / 1e9).toFixed(n >= 1e11 ? 0 : 1)} GB`;
+  if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
+  return n ? `${Math.max(1, Math.round(n / 1e3))} KB` : "0 MB";
+}
+
+// What the clean-up would free and the disk, for Bryan (the team has no clean-up).
+async function loadTidy(force = false) {
+  if (!isOwner() || (!force && Date.now() - tidy.at < 60e3)) return;
+  tidy.at = Date.now();
+  try { tidy.info = await api("/api/cleanup"); } catch { tidy.info = null; }
+  if (state.stage === "done" || state.stage === "library") renderGrid();
+}
+
+function tidyList(stage) {
+  const all = state.items.filter((i) => i.stage === stage && (!state.brand || i.brand === state.brand));
+  const view = tidy.view[stage];
+  if (view === "archived") return all.filter((i) => i.archived);
+  if (stage === "library" && view === "tidy") {
+    const why = new Map((tidy.info?.tidy || []).map((t) => [t.id, t.why]));
+    return all.filter((i) => !i.archived && why.has(i.id) && i.kind === "clip");
+  }
+  return all.filter((i) => !i.archived);
+}
+
+const tidyBytes = (item) => (item.kind === "clip" ? tidy.info?.originals?.each?.[item.id] : tidy.info?.rejected?.each?.[item.id]) || 0;
+
+function tidyTileHTML(item, index) {
+  const tile = tileHTML(item, index);
+  const owner = isOwner();
+  let acts = "";
+  if (item.kind === "production" && owner) {
+    if (item.status === "rejected" && !item.removed) {
+      const size = tidyBytes(item);
+      acts = `<button type="button" class="btn-link danger" data-tidy="remove" data-id="${esc(item.id)}">Remove${size ? ` · ${esc(gb(size))}` : ""}</button>`;
+    } else if (item.status === "approved" || item.status === "posted") {
+      acts = item.archived
+        ? `<button type="button" class="btn-link" data-tidy="unarchive" data-id="${esc(item.id)}">Bring back</button>`
+        : `<button type="button" class="btn-link" data-tidy="archive" data-id="${esc(item.id)}">Archive</button>`;
+    }
+  }
+  if (item.kind === "clip" && tidy.view.library === "tidy") {
+    const why = (tidy.info?.tidy || []).find((t) => t.id === item.id)?.why || [];
+    acts = `<span class="tile-why">${why.map((w) => esc(WHY[w] || w)).join(" · ")}${tidyBytes(item) ? ` · ${esc(gb(tidyBytes(item)))}` : ""}</span>`;
+  }
+  const picked = tidy.select && state.stage === "library" && tidy.picked.has(item.id);
+  const box = tidy.select && state.stage === "library" ? `<span class="tile-pick${picked ? " on" : ""}" aria-hidden="true"></span>` : "";
+  return `<div class="tile-wrap${picked ? " picked" : ""}">${box ? tile.replace("</button>", `${box}</button>`) : tile}${acts ? `<div class="tile-acts">${acts}</div>` : ""}</div>`;
+}
+
+function renderTidyBar() {
+  const bar = $("#tidy-bar");
+  const stage = state.stage;
+  if (stage !== "done" && stage !== "library") { bar.hidden = true; bar.innerHTML = ""; renderSelBar(); return; }
+  const owner = isOwner();
+  const all = state.items.filter((i) => i.stage === stage && (!state.brand || i.brand === state.brand));
+  const archived = all.filter((i) => i.archived).length;
+  const info = tidy.info;
+  const view = tidy.view[stage];
+  const seg = (key, label, n) => `<button type="button" data-tidy-view="${key}" class="${view === key ? "on" : ""}" aria-pressed="${view === key}">${label}${n != null ? ` <span class="n">${esc(n)}</span>` : ""}</button>`;
+  let left, right = "";
+  if (stage === "done") {
+    left = `<div class="seg" role="group" aria-label="Show">${seg("done", "Done")}${seg("archived", "Archived", archived)}</div>`;
+    const rej = info?.rejected;
+    if (owner && rej?.count && view === "done") right = `<button type="button" class="btn danger" data-tidy="clear-rejected">Clear ${esc(rej.count)} rejected · ${esc(gb(rej.bytes))}</button>`;
+  } else {
+    const n = (info?.tidy || []).filter((t) => all.some((i) => i.id === t.id && !i.archived)).length;
+    left = `<div class="seg" role="group" aria-label="Show">${seg("all", "All")}${owner ? seg("tidy", "Suggested to tidy", n) : ""}${seg("archived", "Archived", archived)}</div>`;
+    if (owner) right = `<button type="button" class="btn${tidy.select ? " on" : ""}" data-tidy="select" aria-pressed="${tidy.select}">${tidy.select ? "Done selecting" : "Select"}</button>`;
+  }
+  const d = info?.disk;
+  const disk = owner && d ? `<p class="tidy-disk">Studio's disk: <strong>${esc(gb(d.free))} free</strong> of ${esc(gb(d.total))}${stage === "library" && info.originals ? ` · original videos ${esc(gb(info.originals.bytes))}` : ""}${info.freed_total ? ` · freed so far ${esc(gb(info.freed_total))}` : ""}</p>` : "";
+  bar.hidden = false;
+  bar.innerHTML = `<div class="tidy-row">${left}<span class="tidy-gap"></span>${right}</div>${disk}`;
+  renderSelBar();
+}
+
+// The selection bar under the Library: what's picked, what it frees, what to do with it.
+function renderSelBar() {
+  const bar = $("#sel-bar");
+  const on = tidy.select && state.stage === "library";
+  bar.hidden = !on;
+  if (!on) { bar.innerHTML = ""; return; }
+  const items = state.items.filter((i) => i.kind === "clip" && tidy.picked.has(i.id));
+  const bytes = items.reduce((t, i) => t + tidyBytes(i), 0);
+  const archivedView = tidy.view.library === "archived";
+  bar.innerHTML = `<span class="sel-count">${items.length ? `${esc(plural(items.length, "clip"))} picked${bytes ? ` · ${esc(gb(bytes))}` : ""}` : "Tap clips to pick them"}</span>
+    <button type="button" class="btn small" data-tidy="all">Pick all ${esc(state.list.length)}</button>
+    ${archivedView ? `<button type="button" class="btn small" data-tidy="unarchive-clips" ${items.length ? "" : "disabled"}>Bring back</button>`
+      : `<button type="button" class="btn small" data-tidy="archive-clips" ${items.length ? "" : "disabled"}>Archive</button>`}
+    <button type="button" class="btn small danger" data-tidy="free" ${items.length && tidy.info?.onedrive ? "" : "disabled"} title="${tidy.info?.onedrive ? "Delete Studio's own copy of the original videos; OneDrive keeps them" : "Needs OneDrive (on the server)"}">Free up space${bytes ? ` · ${esc(gb(bytes))}` : ""}</button>
+    <button type="button" class="btn small ghost" data-tidy="none">Clear</button>`;
+}
+
+// After a clean-up action: the board, what's left to tidy, and the open draft's page.
+async function afterTidy() {
+  await sync();
+  await loadTidy(true);
+  if (!$("#viewer").hidden && state.current?.kind === "production") await loadDetail().catch(() => {});
+}
+
+function togglePick(item) {
+  if (!item || item.kind !== "clip") return;
+  if (tidy.picked.has(item.id)) tidy.picked.delete(item.id); else tidy.picked.add(item.id);
+  renderGrid();
+}
+
+// One plain-words question before anything is deleted.
+function askOnce(title, text, yes, onYes) {
+  openModal(`<h2 id="modal-title">${esc(title)}</h2><p>${text}</p>
+    <p class="error-text" id="modal-error" role="alert" hidden></p>
+    <div class="row end"><button type="button" class="btn" data-modal-close>Cancel</button>
+      <button type="button" class="btn danger" id="tidy-yes">${esc(yes)}</button></div>`, async (e) => {
+    if (e.target.id !== "tidy-yes") return;
+    e.target.disabled = true;
+    try { await onYes(); closeModal(); } catch (err) { e.target.disabled = false; formError(err.message); }
+  });
+}
+
+async function tidyAction(t) {
+  const what = t.dataset.tidy;
+  const id = Number(t.dataset.id);
+  const item = state.items.find((i) => i.kind === "production" && i.id === id);
+  if (what === "remove") {
+    const size = tidyBytes(item);
+    askOnce(`Remove “${item?.title || "this draft"}”?`,
+      `Studio deletes this rejected draft's videos${size ? `, freeing ${esc(gb(size))}` : ""}. A small record stays, so the planner and the history still make sense. It can't come back to review.`,
+      "Remove it", async () => {
+        const r = await api(`/api/production/${id}/remove`, {});
+        toast(`Removed. Freed ${gb(r.bytes)}.`);
+        await afterTidy();
+      });
+  } else if (what === "clear-rejected") {
+    const rej = tidy.info?.rejected || {};
+    askOnce(`Remove ${plural(rej.count || 0, "rejected draft")}?`,
+      `Studio deletes their videos and frees ${esc(gb(rej.bytes))}. A small record of each stays. Approved drafts aren't touched.`,
+      `Remove ${rej.count || ""}`, async () => {
+        const r = await api("/api/productions/clear-rejected", {});
+        toast(`Removed ${plural(r.removed, "rejected draft")}. Freed ${gb(r.bytes)}.`);
+        await afterTidy();
+      });
+  } else if (what === "archive" || what === "unarchive") {
+    await api(`/api/production/${id}/archive`, { archived: what === "archive" });
+    toast(what === "archive" ? "Archived. It's still in OneDrive's Studio Ready to post; Done › Archived brings it back." : "Back in Done.");
+    await afterTidy();
+  } else if (what === "select") {
+    tidy.select = !tidy.select;
+    tidy.picked.clear();
+    renderGrid();
+  } else if (what === "all") {
+    for (const i of state.list) if (i.kind === "clip") tidy.picked.add(i.id);
+    renderGrid();
+  } else if (what === "none") {
+    tidy.picked.clear();
+    renderGrid();
+  } else if (what === "archive-clips" || what === "unarchive-clips") {
+    const ids = [...tidy.picked];
+    const on = what === "archive-clips";
+    await api("/api/clips/archive", { ids, archived: on });
+    tidy.picked.clear();
+    toast(on ? `Archived ${plural(ids.length, "clip")}. Library › Archived brings them back.` : `${plural(ids.length, "clip")} back in the Library.`);
+    await afterTidy();
+  } else if (what === "free") {
+    const items = state.items.filter((i) => i.kind === "clip" && tidy.picked.has(i.id));
+    const bytes = items.reduce((t, i) => t + tidyBytes(i), 0);
+    askOnce(`Remove ${plural(items.length, "clip")} from the server?`,
+      `The originals stay in OneDrive (Studio Archive), so this frees ${esc(gb(bytes))} on Studio's disk. Stills, transcripts and tags stay, and Studio fetches an original back by itself if an edit needs it. A clip OneDrive doesn't have is left as it is.`,
+      "Free up space", async () => {
+        const r = await api("/api/clips/free", { ids: items.map((i) => i.id) });
+        tidy.picked.clear();
+        toast(`Freed ${gb(r.bytes)} (${plural(r.freed, "clip")}).${r.skipped.length ? ` ${plural(r.skipped.length, "clip")} left as ${r.skipped.length === 1 ? "it was" : "they were"}: ${r.skipped[0].why}.` : ""}`);
+        await afterTidy();
+      });
+  }
+}
+
+$("#grid").addEventListener("click", async (e) => {
+  const t = e.target.closest("[data-tidy]");
+  if (!t) return;
+  try { await tidyAction(t); } catch (err) { toast(`Couldn't do that: ${err.message}`); }
+});
+$("#grid").addEventListener("toggle", (e) => { if (e.target.matches?.(".older-fold")) tidy.olderOpen = e.target.open; }, true);
+for (const id of ["#tidy-bar", "#sel-bar"]) {
+  $(id).addEventListener("click", async (e) => {
+    const v = e.target.closest("[data-tidy-view]");
+    if (v) {
+      tidy.view[state.stage] = v.dataset.tidyView;
+      tidy.picked.clear();
+      renderGrid();
+      return;
+    }
+    const t = e.target.closest("[data-tidy]");
+    if (!t) return;
+    try { await tidyAction(t); } catch (err) { toast(`Couldn't do that: ${err.message}`); }
+  });
+}
 
 // ── Plan: projects and the board ────────────────────────────────────────────
 
@@ -912,9 +1149,9 @@ function openNewProject() {
     <form class="form">
       <label>Name<input id="np-name" maxlength="120" placeholder="e.g. Kensington" required></label>
       ${brandField("np-brand", "urban_makers")}
-      <label>Inbox folder <span class="muted">(optional)</span><input id="np-folder" maxlength="80" placeholder="Same as the name"></label>
+      <label><span>Inbox folder <span class="muted">(optional)</span></span><input id="np-folder" maxlength="80" placeholder="Same as the name"></label>
       <p class="muted small" id="np-hint">Studio makes the OneDrive folder <code>Studio Inbox\\…</code>; uploads dropped there are filed to this project and matched to its shots.</p>
-      <label>Brief <span class="muted">(optional)</span><textarea id="np-brief" rows="4" maxlength="4000" placeholder="What's the job, who's the client, what should the posts show?"></textarea></label>
+      <label><span>Brief <span class="muted">(optional)</span></span><textarea id="np-brief" rows="4" maxlength="4000" placeholder="What's the job, who's the client, what should the posts show?"></textarea></label>
       <p class="error-text" id="modal-error" hidden></p>
       <div class="row end"><button type="button" class="btn" data-modal-close>Cancel</button><button type="submit" class="btn primary" id="np-save">Create project</button></div>
     </form>`, async (e) => {
@@ -1805,7 +2042,7 @@ function carouselPageHTML(d) {
   const statusBox = canDecide || d.status === "failed" ? "" : `<div class="box state-box"><p>${working
     ? "Studio is working on the slides. It comes back to To review when the new version is laid out."
     : `${esc(STATUS[d.status] || d.status)}.${d.status === "approved" ? " The slides and caption are in OneDrive, Studio Ready to post (on the server), and in the download below." : ""}`}</p>
-    ${owner && settled ? `<div class="row"><button class="btn" id="reopen" title="Move it back to To review so you can decide again">Back to review</button></div>` : ""}</div>`;
+    ${owner && settled && !d.removed ? `<div class="row"><button class="btn" id="reopen" title="Move it back to To review so you can decide again">Back to review</button>${tidyDetailHTML(d)}</div>` : owner ? tidyDetailHTML(d, true) : ""}</div>`;
   const sub = [d.version ? `v${d.version}` : "", n ? `${n} slides` : "", "carousel"].filter(Boolean).join(" · ");
   const notesNow = d.notes.filter((x) => x.status === "open").length;
   const words = (d.slides || []).map((x) => `<li><strong>${esc(x.n)}. ${esc(x.heading)}</strong>${x.body ? ` ${esc(x.body)}` : ""}
@@ -1841,6 +2078,17 @@ function carouselPageHTML(d) {
     <section class="folds">${folds}</section>`;
 }
 
+// The clean-up on a finished draft's page: Remove a rejected one's files; Archive an approved or posted one.
+function tidyDetailHTML(d, row = false) {
+  let html = "";
+  if (d.status === "rejected" && !d.removed) html = `<button class="btn danger" data-tidy="remove" data-id="${esc(d.id)}">Remove files</button>`;
+  else if (d.removed) html = `<span class="muted small">Its files were removed in the clean-up; this record stays.</span>`;
+  else if (d.status === "approved" || d.status === "posted") {
+    html = `<button class="btn" data-tidy="${d.archived ? "unarchive" : "archive"}" data-id="${esc(d.id)}">${d.archived ? "Bring back to Done" : "Archive"}</button>`;
+  }
+  return html && row ? `<div class="row">${html}</div>` : html;
+}
+
 function productionPageHTML(d) {
   const owner = isOwner();
   const canDecide = d.status === "ready";
@@ -1851,7 +2099,7 @@ function productionPageHTML(d) {
   const statusBox = canDecide || d.status === "failed" ? "" : `<div class="box state-box"><p>${working
     ? "The editor is working on this. It comes back to To review when the new version renders."
     : `${esc(STATUS[d.status] || d.status)}.`}</p>
-    ${owner && settled ? `<div class="row"><button class="btn" id="reopen" title="Move it back to To review so you can decide again">Back to review</button></div>` : ""}</div>`;
+    ${owner && settled && !d.removed ? `<div class="row"><button class="btn" id="reopen" title="Move it back to To review so you can decide again">Back to review</button>${tidyDetailHTML(d)}</div>` : owner ? tidyDetailHTML(d, true) : ""}</div>`;
   const sub = [d.version ? `v${d.version}` : "", d.duration ? mmss(d.duration) : "", d.video ? "tap to play" : ""].filter(Boolean).join(" · ");
   const notesNow = d.notes.filter((n) => n.status === "open").length;
 
@@ -2146,6 +2394,15 @@ function openProduction(id) {
 // or clip's page also has buttons in its top line, under the tile and in the decision bar.
 $("#panel").addEventListener("click", async (e) => {
   if (state.current?.kind === "plan") { await planPanelClick(e); return; }
+  const t = e.target.closest("[data-tidy]");
+  if (t) {
+    // The clean-up from a draft's page: the board item (archived / removed) is what the actions read.
+    try {
+      if (!state.items.some((i) => i.kind === "production" && i.id === Number(t.dataset.id))) await sync();
+      await tidyAction(t);
+    } catch (err) { toast(`Couldn't do that: ${err.message}`); }
+    return;
+  }
   await detailClick(e);
 });
 for (const id of ["#detail-head", "#tile-meta", "#decision-bar"]) {

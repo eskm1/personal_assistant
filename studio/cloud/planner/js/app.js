@@ -6,7 +6,8 @@ import {
   isTyping, laptopOn, laptopSince, underPlan, recall, store,
 } from "./core.js";
 import { showAuth, hideAuth } from "./auth.js";
-import { plan, loadProjects, loadBoard, renderPlanner, selectProject, onBoardRefresh } from "./board.js";
+import { plan, loadProjects, loadBoard, renderPlanner, selectProject, onBoardRefresh, planMode, showFootageColumn } from "./board.js";
+import { home, homeOpen, loadHome, renderHome, onHomeRefresh } from "./home.js";
 import { view, openIdea, hideViewer, closeIdea, loadIdea, viewerOpen, step, updateArrows, restoreBoardScroll, forgetBoardScroll } from "./idea.js";
 import { check, openChecklist, hideChecklist, loadChecklist, checklistOpen } from "./checklist.js";
 import { showTeam, hideTeam } from "./team.js";
@@ -148,6 +149,8 @@ function stop() {
   plan.board = null;
   plan.pid = null;
   plan.shellFor = null;
+  Object.assign(home, { data: null, sig: "" });
+  $("#home").hidden = true;
   Object.assign(shoot, { pid: null, data: null, missing: false, sig: "" });
   renderTray();
 }
@@ -275,8 +278,8 @@ function openPassword() {
   });
 }
 
-// ── Routes: #/project/<id>, #/idea/<id>, #/checklist/<project_id>, #/team,
-//    #/references[/<id>], #/style[/<brand>] ─────────────────────────────────
+// ── Routes: #/ (Plan's home), #/ideas and #/project/<id>[/footage|/shoot] (the board), #/idea/<id>,
+//    #/today/<project_id>, #/team, #/references[/<id>], #/style[/<brand>], #/content-plan, … ──
 
 async function refreshBoard(force = false) {
   await loadProjects();
@@ -285,6 +288,7 @@ async function refreshBoard(force = false) {
 }
 onBoardRefresh(async (force) => { await refreshBoard(force); });
 onShootRefresh(async () => { if (!$("#planner").hidden && !viewerOpen() && !checklistOpen()) await refreshBoard(true); });
+onHomeRefresh(async (force) => { if (homeOpen()) { await loadHome(); renderHome(force); } });
 
 let routing = Promise.resolve();
 // The address before this one: a post opened from a page of the app goes back to it.
@@ -300,6 +304,16 @@ function setSection(name) {
   window.StudioShell?.setCurrent(name);
 }
 
+async function showHome() {
+  $("#home").hidden = false;
+  if (!home.data) renderHome(true);
+  await loadHome();
+  renderHome(true);
+}
+function hideHome() {
+  $("#home").hidden = true;
+}
+
 async function doRoute() {
   if (!state.me) return;
   let h = location.hash;
@@ -313,6 +327,7 @@ async function doRoute() {
     hideChecklist();
     hideTeam();
     hideRefs();
+    hideHome();
     $("#planner").hidden = true;
     setSection({ plan: "content", questions: "questions" }[planRoute.page] || "plan");
     await showMonth(planRoute);
@@ -323,27 +338,43 @@ async function doRoute() {
     hideViewer();
     hideChecklist();
     hideTeam();
+    hideHome();
     $("#planner").hidden = true;
     setSection(refRoute.page === "style" || refRoute.page === "taste" ? "style" : "refs");
     await showRefs(refRoute);
     return;
   }
   hideRefs();
-  // #/today on its own (the Today tab before a project is picked): the current project's.
+  // Plan's home: what needs a decision across every project.
+  if (!h || h === "#" || h === "#/") {
+    hideViewer();
+    hideChecklist();
+    hideTeam();
+    $("#planner").hidden = true;
+    setSection("plan");
+    await showHome();
+    if (prev == null || /^#\/(idea|project|today)\//.test(prev || "")) $("#hm-title")?.focus({ preventScroll: true });
+    return;
+  }
+  // #/today on its own (Today on site before a project is picked): the current project's.
   if (h === "#/today") {
     await loadProjects();
     h = plan.pid ? `#/today/${plan.pid}` : "#/";
     history.replaceState(null, "", h);
+    if (h === "#/") { await doRoute(); return; }
   }
-  setSection(h === "#/team" ? "" : /^#\/(?:today|checklist)\//.test(h) ? "today" : "plan");
+  setSection(h === "#/team" ? "" : /^#\/(?:today|checklist)\//.test(h) ? "today" : "ideas");
   if ((m = h.match(/^#\/idea\/(\d+)$/))) {
     hideChecklist();
     hideTeam();
-    $("#planner").hidden = false;
+    // From Plan's home the post opens over it; from anywhere else over its project's board.
+    const overHome = homeOpen();
+    if (overHome) setSection("plan");
+    if (!overHome) $("#planner").hidden = false;
     const from = !viewerOpen() && prev != null && !/^#\/idea\//.test(prev) ? prev : viewerOpen() ? view.cameFrom : null;
     await openIdea(Number(m[1]), from);
     const pid = view.d?.project_id;
-    if (pid && (pid !== plan.pid || !plan.board)) {
+    if (!overHome && pid && (pid !== plan.pid || !plan.board)) {
       if (!plan.projects.length) await loadProjects();
       selectProject(pid);
       await loadBoard().catch(() => {});
@@ -352,6 +383,7 @@ async function doRoute() {
     }
     return;
   }
+  hideHome();
   // Today on site; #/checklist/<id> is its old name.
   if ((m = h.match(/^#\/(?:today|checklist)\/(\d+)$/))) {
     hideViewer();
@@ -368,22 +400,30 @@ async function doRoute() {
     await showTeam();
     return;
   }
-  // The board.
+  // The board (Ideas): #/ideas is the current project's; #/project/<id>/footage opens on the ideas
+  // found in new footage, #/project/<id>/shoot on its shoot plan.
   hideViewer();
   hideChecklist();
   hideTeam();
   $("#planner").hidden = false;
-  m = h.match(/^#\/project\/(\d+)$/);
+  m = h.match(/^#\/project\/(\d+)(?:\/(footage|shoot))?$/);
+  const open = m?.[2] || "";
   await loadProjects();
   if (m && plan.projects.some((p) => p.id === Number(m[1]))) selectProject(Number(m[1]));
+  if (open === "shoot" || open === "footage") {
+    plan.mode = open === "shoot" ? "shoot" : "ideas";
+    store("studio.planMode", plan.mode);
+  }
   if (plan.pid && location.hash !== `#/project/${plan.pid}`) history.replaceState(null, "", `#/project/${plan.pid}`);
-  setSection("plan");
+  nav.last = location.hash;
+  setSection("ideas");
   renderPlanner(true);
   restoreBoardScroll();
   await loadBoard();
   renderPlanner(true);
   restoreBoardScroll();
   forgetBoardScroll();
+  if (open === "footage" && planMode() === "ideas") showFootageColumn();
   // Back from an idea: keyboard focus returns to its card.
   if (view.lastClosed) {
     const card = document.querySelector(`.card[data-plan-idea="${Number(view.lastClosed)}"]`);
@@ -479,7 +519,8 @@ async function refreshNow() {
     const tasks = [];
     if (viewerOpen()) tasks.push(loadIdea());
     if (checklistOpen() && !check.busy) tasks.push(loadChecklist());
-    if (!$("#planner").hidden || viewerOpen()) tasks.push(refreshBoard());
+    if (!$("#planner").hidden || (viewerOpen() && !homeOpen())) tasks.push(refreshBoard());
+    if (homeOpen()) tasks.push(loadHome().then(() => renderHome()));
     if (refsOpen()) tasks.push(loadRefs());
     if (monthOpen()) tasks.push(loadMonthPage());
     await Promise.all(tasks.map((t) => t.catch(() => {})));

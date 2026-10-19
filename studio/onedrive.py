@@ -10,7 +10,10 @@ folder (STUDIO_ONEDRIVE_INBOX). The server has no OneDrive app, so this module:
      so OneDrive keeps a backup and the inbox only shows what's still waiting;
   2. copies every approved reel to the "ready to post" folder (STUDIO_ONEDRIVE_READY),
      so it can be posted straight from the phone's OneDrive app; an approved carousel goes
-     there as a folder of its own: "<title> (<id>)/01.png, 02.png ... caption.txt".
+     there as a folder of its own: "<title> (<id>)/01.png, 02.png ... caption.txt";
+  3. for Review's clean-up (cleanup.py): remembers where each original went in the archive
+     (catalog clips.onedrive_path), checks a clip's original is really there before the
+     server's own copy may be deleted, and fetches it back when an edit needs it again.
 
 Nothing is ever deleted from OneDrive: originals are only moved to the archive.
 rclone keeps the OneDrive sign-in fresh by itself (in rclone.conf, set up by
@@ -343,7 +346,8 @@ def pull(max_files: int = FILES_PER_PULL, budget: float = PULL_BUDGET) -> list[s
                     record = {"size": item["size"], "mod": item["mod"], "local": str(local)}
                     _update_state(lambda d, k=item["rel"], v=record: d.setdefault("copied", {}).__setitem__(k, v))
                 where = _archive(item, month, taken)
-                _update_state(lambda d, k=item["rel"]: d.setdefault("copied", {}).pop(k, None))
+                _update_state(lambda d, k=item["rel"], v={"remote": where, "size": item["size"], "local": record["local"]}:
+                              (d.setdefault("copied", {}).pop(k, None), d.setdefault("archived", {}).__setitem__(v["local"], v)))
                 log.info("From OneDrive: %s -> %s (original moved to %s)", item["rel"], record["local"], where)
                 done.append(item["rel"])
             except OneDriveError as e:
@@ -451,6 +455,119 @@ def _push_folder(item: dict) -> None:
 def push_ready(conn) -> list[str]:
     """Copy each approved reel's video to the OneDrive ready folder, once."""
     return _push(ready_to_push(conn))
+
+
+# ── Originals in the archive (Review's clean-up, cleanup.py) ──────────────────
+
+ARCHIVED_KEEP = 2000   # where recent pulls went, kept in the state file until their clip claims them
+
+
+def claim(conn, clip_id: int, path: Path) -> None:
+    """A pulled file became a clip (worker.ingest): note where OneDrive keeps its original."""
+    entry = _state().get("archived", {}).get(str(path))
+    if not entry:
+        return
+    conn.execute("UPDATE clips SET onedrive_path = ?, onedrive_size = ? WHERE id = ?",
+                 (entry["remote"], int(entry.get("size") or 0), clip_id))
+    conn.commit()
+
+    def drop(d):
+        archived = d.setdefault("archived", {})
+        archived.pop(str(path), None)
+        for k in list(archived)[:-ARCHIVED_KEEP]:   # the oldest, never claimed (duplicates, unreadable)
+            archived.pop(k, None)
+    _update_state(drop)
+
+
+def _same_name(name: str, wanted: str) -> bool:
+    """Name, or the name the archive gave it when one was there already ("a (2).mov")."""
+    if name.lower() == wanted.lower():
+        return True
+    stem, dot, ext = wanted.rpartition(".")
+    return bool(dot) and re.fullmatch(re.escape(stem) + r" \(\d+\)\." + re.escape(ext), name, re.I) is not None
+
+
+def original_in_archive(row, listing: list[dict] | None = None) -> str | None:
+    """Where OneDrive's archive holds this clip's original (its path in OneDrive), or None.
+    Checked in OneDrive itself, by name and exact size: the path noted when it was pulled, else
+    a search of the archive (`listing`: one recursive listing of it, shared by a batch).
+    OneDriveError when OneDrive can't be asked."""
+    size = int(row["onedrive_size"] or 0)
+    if not size:
+        try:
+            size = Path(row["video_path"]).stat().st_size
+        except OSError:
+            return None
+    known = row["onedrive_path"]
+    if known:
+        folder, _, name = known.rpartition("/")
+        try:
+            entries = _lsjson(folder, timeout=120)
+        except NotFound:
+            entries = []
+        if any(e.get("Name") == name and int(e.get("Size") or -1) == size for e in entries):
+            return known
+    if listing is None:
+        listing = archive_listing()
+    name = Path(row["video_path"]).name
+    hits = [e["Path"] for e in listing if int(e.get("Size") or -1) == size
+            and (_same_name(e.get("Name") or "", name) or _same_name(e.get("Name") or "", row["source_name"] or ""))]
+    return f"{settings.ONEDRIVE_ARCHIVE}/{hits[0]}" if len(hits) == 1 else None
+
+
+def archive_listing() -> list[dict]:
+    """Every file in OneDrive's archive folder (one rclone call)."""
+    try:
+        return _lsjson(settings.ONEDRIVE_ARCHIVE, recursive=True, timeout=600)
+    except NotFound:
+        return []
+
+
+def fetch_original(conn, clip_id: int) -> Path | None:
+    """Bring a clip's original back from OneDrive's archive after the server's copy was freed
+    (an edit, a still or a Resolve project needs it). Returns the file, or None when the clip
+    wasn't freed or OneDrive doesn't have it. OneDriveError when OneDrive can't be reached."""
+    row = conn.execute("SELECT * FROM clips WHERE id = ?", (clip_id,)).fetchone()
+    if row is None:
+        return None
+    local = Path(row["video_path"])
+    if local.is_file():
+        return local
+    if not row["freed_at"] or not configured():
+        return None
+    remote = original_in_archive(row)
+    if not remote:
+        raise OneDriveError(f"OneDrive's archive doesn't have the original of clip {clip_id} any more")
+    size = int(row["onedrive_size"] or row["freed_bytes"] or 0)
+    free = shutil.disk_usage(local.parent).free
+    if free < size + DISK_MARGIN:
+        raise OneDriveError(f"The server's disk is nearly full ({free / 2**30:.1f} GB free): can't fetch clip {clip_id}'s original")
+    local.parent.mkdir(parents=True, exist_ok=True)
+    _run(["copyto", _remote(remote), str(local)], timeout=600 + size / 1_000_000)
+    if not local.is_file() or (size and local.stat().st_size != size):
+        local.unlink(missing_ok=True)
+        raise OneDriveError(f"Clip {clip_id}'s original didn't come back whole from OneDrive; try again")
+    conn.execute("UPDATE clips SET freed_at = NULL, freed_bytes = NULL, onedrive_path = ? WHERE id = ?", (remote, clip_id))
+    conn.commit()
+    log.info("Fetched clip %s's original back from OneDrive (%s, %.1f GB)", clip_id, remote, local.stat().st_size / 2**30)
+    return local
+
+
+def ensure_originals(conn, clip_ids) -> list[int]:
+    """Before an edit: fetch back any of these clips' originals the clean-up freed. Returns the
+    ids still missing (logged; the caller carries on without them, as for any missing file)."""
+    missing = []
+    for cid in dict.fromkeys(int(c) for c in clip_ids):
+        row = conn.execute("SELECT video_path, freed_at FROM clips WHERE id = ?", (cid,)).fetchone()
+        if row is None or not row["freed_at"] or Path(row["video_path"]).is_file():
+            continue
+        try:
+            if fetch_original(conn, cid) is None:
+                missing.append(cid)
+        except OneDriveError as e:
+            log.warning("%s", e)
+            missing.append(cid)
+    return missing
 
 
 # ── Worker hook ───────────────────────────────────────────────────────────────

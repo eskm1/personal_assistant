@@ -8,7 +8,9 @@
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <meta name="apple-mobile-web-app-title" content="Studio">
-  <meta name="theme-color" content="#0b0b0d">
+  <meta name="theme-color" content="#FBFAF7">
+  <link rel="preload" href="/static/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/static/theme.css">
   <link rel="stylesheet" href="/static/style.css">
   <link rel="stylesheet" href="/static/shell.css">
 </head>
@@ -30,7 +32,9 @@
       <button class="btn primary" id="suggest">Suggest posts</button>
       <span class="muted" id="ideas-status"></span>
     </div>
+    <div class="tidy-bar" id="tidy-bar" hidden></div>
     <section class="grid" id="grid" aria-live="polite"></section>
+    <div class="sel-bar" id="sel-bar" role="region" aria-label="Picked clips" hidden></div>
     <section class="planner" id="planner" hidden></section>
   </main>
 

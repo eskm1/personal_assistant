@@ -1,10 +1,9 @@
-// Suggested topics (CONTRACT "Suggested topics"): the "Studio suggests" row in the This month
-// strip (open suggestions for the month's gaps, Go / Park / Dismiss inline, "Suggest topics"),
-// and the Client questions page (#/questions: a fast add box and the list, with the posts they
-// became). The Studio machine writes the suggestions (topics.py); the team keeps the questions.
+// Suggested topics (CONTRACT "Suggested topics"): the open suggestions for the month's gaps (Plan's
+// home lists them with Go / Not now / Dismiss, home.js), "Suggest topics", and the Client questions
+// page (#/questions: a fast add box and the list, with the posts they became). The Studio machine
+// writes the suggestions (topics.py); the team keeps the questions.
 import {
-  esc, sb, must, toast, plural, isOwner, ownerName, nameOf, missingTable, shortDate, ago, state, kindChip,
-  jobActive, laptopWait, DECISION,
+  esc, sb, must, toast, plural, isOwner, ownerName, nameOf, missingTable, shortDate, ago, state, laptopWait, DECISION,
 } from "./core.js";
 
 export const topics = { list: [], job: null, missing: false, questions: null, ideas: new Map(), editing: null, busy: new Set() };
@@ -34,17 +33,14 @@ export async function loadSuggestions() {
 export const suggestSig = () => JSON.stringify([topics.list, topics.job, topics.missing, topics.openQuestions, info()]);
 const info = () => state.laptop?.info?.topics || null;
 
-const formatChip = (i) => i.format === "carousel" ? `<span class="chip carousel">Carousel</span>`
-  : `<span class="chip">${i.suggestion?.clip_id ? "Reel from footage" : "Reel"}</span>`;
-
-function whenLine() {
+export function whenLine() {
   const t = info();
   const last = t?.last_suggested || topics.list.map((i) => i.suggestion?.suggested_at).filter(Boolean).sort().pop();
   const weekly = t && DAY_NAME[t.day] ? `Studio suggests by itself every ${DAY_NAME[t.day]} morning${t.behind ? " and when the month falls behind" : ""}.` : "";
   return [last ? `Last suggested ${shortDate(last)}.` : "", weekly].filter(Boolean).join(" ");
 }
 
-function jobLine() {
+export function jobLine() {
   const j = topics.job;
   if (!j) return "";
   if (j.state === "queued") return `<span class="spin"></span> Asked Studio. ${esc(laptopWait())}`;
@@ -58,39 +54,6 @@ function jobLine() {
       : `No new topics this time${j.result?.notes ? `: ${esc(j.result.notes)}` : " (nothing strong enough that isn't planned already)."}`;
   }
   return "";
-}
-
-function cardHTML(i) {
-  const owner = isOwner();
-  const busy = topics.busy.has(i.id) ? "disabled" : "";
-  return `<li class="sugg-card" data-sugg="${esc(i.id)}">
-    <div class="sugg-meta">${kindChip(i.post_type)}${formatChip(i)}</div>
-    <a class="sugg-title" href="#/idea/${esc(i.id)}">${esc(i.title)}</a>
-    <span class="sugg-why muted small">${esc(i.suggestion?.why || "")}</span>
-    ${owner ? `<div class="sugg-btns">
-      <button type="button" class="btn small good" data-sugg-act="go" ${busy} aria-label="Go: ${esc(i.title)}">Go</button>
-      <button type="button" class="btn small" data-sugg-act="parked" ${busy} aria-label="Park: ${esc(i.title)}">Park</button>
-      <button type="button" class="btn small ghost" data-sugg-act="dismissed" ${busy} aria-label="Dismiss: ${esc(i.title)}">Dismiss</button>
-    </div>` : `<span class="sugg-wait muted small">${esc(ownerName())} decides</span>`}
-  </li>`;
-}
-
-// The row under the meters.
-export function suggestRowHTML() {
-  if (topics.missing) return "";
-  const busy = jobActive(topics.job);
-  const n = topics.openQuestions || 0;
-  const list = topics.list;
-  return `<div class="sugg" aria-labelledby="sugg-title">
-    <div class="sugg-head">
-      <h3 id="sugg-title">Studio suggests${list.length ? ` <span class="count">${esc(list.length)}</span>` : ""}</h3>
-      <a class="sugg-q" href="#/questions">Client questions${n ? ` <span class="count">${esc(n)}</span>` : ""}</a>
-      <button type="button" class="btn small" data-suggest-topics ${busy ? "disabled" : ""} title="Studio reads what Bryan said on site, the client questions and the shoot calendar, and suggests posts for this month's gaps. A minute; a few cents.">${busy ? "Suggesting…" : "Suggest topics"}</button>
-    </div>
-    ${list.length ? `<ul class="sugg-list">${list.map(cardHTML).join("")}</ul>`
-      : `<p class="muted small sugg-empty">No suggestions waiting.${busy ? "" : " Press Suggest topics for posts that fill this month's gaps."}</p>`}
-    <p class="sugg-foot muted small" aria-live="polite">${jobLine() || esc(whenLine())}</p>
-  </div>`;
 }
 
 // Go / Park / Dismiss on a card (the owner), and "Suggest topics" (anyone).
@@ -156,8 +119,8 @@ function qItemHTML(q) {
   if (topics.editing === q.id) {
     return `<li class="q-item editing" data-q="${esc(q.id)}"><form class="q-form" data-q-edit="${esc(q.id)}">
       <label>Question<textarea data-q-field="question" rows="2" maxlength="500" required>${esc(q.question)}</textarea></label>
-      <label>Who asked <span class="muted">(optional)</span><input data-q-field="asked_by" maxlength="120" value="${esc(q.asked_by)}" placeholder="e.g. a couple at a site visit"></label>
-      <label>Note <span class="muted">(optional)</span><textarea data-q-field="note" rows="2" maxlength="2000" placeholder="What you answered, or what's behind the question">${esc(q.note)}</textarea></label>
+      <label><span>Who asked <span class="muted">(optional)</span></span><input data-q-field="asked_by" maxlength="120" value="${esc(q.asked_by)}" placeholder="e.g. a couple at a site visit"></label>
+      <label><span>Note <span class="muted">(optional)</span></span><textarea data-q-field="note" rows="2" maxlength="2000" placeholder="What you answered, or what's behind the question">${esc(q.note)}</textarea></label>
       <div class="row end"><button type="button" class="btn" data-q-cancel>Cancel</button><button type="submit" class="btn primary">Save</button></div>
     </form></li>`;
   }

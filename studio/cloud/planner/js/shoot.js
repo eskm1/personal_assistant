@@ -6,7 +6,7 @@
 import {
   $, $$, CAMERA_LONG, CAMERA_ORDER, esc, sb, must, toast, store, recall, plural, stillUrl, signPaths, takePaths,
   takeVerdict, prepShots, isFilmed, todayISO, dayOf, dayLabel, dayRange, missingTable, mmss, nameOf, ownerName,
-  openModal, closeModal, formError, jobView, jobActive, laptopWait, state, retakeBadge, takeRetake,
+  openModal, closeModal, formError, jobView, jobActive, laptopWait, state, retakeBadge, takeRetake, liveClips,
 } from "./core.js";
 import { uploadButtonsHTML, rememberShot, onClipDrop, clipDragType, uploadsFor } from "./upload.js";
 
@@ -28,8 +28,8 @@ export async function loadShoot(pid) {
       sb.from("site_days").select("*").eq("project_id", pid).order("day").then(must),
       sb.from("ideas").select(`id,title,folder,decision,status,arc_id,position,shots(${SHOT_COLS})`)
         .eq("project_id", pid).eq("decision", "go").neq("status", "dismissed").order("position").order("id").then(must),
-      sb.from("clips").select("id,title,duration,recorded_at,thumb_path,idea_id,verdict,takes(id)").eq("project_id", pid)
-        .order("recorded_at", { ascending: false, nullsFirst: false }).order("id", { ascending: false }).limit(300).then(must),
+      liveClips((x) => sb.from("clips").select(`id,title,duration,recorded_at,thumb_path,idea_id,verdict,takes(id)${x}`).eq("project_id", pid)
+        .order("recorded_at", { ascending: false, nullsFirst: false }).order("id", { ascending: false }).limit(300).then(must)),
       sb.from("jobs").select("id,kind,runner,project_id,state,result,error,created_at,started_at,updated_at")
         .eq("kind", "place").eq("project_id", pid).order("id", { ascending: false }).limit(1).then(must),
     ]);
@@ -370,8 +370,8 @@ function openDay(id) {
     <form class="form">
       ${dateInput("sd-day", day, "Date")}
       <label>Phase<select id="sd-phase">${phaseOpts(x?.phase_id ?? "")}</select></label>
-      <label>Who's on site <span class="muted">(optional)</span><input id="sd-who" maxlength="120" value="${esc(x?.who || "")}" placeholder="e.g. Wei"></label>
-      <label>Note <span class="muted">(optional)</span><input id="sd-note" maxlength="300" value="${esc(x?.note || "")}" placeholder="e.g. Tiler in from 9 am"></label>
+      <label><span>Who's on site <span class="muted">(optional)</span></span><input id="sd-who" maxlength="120" value="${esc(x?.who || "")}" placeholder="e.g. Wei"></label>
+      <label><span>Note <span class="muted">(optional)</span></span><input id="sd-note" maxlength="300" value="${esc(x?.note || "")}" placeholder="e.g. Tiler in from 9 am"></label>
       <p class="error-text" id="modal-error" role="alert" hidden></p>
       <div class="row end">${x ? `<button type="button" class="btn ghost danger" data-sd-delete>Delete day…</button>` : ""}
         <button type="button" class="btn" data-modal-close>Cancel</button><button type="submit" class="btn primary" id="sd-save">${x ? "Save" : "Add site day"}</button></div>

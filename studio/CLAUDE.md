@@ -41,19 +41,20 @@ Local Supabase stack via the Supabase CLI + Docker (`cloud/supabase`), Playwrigh
 stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "import worker, dashboard, ..."`
 (`updater._MODULES`) before pushing.
 
-## Open items (as of 2026-10-18)
+## Open items (as of 2026-10-19)
 
 - Bryan to run once on the laptop: `git pull` then `.\venv\Scripts\python cloud_setup.py --update`. It applies every
   migration not yet online: 20261018000000_shoot_plan, 20261019000000_footage_ideas (the `ideas` job,
   `clips.usable`/`flagged`), 20261020000000_content_plan (+ the updated plan-organise / plan-develop functions),
   20261021000000_carousels (+ plan-develop's slide writing) and 20261022000000_topics (`client_questions`,
-  `ideas.suggestion`, the `topics` job) and 20261023000000_reference_library (imports, held analyses, taste
-  reports, the `refs`/`taste` jobs). Re-run after any new migration. Until then the planner hides the "This
-  month" strip, carousels, suggested topics and Client questions, and the server sends no `post_type`.
+  `ideas.suggestion`, the `topics` job), 20261023000000_reference_library (imports, held analyses, taste
+  reports, the `refs`/`taste` jobs) and 20261024000000_cleanup (`clips.archived_at`). Re-run after any new migration.
+  Until then the planner hides the month on Plan, carousels, suggested topics and Client questions, the server sends
+  no `post_type`, and archived clips still show in the planner's footage pickers.
 - Content plan (Bryan approved the proposal 2026-10-18: https://claude.ai/artifact/UyGPCh6YJv3y334g6531Ke), built in
   four steps, all four now built; none yet proven on the server or with real Claude/Gemini. Step 1: kinds of post
-  (`ideas.post_type`, `content_plan.py`), the month's mix (`content_plan` table, `content_month()`), the "This
-  month" strip and Content plan page, the standing Topics project. Step 2: carousels (`ideas.slides`, Write slides
+  (`ideas.post_type`, `content_plan.py`), the month's mix (`content_plan` table, `content_month()`), the month (now
+  slots on Plan's home) and Content plan page, the standing Topics project. Step 2: carousels (`ideas.slides`, Write slides
   in `plan-develop`, pictures from footage stills / uploaded photos incl. HEIC (`slide_images.py`, `uploads.py`),
   layout to PNG with puppeteer-core + HyperFrames' Chrome (`carousel.py`, `render/carousel/`), Review with a
   carousel read, send back = Claude revises the slides, OneDrive folder + zip); needs the updater's pip install
@@ -64,11 +65,18 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   Monday 8am SGT, when the month falls behind (at most daily), or the planner's "Suggest topics" (job `topics`);
   one Claude call, `usage` kind `topics`; sources: transcripts, `client_questions`, references/style guide, shoot
   calendar, SG basics; carousels in Topics arc "Studio suggests", Reels from footage in the clip's project; runs in
-  catalog `idea_runs` as `topics:*`; "Studio suggests" cards on the strip, `#/questions` page). What Bryan must do:
+  catalog `idea_runs` as `topics:*`; suggestions under "Needs your call" on Plan's home, `#/questions` page). What Bryan must do:
   (1) `cloud_setup.py --update` on the laptop (above); (2) for concept pictures, a Google AI Studio key (billing
   on), then `ssh -t root@46.62.223.220 bash /home/studio/personal_assistant/studio/server/setup.sh key gemini` (the
   `/root/studio-server/` copy is the move-day copy and has no `key`); (3) start the Client questions list (he and
   Michelle). Offers: only the ones in the planner; never invent prices or promotions; nothing about quotes (UMC Lead).
+- Built 2026-10-19 (not yet proven on the server or with Bryan's real OneDrive): the Urban Makers look from the quote
+  tool (`cloud/planner/theme.css` + bundled fonts, shared with Review), Plan's home "What needs you" (`js/home.js`,
+  `GET /api/home`; nav Plan · Ideas · Review · More, the board moved to Ideas, Today on site under More), and clean-up
+  (`cleanup.py`: Done's Remove / Clear rejected / Archive, the Library's Archive / Free up space / Suggested to tidy,
+  Plan's Clear dismissed suggestions). Free up space deletes only what OneDrive's Studio Archive has (path recorded
+  at pull time, else same name and size) and fetches originals back on demand; clips pulled before this update have
+  no recorded path, so they rely on the name and size search.
 - Ideas live only in the planner (footage_ideas.py proposes ideas from new footage into each project's
   "From your footage" arc after uploads go quiet; "Everyday posts" project for loose clips).
   Usable clips are never flagged on cards; only retakes.

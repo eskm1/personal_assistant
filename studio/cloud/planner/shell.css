@@ -1,7 +1,8 @@
 /* Studio's app shell (shell.js): the same top bar, phone tab bar and More sheet in Plan
-   (the planner) and Review (the dashboard serves this file as /static/shell.css).
-   Uses each page's colour variables (--bg, --surface, --line, --text, --muted, --accent, --good). */
-:root { --shell-top-h: 56px; --shell-tab-h: 0px; --shell-bottom: 0px; }
+   (the planner) and Review (the dashboard serves this file as /static/shell.css). In the
+   quotation tool's look: the URBAN MAKERS wordmark and a small "Studio" tag on paper, a 2px ink
+   rule under the bar, the section you're in as an ink pill. Colours and sizes: theme.css tokens. */
+:root { --shell-top-h: 60px; --shell-tab-h: 0px; --shell-bottom: 0px; }
 
 /* The wrapper adds no box, so the top bar sticks to the top of the page (not of the wrapper). */
 .shell { display: contents; }
@@ -9,128 +10,135 @@
 
 /* ── Top bar ────────────────────────────────────────── */
 .shell-top {
-  position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 20px;
-  height: var(--shell-top-h); padding: 0 24px; background: rgba(11, 11, 13, .92); backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 24px;
+  height: var(--shell-top-h); padding: 0 24px; background: var(--um-paper); border-bottom: 2px solid var(--um-ink);
 }
-.shell-mark {
-  font-weight: 800; font-size: 18px; letter-spacing: .02em; color: var(--text); text-decoration: none; white-space: nowrap;
-  border-radius: 8px;
+.shell-mark { display: inline-flex; align-items: center; gap: 12px; flex: none; color: var(--um-ink); text-decoration: none; border-radius: var(--um-radius-sm); }
+.shell-mark:hover { color: var(--um-ink); }
+.wordmark { font-family: var(--um-font-display); font-weight: 600; font-size: 18px; letter-spacing: .14em; line-height: 1; white-space: nowrap; color: var(--um-ink); }
+.studio-tag {
+  font-family: var(--um-mono); font-size: var(--um-fs-ui); font-weight: 400; line-height: 1; color: var(--ink-soft);
+  border: 1px solid var(--um-line); border-radius: var(--um-radius-sm); padding: 4px 9px; white-space: nowrap;
 }
-.shell-nav { display: flex; align-self: stretch; gap: 2px; min-width: 0; }
-.shell-nav a {
-  position: relative; display: inline-flex; align-items: center; gap: 7px; padding: 0 12px;
-  color: var(--muted); font-size: 15px; font-weight: 600; text-decoration: none; white-space: nowrap;
+.shell-nav { display: flex; align-items: center; gap: 4px; min-width: 0; margin-left: 12px; }
+.shell-nav a, .shell-more-btn {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: var(--um-h); padding: 0 14px; border: 0; background: none;
+  border-radius: var(--um-radius-sm); color: var(--ink-soft); font-size: var(--um-fs-body); font-weight: 500; text-decoration: none; white-space: nowrap;
 }
-.shell-nav a::after {
-  content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0;
-  background: transparent;
-}
-.shell-nav a:hover { color: var(--text); }
-.shell-nav a[aria-current="page"] { color: var(--text); }
-.shell-nav a[aria-current="page"]::after { background: var(--accent); }
+.shell-nav a:hover, .shell-more-btn:hover { color: var(--um-ink); background: var(--um-paper-mid); }
+.shell-nav a[aria-current="page"], .shell-more-btn.on { color: var(--um-paper); background: var(--um-ink); }
+.shell-more { position: relative; }
+.shell-more-btn::after { content: ""; width: 6px; height: 6px; margin: -3px 0 0 2px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); }
+.shell-more-menu { left: 0; right: auto; min-width: 220px; }
+.shell-more-menu a[aria-current="page"] { font-weight: 600; background: var(--um-paper-mid); }
 .shell-badge {
-  display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px;
-  border-radius: 999px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 6px;
+  border-radius: var(--um-radius-pill); background: var(--act-fill); color: #fff; font-family: var(--um-mono); font-size: var(--um-fs-label); font-weight: 500; line-height: 1;
 }
 .shell-right { margin-left: auto; display: flex; align-items: center; gap: 10px; min-width: 0; }
-.shell a:focus-visible, .shell button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.shell-nav a:focus-visible { outline-offset: -4px; border-radius: 10px; }
+.shell a:focus-visible, .shell button:focus-visible { outline: 2px solid var(--um-ink); outline-offset: 2px; }
 
-/* Studio on / offline */
+/* Studio on / offline: a dot and a few words, a pop-over with the details. */
 .laptop { position: relative; min-width: 0; }
 .laptop-pill {
-  display: flex; align-items: center; gap: 8px; max-width: 100%; min-height: 34px; background: var(--surface);
-  border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 12px; color: var(--muted); white-space: nowrap;
+  display: flex; align-items: center; gap: 8px; max-width: 100%; min-height: var(--um-h); background: none;
+  border: 0; border-radius: var(--um-radius-sm); padding: 0 8px; font-size: var(--um-fs-meta); color: var(--ink-soft); white-space: nowrap;
 }
+.laptop-pill:hover { background: var(--um-paper-mid); color: var(--um-ink); }
 .laptop-pill #laptop-text { overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
-.laptop-pill .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #5a5a66; }
-.laptop-pill.on { color: var(--text); }
-.laptop-pill.on .dot { background: var(--good); box-shadow: 0 0 0 3px rgba(60, 207, 142, .18); }
+.laptop-pill .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--um-needed); box-shadow: inset 0 0 0 1px var(--ink-soft); }
+.laptop-pill.on .dot { background: var(--um-success); box-shadow: none; }
 .laptop-info { width: 300px; max-width: calc(100vw - 32px); padding: 12px 14px; gap: 6px; }
 .laptop-info p { margin: 0; line-height: 1.45; }
 
 /* Account */
 .account { position: relative; flex: none; }
 .account-btn {
-  display: flex; align-items: center; gap: 8px; min-height: 34px; background: var(--surface); border: 1px solid var(--line);
-  border-radius: 999px; padding: 3px 12px 3px 3px;
+  display: flex; align-items: center; gap: 8px; min-height: var(--um-h); background: none; border: 1px solid transparent;
+  border-radius: var(--um-radius-sm); padding: 0 8px 0 3px; color: var(--um-ink); font-size: var(--um-fs-ui); font-weight: 500;
 }
+.account-btn:hover { background: var(--um-paper-mid); }
 .avatar {
-  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px;
-  background: var(--accent); color: #fff;
+  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; font-size: var(--um-fs-meta);
+  background: var(--um-ink); color: var(--um-paper);
 }
-.shell .menu a { color: var(--text); text-decoration: none; padding: 9px 10px; border-radius: 8px; }
-.shell .menu a:hover { background: var(--line); }
-.shell .menu-version { border-top: 1px solid var(--line); border-bottom: 0; margin: 4px 0 0; padding-top: 10px; }
+.shell .menu-version { border-top: 1px solid var(--um-line); border-bottom: 0; margin: 4px 0 0; padding-top: 10px; }
 
 /* ── Phone tab bar and More (shown at 720 px and below) ── */
 .shell-tabbar { display: none; }
-.shell-icon { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.shell-sheet { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, .6); display: flex; align-items: flex-end; }
+.shell-icon { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.shell-sheet { position: fixed; inset: 0; z-index: 40; background: var(--um-shade); display: flex; align-items: flex-end; }
 .shell-sheet-card {
-  width: 100%; max-height: 85vh; overflow-y: auto; background: var(--surface); border-top: 1px solid var(--line);
-  border-radius: 16px 16px 0 0; padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+  width: 100%; max-height: 85vh; overflow-y: auto; background: var(--um-card); border-top: 1px solid var(--um-line);
+  border-radius: var(--um-radius) var(--um-radius) 0 0; padding: 8px 16px calc(16px + env(safe-area-inset-bottom)); box-shadow: var(--um-shadow-dialog);
 }
 .shell-sheet-head { display: flex; align-items: center; justify-content: space-between; min-height: 48px; }
-.shell-sheet-head h2 { margin: 0; font-size: 17px; }
+.shell-sheet-head h2 { margin: 0; font-family: var(--um-mono); font-size: var(--um-fs-label); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); }
 .shell-sheet-close {
-  width: 48px; height: 48px; border: 0; background: none; color: var(--muted); font-size: 26px; line-height: 1; border-radius: 50%;
+  width: 44px; height: 44px; border: 0; background: none; color: var(--ink-soft); font-size: 26px; line-height: 1; border-radius: var(--um-radius-sm);
 }
-.shell-sheet-links { display: flex; flex-direction: column; gap: 4px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.shell-sheet-links { display: flex; flex-direction: column; gap: 2px; padding-bottom: 8px; border-bottom: 1px solid var(--um-line); }
 .shell-sheet-links a {
-  display: flex; align-items: center; gap: 14px; min-height: 52px; padding: 0 12px; border-radius: 12px;
-  color: var(--text); text-decoration: none; font-size: 16px; font-weight: 600;
+  display: flex; align-items: center; gap: 14px; min-height: 52px; padding: 0 12px; border-radius: var(--um-radius-sm);
+  color: var(--um-ink); text-decoration: none; font-size: var(--um-fs-lead); font-weight: 500;
 }
-.shell-sheet-links a[aria-current="page"] { background: var(--surface-2); color: var(--accent); }
+.shell-sheet-links a .shell-icon { color: var(--ink-soft); }
+.shell-sheet-links a[aria-current="page"] { background: var(--um-paper-mid); font-weight: 600; }
+.shell-sheet-links a[aria-current="page"] .shell-icon { color: var(--um-ink); }
 .shell-sheet-account { display: flex; flex-direction: column; gap: 2px; padding-top: 8px; }
 .shell-sheet-account .menu-head { border: 0; padding: 8px 12px; margin: 0; display: flex; flex-direction: column; gap: 2px; }
 .shell-sheet-account button {
-  min-height: 48px; padding: 0 12px; border: 0; border-radius: 12px; background: none; text-align: left; font-size: 16px;
+  min-height: 48px; padding: 0 12px; border: 0; border-radius: var(--um-radius-sm); background: none; text-align: left; font-size: var(--um-fs-lead); color: var(--um-ink);
 }
-.shell-sheet-account button:hover, .shell-sheet-links a:hover { background: var(--surface-2); }
+.shell-sheet-account button:hover, .shell-sheet-links a:hover { background: var(--um-paper-mid); }
 
 @media (max-width: 1000px) {
   .shell-top { gap: 12px; }
-  .shell-nav a { padding: 0 9px; }
+  .shell-nav { margin-left: 0; }
+  .shell-nav a, .shell-more-btn { padding: 0 10px; }
   .account-name { display: none; }
-  .account-btn { padding: 3px; }
-  .laptop-pill #laptop-text { max-width: 150px; }
+  .account-btn { padding: 0 3px; }
+  .laptop-pill #laptop-text { max-width: 120px; }
+  .studio-tag { display: none; }
 }
 
 @media (max-width: 720px) {
   :root { --shell-top-h: 52px; --shell-tab-h: 60px; --shell-bottom: calc(var(--shell-tab-h) + env(safe-area-inset-bottom)); }
   .shell-top { gap: 8px; padding: 0 16px; }
+  .wordmark { font-size: 15px; letter-spacing: .12em; }
+  .studio-tag { display: inline-block; font-size: var(--um-fs-label); padding: 3px 7px; }
   .shell-nav { display: none; }
-  .shell-right { gap: 8px; }
-  .laptop-pill { min-height: 44px; padding: 6px 10px; }
-  .laptop-pill #laptop-text { max-width: 140px; }
+  .shell-right { gap: 4px; }
+  .laptop-pill { min-height: 44px; min-width: 44px; justify-content: center; padding: 0 8px; }
+  .laptop-pill #laptop-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .account-btn { min-height: 44px; min-width: 44px; justify-content: center; }
-  .avatar { width: 32px; height: 32px; }
+  .avatar { width: 30px; height: 30px; }
   .shell .menu button, .shell .menu a { min-height: 44px; }
 
   .shell-tabbar {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 16; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
     height: var(--shell-bottom); padding: 0 4px env(safe-area-inset-bottom);
-    background: rgba(16, 16, 20, .97); backdrop-filter: blur(8px); border-top: 1px solid var(--line);
+    background: var(--um-paper); border-top: 1px solid var(--um-line);
   }
   .shell-tab {
     position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-    min-height: 48px; height: var(--shell-tab-h); padding: 0; border: 0; background: none; border-radius: 12px;
-    color: var(--muted); font-size: 12px; font-weight: 600; text-decoration: none;
+    min-height: 48px; height: var(--shell-tab-h); padding: 0; border: 0; background: none; border-radius: 0;
+    color: var(--ink-soft); font-size: var(--um-fs-meta); font-weight: 500; text-decoration: none;
   }
-  .shell-tab[aria-current="page"], .shell-tab.on { color: var(--text); }
-  .shell-tab[aria-current="page"] .shell-icon, .shell-tab.on .shell-icon { color: var(--accent); }
+  .shell-tab[aria-current="page"], .shell-tab.on { color: var(--um-ink); font-weight: 600; }
   .shell-tab[aria-current="page"]::before, .shell-tab.on::before {
-    content: ""; position: absolute; top: 0; left: 28%; right: 28%; height: 3px; border-radius: 0 0 3px 3px; background: var(--accent);
+    content: ""; position: absolute; top: -1px; left: 24%; right: 24%; height: 3px; background: var(--um-ink);
   }
   .shell-tab:focus-visible { outline-offset: -3px; }
-  .shell-tab .shell-badge { position: absolute; top: 5px; left: calc(50% + 6px); min-width: 18px; height: 18px; font-size: 11px; padding: 0 5px; }
+  .shell-tab .shell-badge { position: absolute; top: 5px; left: calc(50% + 6px); }
   /* Content scrolls clear of the bar. A post, draft or clip opens as a page under the top
      bar (each app's style.css), so the tab bar stays: it's how you get anywhere else. */
   .shell ~ main { padding-bottom: calc(40px + var(--shell-bottom)); }
   body.shell-sheet-open { overflow: hidden; }
   .toast { bottom: calc(16px + var(--shell-bottom)); max-width: calc(100vw - 32px); }
+}
+@media (max-width: 380px) {
+  .studio-tag { display: none; }
 }
 @media (min-width: 721px) {
   .shell-sheet { display: none !important; }

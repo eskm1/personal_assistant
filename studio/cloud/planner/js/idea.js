@@ -7,7 +7,7 @@ import {
   nameOf, state, prepShots, progress, bestTake, takeRetake, retakeBadge, signPaths, stillUrl,
   takePaths, jobView, jobActive, kickDevelop, laptopWait, httpUrl, httpsUrl, openModal, closeModal, syncInert,
   missingTable, dayLabel, folderLineHTML, pageMode, PHONE, POST_TYPES, POST_TYPE, KIND_INFO, kindDot, sentence,
-  isCarousel, REEL_FORMATS, schema,
+  isCarousel, REEL_FORMATS, schema, liveClips,
 } from "./core.js";
 import { plan } from "./board.js";
 import { uploadButtonsHTML, rememberShot } from "./upload.js";
@@ -834,15 +834,15 @@ function openPicker(shotId) {
 
 async function loadPicker(projectId, shot) {
   const q = $("#picker-q")?.value.trim() || "";
-  const base = () => {
-    let r = sb.from("clips").select("id,title,recorded_at,duration,project_id,verdict,thumb_path")
+  const base = (extra) => {
+    let r = sb.from("clips").select(`id,title,recorded_at,duration,project_id,verdict,thumb_path${extra}`)
       .order("recorded_at", { ascending: false, nullsFirst: false }).order("id", { ascending: false }).limit(60);
     if (q) r = r.ilike("title", `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
     return r;
   };
   const [mine, rest] = await Promise.all([
-    base().eq("project_id", projectId).then(must),
-    base().or(`project_id.is.null,project_id.neq.${Number(projectId)}`).then(must),
+    liveClips((x) => base(x).eq("project_id", projectId).then(must)),
+    liveClips((x) => base(x).or(`project_id.is.null,project_id.neq.${Number(projectId)}`).then(must)),
   ]);
   await signPaths([...mine, ...rest].map((c) => c.thumb_path)).catch(() => {});
   if (!$("#picker-results") || ($("#picker-q")?.value.trim() || "") !== q) return;

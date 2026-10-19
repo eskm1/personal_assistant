@@ -62,10 +62,20 @@ def here() -> bool:
 
 @bp.get("/static/shell.js")
 @bp.get("/static/shell.css")
+@bp.get("/static/theme.css")
 def shell_file():
-    """The top bar and phone tab bar shared by Review and Plan: one copy, in the
-    planner's folder (Netlify serves it from there too)."""
+    """The top bar and phone tab bar shared by Review and Plan, and the look (theme.css):
+    one copy, in the planner's folder (Netlify serves it from there too)."""
     return send_from_directory(PLANNER, Path(request.path).name, max_age=0)
+
+
+@bp.get("/static/fonts/<name>")
+def font_file(name: str):
+    """The bundled fonts theme.css names (IBM Plex Sans and Mono, Barlow), for Review and
+    its sign-in page; the planner has them at /plan/fonts/."""
+    if not name.endswith(".woff2") or "/" in name or name.startswith("."):
+        abort(404)
+    return send_from_directory(PLANNER / "fonts", name, max_age=86400)
 
 
 @bp.get("/plan")

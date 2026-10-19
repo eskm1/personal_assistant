@@ -223,7 +223,18 @@ member or hasn't proven the planner email (a team account must have signed in on
 password; owners always may). `GET /api/nav` (dashboard cookie) returns `{review: <drafts ready for
 review>, studio: {on, last_sync}}` for the shared top bar's Review badge; the planner polls it about
 once a minute under /plan/ (401 there signs the planner out too). The top bar itself (`shell.js`,
-`shell.css`) lives in the planner's folder and is served to the dashboard as `/static/shell.*`.
+`shell.css`) lives in the planner's folder and is served to the dashboard as `/static/shell.*`; so are the
+shared look, `theme.css` (the Urban Makers tokens and base controls, from the quote tool's palette), and its
+fonts (`fonts/*.woff2`, IBM Plex Sans / Mono and Barlow, OFL, served as `/static/fonts/<name>`; CSP `font-src
+'self'`). The bar is **Plan · Ideas · Review · More**: Plan = `#/` (Plan's home), Ideas = `#/ideas` (the current
+project's board; `#/project/<id>`, `#/project/<id>/shoot`, `#/project/<id>/footage`), More = References, Style
+guide, Targets and offers, Client questions, Today on site (`#/today/<id>`) and Review's Library.
+
+**Plan's home** reads everything from Supabase (ideas across active projects, arcs, site days, phases, shots,
+style guide / taste drafts, the month) and, under /plan/ only, `GET /api/home` (dashboard cookie) =
+`{review: [{id, title, format, duration, version, thumb, slides_count, fixed, updated}], failed: [{id, title,
+error}]}` (not archived). On Netlify, or when that call fails, drafts come from `ideas.production` (`status
+'ready'` / `'failed'`) and their rows link to the Studio address.
 
 ## Ideas from new footage (migration 20261019000000_footage_ideas.sql)
 
@@ -326,11 +337,12 @@ price, discount or promotion. Without the table (before the update) the defaults
 **The local mirror** keeps `post_type` (catalog `ideas.post_type`). Before the migration is online the Studio
 machine sends no `post_type` and doesn't backfill (`cloud_sync.check_content_plan`, rechecked every 10 min).
 
-**Planner.** A "This month" strip at the top of Plan (month, "N of target planned · M ready", a meter per
-kind, "2 short" in red), each meter opening `#/month/<kind>` (the posts counting this month and the ones
-waiting for a decision). `#/content-plan` (More on phones, "Targets and offers" on the strip): the targets
+**Planner.** On Plan's home, the month as slots, one per targeted post (filled = planned, tinted outline = still
+to plan, coloured by kind), "N of target posts planned" and "Still to plan: ..." with a link per kind to
+`#/month/<kind>` (the posts counting this month and the ones waiting for a decision). `#/content-plan` (More,
+"Targets and offers" on Plan): the targets
 per kind with the total and per-week equivalent, the offers, and the five kinds explained; the owner edits,
-the team reads. Cards show a coloured kind chip. Until the database update the strip stays away and ideas
+the team reads. Cards show a coloured kind chip. Until the database update the month stays away and ideas
 load without `post_type`.
 
 ## Carousels (migration 20261021000000_carousels.sql)
@@ -500,13 +512,14 @@ on ideas (`decision`, `status`, `production`): a linked question becomes `used` 
 |---|---|---|---|---|
 | topics | laptop | any member (insert; refused while another `topics` job is queued or running) | `{}` | `{new_ideas, idea_ids, skipped, notes}` |
 
-**Planner.** Under the This month meters, **Studio suggests**: the open suggestions (`suggestion` not null,
-`status 'new'`, `decision 'proposed'`, newest 12) as cards (kind chip, Carousel / Reel from footage / Reel, title,
-`suggestion.why`), Go / Park / Dismiss inline for the owner (plain updates; the team sees "Bryan decides"), tapping
+**Planner.** On Plan's home under **Needs your call**: the open suggestions (`suggestion` not null,
+`status 'new'`, `decision 'proposed'`, newest 12) as rows (kind, Carousel / Reel from footage / Reel, title,
+`suggestion.why`), Go / Not now (= Park) / Dismiss inline for the owner (plain updates; the team sees "Bryan decides"), tapping
 a card opens `#/idea/<id>` (which shows "Studio suggested this" with the why and the source); **Suggest topics**
 (queues the job; the line under the cards follows it), **Client questions** with the open count, and "Last
-suggested <date>" from `laptop_status.info.topics`. `#/questions` (the strip, More on phones, the Content plan
-page): a fast add box (question; optional who asked and a note), the questions by status with the post each
+suggested <date>" from `laptop_status.info.topics`, and for the owner "Clear N dismissed suggestions" (deletes
+`status 'dismissed'` ideas with a `suggestion` and no `production`; `topics.py` still remembers them in `idea_runs`).
+`#/questions` (Plan's home, More, the Content plan page): a fast add box (question; optional who asked and a note), the questions by status with the post each
 became, Edit, Delete (owner or author), Suggest again. Until the update the row and the page say nothing / ask for
 `cloud_setup.py --update`.
 
@@ -581,3 +594,31 @@ out. A library post's page adds its account, kind, engagement, Claude's slide re
 recommendations with kinds of post, settings, why posts stand out, proposed guide and taste section; thumbnails
 open the posts on Instagram), Approve / Reject (owner); the Style guide page links to it. List queries select only
 the light parts of each analysis (a few numbers through `measured->key`) so 800 posts stay quick.
+
+## Clean-up (migration 20261024000000_cleanup.sql)
+
+**Database.** `clips.archived_at timestamptz` (null = in the Library). The Studio machine sends it with each clip
+(`cloud_sync.check_cleanup`, rechecked every 10 min; before the migration it sends nothing new). The planner's clip
+pickers, the "Needs a home" tray and the slide picture picker leave archived clips out (`core.liveClips`, which
+falls back to all clips while the column is missing). Archived projects already drop out of Plan.
+
+**Studio machine (catalog).** `clips`: `archived_at`, `onedrive_path`, `onedrive_size` (where `onedrive.pull`
+moved the original in `Studio Archive`), `freed_at`, `freed_bytes`. `productions`: `archived_at`, `removed_at`,
+`removed_bytes`. Footage ideas and suggested topics skip archived clips. A freed clip's original is fetched back
+from `Studio Archive` (`onedrive.ensure_originals`) when the editor, Resolve export or a carousel still needs it.
+
+**Review (dashboard, owner only; `cleanup.py`).**
+
+| Call | Answer |
+|---|---|
+| `GET /api/cleanup` | `{disk: {total, used, free}, onedrive, rejected: {count, bytes, each}, originals: {bytes, each}, tidy: [{id, why, bytes, known}], freed_total}` (`why`: retake, unused 60+ days, archived project) |
+| `POST /api/production/<id>/remove` | deletes a rejected draft's videos and renders, keeps the row and its still: `{removed, bytes}`; 409 unless rejected |
+| `POST /api/productions/clear-rejected` | the same for every rejected draft: `{removed, bytes}` |
+| `POST /api/production/<id>/archive {archived}` | hides (or brings back) an approved or posted draft: `{ok, archived}`; OneDrive's copy is untouched |
+| `POST /api/clips/archive {ids, archived}` | `{ok, count, archived}` |
+| `POST /api/clips/free {ids}` | deletes Studio's copy of each original only when the same file (recorded path, else same name and size) is listed in OneDrive `Studio Archive`: `{freed, bytes, skipped: [{id, why}]}` |
+
+Every delete is logged with the space freed (`logs/cleanup.jsonl`). Nothing in OneDrive is ever deleted or moved.
+`GET /api/board` items carry `archived`, `removed` (drafts) and `freed` (clips); a removed draft can't go back to
+review (409).
+

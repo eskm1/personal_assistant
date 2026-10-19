@@ -603,14 +603,14 @@ def _forget(store, idea_id) -> None:
 def _older(conn, local_projects: list[int], everyday: bool, exclude: set[int]) -> list:
     if everyday:
         rows = conn.execute(
-            """SELECT * FROM clips WHERE status = 'tagged' AND COALESCE(usable, 1) = 1
+            """SELECT * FROM clips WHERE status = 'tagged' AND COALESCE(usable, 1) = 1 AND archived_at IS NULL
                AND (project_id IS NULL OR project_id IN (SELECT id FROM projects WHERE LOWER(name) = LOWER(?)
                     OR LOWER(COALESCE(folder, '')) = LOWER(?)))
                AND ingested_at >= ? ORDER BY ingested_at DESC LIMIT ?""",
             (EVERYDAY, EVERYDAY, (datetime.now(timezone.utc) - timedelta(days=30)).isoformat(), OLDER_CLIPS * 2)).fetchall()
     elif local_projects:
         rows = conn.execute(
-            f"""SELECT * FROM clips WHERE status = 'tagged' AND COALESCE(usable, 1) = 1
+            f"""SELECT * FROM clips WHERE status = 'tagged' AND COALESCE(usable, 1) = 1 AND archived_at IS NULL
                 AND project_id IN ({','.join('?' * len(local_projects))}) ORDER BY ingested_at DESC LIMIT ?""",
             [*local_projects, OLDER_CLIPS * 2]).fetchall()
     else:
@@ -772,7 +772,7 @@ def _baseline(conn) -> None:
 def pending(conn, cloud: bool = False) -> list:
     """Tagged clips no run has read yet (in cloud mode: only those already pushed)."""
     return conn.execute(
-        "SELECT * FROM clips WHERE status = 'tagged' AND ideas_run IS NULL AND COALESCE(ideas_tries, 0) < ?"
+        "SELECT * FROM clips WHERE status = 'tagged' AND archived_at IS NULL AND ideas_run IS NULL AND COALESCE(ideas_tries, 0) < ?"
         + (" AND cloud_hash IS NOT NULL" if cloud else "") + " ORDER BY ingested_at, id", (MAX_TRIES,)).fetchall()
 
 
@@ -829,7 +829,7 @@ def run_due(conn, api=None, client=None) -> dict | None:
 def status(conn) -> dict:
     """For the planner (laptop_status.info.footage_ideas) and the dashboard."""
     last = conn.execute(f"""SELECT * FROM idea_runs WHERE trigger != 'baseline' AND {_MINE} ORDER BY id DESC LIMIT 1""").fetchone()
-    waiting = conn.execute("SELECT COUNT(*) FROM clips WHERE status = 'tagged' AND ideas_run IS NULL "
+    waiting = conn.execute("SELECT COUNT(*) FROM clips WHERE status = 'tagged' AND archived_at IS NULL AND ideas_run IS NULL "
                            "AND COALESCE(ideas_tries, 0) < ?", (MAX_TRIES,)).fetchone()[0]
     out = {"after_minutes": settings.IDEAS_AFTER_MINUTES, "waiting_clips": waiting, "last_run": None}
     if last:
@@ -868,7 +868,7 @@ def run_job(api, conn, project_ref, client=None) -> dict:
     if _is_everyday(project):
         where = f"({where} OR project_id IS NULL OR project_id NOT IN (SELECT id FROM projects WHERE remote_id IS NOT NULL))"
     recent = conn.execute(
-        f"""SELECT * FROM clips WHERE status = 'tagged' AND COALESCE(usable, 1) = 1 AND cloud_hash IS NOT NULL
+        f"""SELECT * FROM clips WHERE status = 'tagged' AND COALESCE(usable, 1) = 1 AND archived_at IS NULL AND cloud_hash IS NOT NULL
             AND ingested_at >= ? AND {where} ORDER BY ingested_at, id""", [cutoff, *local]).fetchall()
     if not recent:
         raise RuntimeError(f"No usable footage from the last {JOB_DAYS} days in this project yet")

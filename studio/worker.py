@@ -269,6 +269,8 @@ def ingest(conn, path: Path, use_claude: bool) -> None:
     video = clip_dir / path.name
     shutil.move(str(path), str(video))  # copy + delete when the inbox is on another drive
     clip_id = catalog.start(conn, fp, source_name, clip_dir, video)
+    import onedrive
+    onedrive.claim(conn, clip_id, path)  # pulled from OneDrive: where its original is kept
     # Uploads in an inbox subfolder named after a project (Studio Inbox\Kensington\...) belong to
     # it; in a post folder inside that (Studio Inbox\Kensington\Shower reveal\...), to that idea too.
     try:

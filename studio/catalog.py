@@ -235,6 +235,14 @@ _ADDED_COLUMNS = {
         "idea_id": "INTEGER",      # the post folder it came from (Inbox/<project>/<post>/), if any
         "ideas_run": "INTEGER",    # the idea_runs row that read it for ideas (footage_ideas.py); NULL = not yet
         "ideas_tries": "INTEGER",  # failed attempts at that (it stops trying after a few)
+        # Clean-up (Review's Library): archived = hidden from the Library, ideas from footage, topics and
+        # pickers (undo puts it back); freed = the server's copy of the original video was deleted
+        # because OneDrive's archive holds it (fetched back by itself when an edit needs it).
+        "archived_at": "TEXT",
+        "onedrive_path": "TEXT",   # where OneDrive keeps the original (Studio Archive/<month>/...), when known
+        "onedrive_size": "INTEGER",
+        "freed_at": "TEXT",
+        "freed_bytes": "INTEGER",
     },
     "productions": {
         "plan": "TEXT",   # JSON: the approved idea the editor follows
@@ -250,6 +258,11 @@ _ADDED_COLUMNS = {
         # JSON: Studio's own fix rounds on the current version before Bryan saw it (self_fix.py):
         # {version, caught, fixed: [...], rounds: [...], usd}
         "self_fix": "TEXT",
+        # Clean-up (Review's Done): archived = hidden from Done (still in OneDrive's ready folder; undo);
+        # removed = a rejected draft's files were deleted, this row stays as the record.
+        "archived_at": "TEXT",
+        "removed_at": "TEXT",
+        "removed_bytes": "INTEGER",
     },
     "ideas": {
         "wishlist": "TEXT",     # JSON: shots Bryan could film to make the idea stronger

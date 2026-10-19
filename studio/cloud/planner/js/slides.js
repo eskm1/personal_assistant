@@ -6,7 +6,7 @@
 // the image key, laptop_status.info.concepts; never in a Finished homes post; marked "Concept").
 import {
   $, esc, sb, must, toast, plural, mmss, shortDate, signPaths, stillUrl, jobView, jobActive, retakeBadge,
-  openModal, closeModal, laptopWait, state, SLIDE_ROLE, PICTURE,
+  openModal, closeModal, laptopWait, state, SLIDE_ROLE, PICTURE, liveClips,
 } from "./core.js";
 import { addPhoto, canUpload, studioApi } from "./upload.js";
 
@@ -321,16 +321,16 @@ async function loadClips(d) {
   if (!box) return;
   const q = $("#still-q")?.value.trim() || "";
   if ($("#still-q")) $("#still-q").hidden = false;
-  const base = () => {
-    let r = sb.from("clips").select("id,title,recorded_at,duration,project_id,verdict,thumb_path")
+  const base = (extra) => {
+    let r = sb.from("clips").select(`id,title,recorded_at,duration,project_id,verdict,thumb_path${extra}`)
       .order("recorded_at", { ascending: false, nullsFirst: false }).order("id", { ascending: false }).limit(60);
     if (q) r = r.ilike("title", `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
     return r;
   };
   try {
     const [mine, rest] = await Promise.all([
-      base().eq("project_id", d.project_id).then(must),
-      base().or(`project_id.is.null,project_id.neq.${Number(d.project_id)}`).then(must),
+      liveClips((x) => base(x).eq("project_id", d.project_id).then(must)),
+      liveClips((x) => base(x).or(`project_id.is.null,project_id.neq.${Number(d.project_id)}`).then(must)),
     ]);
     await signPaths([...mine, ...rest].map((c) => c.thumb_path)).catch(() => {});
     if (!$("#still-results") || ($("#still-q")?.value.trim() || "") !== q) return;

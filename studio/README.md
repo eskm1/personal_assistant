@@ -162,10 +162,10 @@ It's laid out like Reels: a grid of tiles you can filter by account, with tabs f
 | To review | Edited drafts waiting for you |
 | Ideas | Posts Claude planned from your library, waiting for Make this or Dismiss (only without online planning: with it, ideas live in the planner, section 12) |
 | Being edited | Drafts in progress, including ones you sent back |
-| Library | Raw clips, tagged by Claude, each with a quality verdict (section 13) |
+| Library | Raw clips, tagged by Claude, each with a quality verdict (section 13); clean-up below |
 | Ingesting | Clips being processed, or that failed and will be retried |
 | In the cloud | Uploads still in the OneDrive inbox |
-| Done | Approved, posted and rejected edits (**Back to review** undoes an approve or reject) |
+| Done | Approved, posted and rejected edits of the last 30 days, older ones folded under **Older** (**Back to review** undoes an approve or reject); clean-up below |
 
 Open a draft and **Studio's read** comes first: a one-line verdict ("Ready to post", "Nearly
 ready: 2 things to fix", "Needs work: ..."), a good / fix mark for hook, pace, sound, captions
@@ -210,6 +210,22 @@ throwaway folder, and open the address it prints (sign in as `demo@studio.local`
 laptop it asks you to make your owner account (this page only works on the laptop itself). Your
 browser stays signed in for 30 days. To reach it from your phone and let the team in, see
 section 11.
+
+**Clean-up (you only).** Review keeps Studio's disk tidy without ever touching OneDrive:
+
+- **Done**: **Remove** on a rejected draft deletes its videos (it says how much space that frees) and keeps a
+  small record, so the planner and the history still make sense; it can't come back to review. **Clear N
+  rejected** does them all at once, after one question with the count and the space. **Archive** hides an
+  approved or posted draft from Done (it stays in OneDrive's **Studio Ready to post**); the **Archived** view
+  lists them, each with **Bring back**.
+- **Library**: **Archive** hides a clip from the Library, footage ideas, suggested topics and the planner's
+  pickers; **Bring back** undoes it. **Free up space** deletes Studio's own copy of a clip's original video, but
+  only once Studio has found that same file in OneDrive's **Studio Archive** (same name and size); the stills,
+  transcript and tags stay, and if an edit needs the clip again Studio fetches the original back from OneDrive by
+  itself. **Select** picks several clips at once; **Suggested to tidy** lists retakes, clips unused for 60 days
+  and clips of archived projects, each with what it would free. The bar at the top shows the disk's free space.
+- Every delete asks once, in plain words, and is logged with the space it freed (`Studio\logs\cleanup.jsonl`).
+  Michelle doesn't see these buttons.
 
 Telegram is just for notifications: one summary per batch of uploads or edits, with a link
 to the right dashboard tab (set `STUDIO_DASHBOARD_URL` so the link works from your phone).
@@ -445,7 +461,21 @@ the sign-in page. It means signing in twice, so it's up to you.
 
 ## 12. Planning: projects, arcs and shot lists
 
-The **Plan** tab is where the team plans content before going on site.
+The planner and Review share one bar: **Plan · Ideas · Review · More** (on a phone, the same four at the
+bottom). **More** has References, the style guide, Targets and offers, Client questions, Today on site and the
+Library.
+
+**Plan** opens on what needs you, across every project: the date, "N things need you" and one orange **+ New
+idea** (one idea, or several at once to file or organise with Claude). **Needs your call** lists drafts ready
+to review, posts Studio suggests (**Go**, **Not now** (parks it) or **Dismiss**; Michelle sees "Bryan
+decides"), "N post ideas from new footage" (**Look through**) and anything else waiting, such as a style guide
+draft. **Coming up** has the next site days with shots to film (**Shot list** opens Today on site), posts in the
+edit and posts being filmed. On the side: the month as slots, one per post you want (filled for planned, outlined
+for still to plan, coloured by kind), "Still to plan: ...", **Targets and offers**, your projects (each opens
+its board) and Client questions. Archived projects drop out.
+
+**Ideas** is the board of one project at a time (pick it at the top); its **Shoot plan** shows the phases and site
+days.
 
 - **Project**: a job, say *Kensington*, with a short brief (who the client is, what's being done,
   what to show). Making one also makes an inbox subfolder, `Studio Inbox\Kensington`. Uploads
@@ -493,11 +523,11 @@ planning, the library ideas still waiting on Review's Ideas tab move to the plan
 Review no longer has an Ideas tab.
 
 **Kinds of post and the month's mix.** Every post has a job, its kind: **Know-how** and **Ideas** (to
-get found), **On site** and **Finished homes** (to build trust) and **Work with us** (to get enquiries). At
-the top of Plan, **This month** shows how the month is going against your targets ("8 of 13 planned · 4
-ready", one bar per kind, "2 short" in red); tap a kind to see its posts and the ones waiting for your Go.
+get found), **On site** and **Finished homes** (to build trust) and **Work with us** (to get enquiries). On
+Plan, the month shows how it's going against your targets: a slot per post, "6 of 13 posts planned" and what's
+still to plan; tap a kind to see its posts and the ones waiting for your Go.
 A post counts once it's Go (until it's approved), or when it's approved that month; Studio never posts, so
-"ready" means approved. **Targets and offers** (on the strip, or More on a phone) is where you set how many
+"ready" means approved. **Targets and offers** (on Plan, or under More) is where you set how many
 of each kind you want a month (it shows the total and about how many a week) and the offers people can take
 you up on (name, what's included, how a post words the ask). Michelle sees them but can't change them.
 Claude gives every idea it writes a kind, leans toward the kinds that are short this month, and uses only
@@ -560,12 +590,11 @@ the pictures' cost next to Claude's, per draft and for the month.
 (4) for the month's gaps, the way it suggests ideas from new footage. It also does it when the month falls behind:
 past the middle of the month, when a kind is still short and nothing waiting for you covers it (at most once a
 day). It waits while Studio is busy with footage or edits, and it doesn't pile up: if 4 suggestions are already
-waiting for your call, it suggests nothing new. Anyone can ask for some now with **Suggest topics** under **This
-month**. Where the topics come from, best first:
+waiting for your call, it suggests nothing new. Anyone can ask for some now with **Suggest topics** next to the month on Plan. Where the topics come from, best first:
 
 - **Things you said on site.** Studio has the transcripts of your clips. When you explain why or how something is
   done, that's a ready Know-how post in your own words; the suggestion says which clip and when.
-- **Questions clients ask.** **Client questions** (on the strip, or More on a phone) is a list you and Michelle
+- **Questions clients ask.** **Client questions** (on Plan, or under More) is a list you and Michelle
   add to whenever someone asks something: type the question, optionally who asked and a note, **Add question**.
   Studio answers open ones first; the list shows which ones became posts, and **Suggest again** puts back one
   whose post you dismissed. Questions only: no clients' names or addresses.
@@ -575,13 +604,14 @@ month**. Where the topics come from, best first:
   price or figure in a post unless you said it on camera or wrote it in a question's note (anything else becomes
   **[check]**), only uses your offers, never names a place, and says nothing about quotes.
 
-Each suggestion is a card under the meters: its kind, Carousel or Reel, the title and a short "why now" ("Fills
+Each suggestion is a row under **Needs your call** on Plan: its kind, Carousel or Reel, the title and a short "why now" ("Fills
 October's Ideas gap", "You explained this on site last Tuesday", "Michelle logged this client question"). Tap it
-to open the idea, or press **Go**, **Park** or **Dismiss** right there (you only; Michelle sees "Bryan decides").
+to open the idea, or press **Go**, **Not now** (Park) or **Dismiss** right there (you only; Michelle sees "Bryan decides").
 Most are carousels with the slide outline written, in the **Topics** project (arc **Studio suggests**): Go, then
 **Write slides** when you want them finished. Where you already explained it on camera it's a Reel in that job's
 project (arc **From your footage**) with your clip already in the storyboard. Studio never suggests something
-already planned, made or dismissed, even reworded, so Dismiss is how you say "not this one". Each run is one Claude
+already planned, made or dismissed, even reworded, so Dismiss is how you say "not this one". **Clear N dismissed suggestions** (on Plan, you only) deletes the dismissed ones from the planner; Studio
+still remembers them and won't suggest them again. Each run is one Claude
 call, a few cents (shown with the rest of the month's cost); Telegram says when there are new ones. Settings:
 `STUDIO_TOPICS_DAY` (`off` = only the button), `STUDIO_TOPICS_HOUR`, `STUDIO_TOPICS_COUNT`, `STUDIO_TOPICS_BEHIND`.
 After this update, run `cloud_setup.py --update` once; until then the planner doesn't show the row.
