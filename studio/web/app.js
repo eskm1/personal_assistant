@@ -1956,7 +1956,7 @@ function rulesHTML(d) {
     : `<p class="muted small">None yet. When Studio fixes a problem in its own draft, or you send back an editing note, the rule behind it is kept here, so you never have to say it twice.</p>`)
     + (r.code?.length ? `<h3>Checked by Studio on every draft</h3>${bullets(r.code.map(esc))}` : "")
     + (trend ? `<p class="muted small">${esc(trend)}</p>` : "")
-    + (owner ? `<div class="row"><button class="btn" id="playbook-open">Edit the playbook</button></div>` : "");
+    + (owner ? `<div class="row"><button class="btn" id="playbook-open">Edit the playbook</button><button class="btn" id="voice-open">Your voice</button></div>` : "");
   return foldHTML("production", "rules", "Rules Studio taught itself", learned.length ? plural(learned.length, "rule") : "", body);
 }
 
@@ -1969,7 +1969,7 @@ async function renderPlaybook() {
   const p = await api("/api/playbook");
   const learned = [["reel", "Reels"], ["carousel", "Carousels"]].filter(([k]) => p.rules?.[k]?.length)
     .map(([k, label]) => `<h3>${esc(label)}</h3>${ruleListHTML(p.rules[k], p.editable)}`).join("");
-  $("#modal-body").innerHTML = `<h2 id="modal-title">Playbook</h2>
+  $("#modal-body").innerHTML = `<div class="modal-head-row"><h2 id="modal-title">Playbook</h2><button type="button" class="btn" id="voice-switch">Your voice</button></div>
     <p class="muted small">The rules the idea generator, the editor and Studio's read follow on every post.</p>
     <h3>Rules Studio taught itself</h3>
     ${learned || `<p class="muted small">None yet.</p>`}
@@ -1985,6 +1985,7 @@ async function forgetRule(id) {
   return true;
 }
 async function playbookClick(e) {
+  if (e.target.id === "voice-switch") { await openVoice(); return; }
   const forget = e.target.closest("[data-forget-rule]");
   if (forget) {
     if (await forgetRule(forget.dataset.forgetRule)) await renderPlaybook();
@@ -1997,6 +1998,51 @@ async function playbookClick(e) {
   closeModal();
   toast("Playbook saved. Every edit from now on follows it.");
 }
+
+// Your voice (Bryan): how you sound on camera, which every caption, hook and slide Studio writes
+// follows. Studio drafts it from your own talking videos; you edit it here.
+async function openVoice() {
+  openModal(`<h2 id="modal-title">Your voice</h2><p class="muted">Loading…</p>`, voiceClick, true);
+  await renderVoice();
+}
+let voicePoll = null;
+async function renderVoice() {
+  const v = await api("/api/voice");
+  // Still on this dialog? (It may have been closed, or switched to the playbook, while Studio wrote.)
+  if ($("#modal").hidden || $("#modal-title")?.textContent !== "Your voice") return;
+  const draft = $("#voice-text")?.dataset.dirty ? $("#voice-text").value : null;
+  const status = v.running ? `<p class="muted small"><span class="spin"></span> Reading ${esc(Math.min(v.clips, v.sample))} of your talking videos. About a minute.</p>`
+    : v.error ? `<p class="error-text">${esc(v.error)}</p>`
+    : !v.exists ? `<p class="muted small">${v.clips >= v.min_clips ? "Not written yet." : `Not written yet. Studio writes it by itself once ${esc(v.min_clips)} of your talking videos are in (${esc(v.clips)} so far).`}</p>` : "";
+  $("#modal-body").innerHTML = `<div class="modal-head-row"><h2 id="modal-title">Your voice</h2>${v.editable ? `<button type="button" class="btn" id="playbook-back">Playbook</button>` : ""}</div>
+    <p class="muted small">How you sound on camera. Studio writes every caption, hook and slide in it.</p>
+    ${v.editable ? `<div class="row"><button type="button" class="btn" id="voice-write" ${v.running || !v.clips ? "disabled" : ""}>Write the voice file from my videos</button></div>
+      <p class="muted small">Studio reads about ${esc(v.sample)} of your talking videos (about 10 cents) and replaces the text below. The old one is kept.</p>` : ""}
+    ${status}
+    <label class="form">Voice file<textarea id="voice-text" rows="16" ${v.editable && !v.running ? "" : "readonly"} placeholder="Not written yet.">${esc(draft ?? v.text)}</textarea></label>
+    <p class="error-text" id="modal-error" hidden></p>
+    <div class="row end"><button type="button" class="btn" data-modal-close>Close</button>${v.editable ? `<button type="button" class="btn primary" id="voice-save" ${v.running ? "disabled" : ""}>Save</button>` : ""}</div>`;
+  clearTimeout(voicePoll);
+  if (v.running) voicePoll = setTimeout(() => renderVoice().catch(() => {}), 3000);
+}
+async function voiceClick(e) {
+  if (e.target.id === "playbook-back") { clearTimeout(voicePoll); await openPlaybook(); return; }
+  if (e.target.id === "voice-write") {
+    if ($("#voice-text").value.trim() && !confirm("Write a new voice file from your videos? It replaces the text here (the old one is kept on Studio).")) return;
+    try { await api("/api/voice/write", {}); } catch (err) { return formError(err.message); }
+    toast("Studio is reading your videos. About a minute.");
+    await renderVoice();
+    return;
+  }
+  if (e.target.id !== "voice-save") return;
+  try {
+    await api("/api/voice", { text: $("#voice-text").value });
+  } catch (err) { return formError(err.message); }
+  clearTimeout(voicePoll);
+  closeModal();
+  toast("Voice saved. Every post from now on is written in it.");
+}
+$("#modal").addEventListener("input", (e) => { if (e.target.id === "voice-text") e.target.dataset.dirty = "1"; });
 
 function noteListHTML(notes, currentVersion, isProduction) {
   if (!notes.length) return `<p class="muted small">No notes yet.</p>`;
@@ -2030,6 +2076,41 @@ function captionPeek(caption) {
   return tags ? `Ready · ${plural(tags, "hashtag")}` : "Ready";
 }
 
+// The post caption: the box, what the feed shows before "… more" (as you type) and, from
+// Studio's caption check, the one or two things worth fixing in it.
+const FEED_CUT = 125;
+function captionBody(d, extra = "") {
+  return `<textarea id="caption" placeholder="The caption you'll post. You have the final say.">${esc(d.caption)}</textarea>
+    <div class="cap-feed" id="cap-feed" aria-live="polite">${capFeedHTML(d.caption, d.caption_check)}</div>
+    <p class="muted small">Keep place names (estates, streets, clients) out of it.</p>
+    <div class="row"><button class="btn" id="caption-save">Save caption</button>${extra}</div>`;
+}
+function capFeedHTML(text, check) {
+  const t = String(text || "").trim();
+  if (!t) return "";
+  const cut = t.length > FEED_CUT;
+  const shown = (cut ? t.slice(0, FEED_CUT) : t).replace(/\s*\n+\s*/g, " ");
+  const found = (check?.findings || []).slice(0, 2);
+  return `<p class="cap-line"><span class="um-label">In the feed</span> <span class="cap-text">${esc(shown)}</span>${cut ? `<span class="cap-more">… more</span>` : ""}</p>
+    ${found.length ? `<ul class="cap-lint">${found.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}`;
+}
+let capTimer = null, capSeq = 0;
+function captionTyped(box) {
+  const feed = $("#cap-feed");
+  if (!feed) return;
+  // The preview follows at once; the check (a quick ask to Studio) once typing pauses.
+  const old = feed.querySelector(".cap-lint")?.outerHTML || "";
+  feed.innerHTML = capFeedHTML(box.value, null) + old;
+  clearTimeout(capTimer);
+  const seq = ++capSeq;
+  capTimer = setTimeout(async () => {
+    try {
+      const check = await api("/api/caption/check", { caption: box.value });
+      if (seq === capSeq && $("#cap-feed")) $("#cap-feed").innerHTML = capFeedHTML(box.value, check);
+    } catch { /* the preview still shows; the check comes back with the next keystroke */ }
+  }, 500);
+}
+
 function musicPeek(m) {
   if (!m) return "";
   if (m.source === "epidemic") return `${m.title}, Epidemic Sound`;
@@ -2044,6 +2125,11 @@ function checksBody(d) {
   if (qa.true_peak != null) items.push(`Loudest peak: ${esc(qa.true_peak.toFixed(1))} dB`);
   if (qa.match != null) items.push(`Words intact after the cuts: <strong>${Math.round(qa.match * 100)}%</strong>`);
   if (qa.missing?.length) items.push(`Possibly clipped or misheard: ${qa.missing.map(esc).join(", ")}`);
+  if (qa.hook?.seconds != null) {
+    items.push(qa.hook.over
+      ? `<span class="bad-text">Spoken hook: about ${esc(qa.hook.seconds.toFixed(1))} s</span>, past 3 seconds. Say the point sooner: “${esc(qa.hook.text)}”`
+      : `Spoken hook: about <strong>${esc(qa.hook.seconds.toFixed(1))} s</strong> (inside 3 seconds)`);
+  }
   if (d.graphics) items.push(`Graphics: ${esc(d.graphics)}`);
   if (d.cost) items.push(`API cost so far: ${esc(money(d.cost))}${d.self_fix_cost ? ` (Studio's own fixes ${esc(money(d.self_fix_cost))})` : ""}`);
   return bullets(items) || `<p class="muted small">No checks ran on this draft.</p>`;
@@ -2051,7 +2137,8 @@ function checksBody(d) {
 
 function checksPeek(qa) {
   if (!qa) return "";
-  return [qa.lufs != null && `${qa.lufs.toFixed(0)} LUFS`, qa.match != null && `${Math.round(qa.match * 100)}% words intact`].filter(Boolean).join(" · ");
+  return [qa.hook?.over && `hook ${qa.hook.seconds.toFixed(1)} s`, qa.lufs != null && `${qa.lufs.toFixed(0)} LUFS`,
+    qa.match != null && `${Math.round(qa.match * 100)}% words intact`].filter(Boolean).join(" · ");
 }
 
 function briefBody(d) {
@@ -2240,9 +2327,7 @@ function carouselPageHTML(d) {
   const download = d.download ? `<a class="btn" href="${esc(d.download)}" download>Download (.zip)</a>` : "";
   const folds = [
     foldHTML("production", "caption", "Post caption", captionPeek(d.caption),
-      `<textarea id="caption" placeholder="The caption you'll post. You have the final say.">${esc(d.caption)}</textarea>
-       <p class="muted small">Keep place names (estates, streets, clients) out of it.</p>
-       <div class="row"><button class="btn" id="caption-save">Save caption</button>${download}</div>`),
+      captionBody(d, download)),
     d.edit_summary ? foldHTML("production", "editor", "What Studio did", "", bullets(sentences(d.edit_summary).map(esc))) : "",
     n ? foldHTML("production", "words", "The words on each slide", `${n} slides`, `<ol class="slide-words">${words}</ol>`) : "",
     d.sources?.length ? foldHTML("production", "brief", "Stills taken from", plural(d.sources.length, "clip"),
@@ -2337,10 +2422,7 @@ function productionPageHTML(d) {
   if (edit.hook_text) editItems.push(`Hook text: “${esc(edit.hook_text)}”`);
   const rows = {
     caption: () => foldHTML("production", "caption", "Post caption", captionPeek(d.caption),
-      `<textarea id="caption" placeholder="The caption you'll post. You have the final say.">${esc(d.caption)}</textarea>
-       <p class="muted small">Keep place names (estates, streets, clients) out of it.</p>
-       <div class="row"><button class="btn" id="caption-save">Save caption</button>
-       ${d.video ? `<a class="btn" href="${esc(d.video)}&download=1" download>Download video</a>` : ""}</div>`),
+      captionBody(d, d.video ? `<a class="btn" href="${esc(d.video)}&download=1" download>Download video</a>` : "")),
     editor: () => d.edit_summary || edit.cuts ? foldHTML("production", "editor", "What the editor did",
       edit.cuts ? `${plural(edit.cuts, "cut")} from ${plural(edit.clips, "clip")}` : "", bullets(editItems) || `<p class="muted small">No summary.</p>`) : "",
     music: () => d.music ? foldHTML("production", "music", "Music", musicPeek(d.music), musicHTML(d.music).replace(/^<div><h3>Music<\/h3>/, "<div>")) : "",
@@ -2738,6 +2820,8 @@ async function detailClick(e) {
       if (await forgetRule(forget.dataset.forgetRule)) await loadDetail();
     } else if (id === "playbook-open") {
       await openPlaybook();
+    } else if (id === "voice-open") {
+      await openVoice();
     } else if (pick) {
       const n = Number(pick.dataset.conceptPick);
       for (const b of document.querySelectorAll("[data-concept-pick]")) b.disabled = true;
@@ -2856,6 +2940,7 @@ async function detailClick(e) {
   }
 }
 
+$("#panel").addEventListener("input", (e) => { if (e.target.id === "caption") captionTyped(e.target); });
 $("#panel").addEventListener("change", async (e) => {
   if (state.current?.kind === "plan") { await planPanelChange(e); return; }
   if (e.target.id === "note-slide") { e.target.dataset.touched = "1"; return; }

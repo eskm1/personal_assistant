@@ -545,7 +545,9 @@ def make_production(conn: sqlite3.Connection, idea_id: int, caption: str | None 
     if idea["production_id"]:
         return idea["production_id"]
     segments = json.loads(idea["segments"] or "[]")
+    import wording  # the safe fixes on words written online (invisible characters, em dashes...)
     plan = {k: idea[k] for k in ("title", "brand", "format", "hook", "angle", "est_seconds")}
+    plan["hook"] = wording.tidy(plan["hook"])
     plan.update(beats=json.loads(idea["beats"] or "[]"), segments=segments, idea_id=idea_id,
                 wishlist=json.loads(idea["wishlist"] or "[]"), cta=idea["cta"] or "",
                 music_plan=json.loads(idea["music_plan"] or "{}"))
@@ -557,7 +559,7 @@ def make_production(conn: sqlite3.Connection, idea_id: int, caption: str | None 
         """INSERT INTO productions (title, brand, format, status, version, idea, source_clips, caption,
                plan, created_at, updated_at) VALUES (?, ?, ?, 'planned', 0, ?, ?, ?, ?, ?, ?)""",
         (idea["title"], idea["brand"], idea["format"], f"{idea['hook']}\n\n{idea['angle'] or idea['purpose'] or ''}",
-         json.dumps(clip_ids), caption if caption is not None else idea["caption"], json.dumps(plan),
+         json.dumps(clip_ids), wording.tidy(caption if caption is not None else idea["caption"]), json.dumps(plan),
          stamp, stamp),
     )
     conn.execute("UPDATE ideas SET status = 'made', production_id = ? WHERE id = ?", (cur.lastrowid, idea_id))

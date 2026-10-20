@@ -50,9 +50,12 @@ CODE_CHECKS = {
         "Captions are at most 18 characters and stay up long enough to read.",
         "Your voice is levelled and cleaned up; the music sits well under it while you talk.",
         "Loudness is Instagram's level (-14), with no harsh peaks.",
+        "The spoken hook is timed: one that runs past 3 seconds is flagged under Checks.",
+        "On-screen words lose em dashes, curly quotes and invisible characters; stock AI words are rewritten.",
     ],
     "carousel": [
         "Every word fits its slide (the text shrinks to fit; nothing is cut off).",
+        "Slides and the caption lose em dashes, curly quotes and invisible characters; stock AI words are rewritten.",
     ],
 }
 

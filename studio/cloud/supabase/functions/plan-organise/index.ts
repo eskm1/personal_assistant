@@ -7,7 +7,14 @@ import { type Caller, check, db, requireMember } from "../_shared/db.ts";
 import { background, HttpError, idParam, json, readJson, serve } from "../_shared/http.ts";
 import { expireStale, loadContext, runJob, WORK_BUDGET_MS } from "../_shared/jobs.ts";
 import { boardText, organisePrompt, planOrganise } from "../_shared/plan.ts";
-import { ORGANISE_NO_SHOTS_NOTE, ORGANISE_NO_SHOTS_SCHEMA, ORGANISE_SYSTEM, renderSystem } from "../_shared/prompts.ts";
+import { missingColumn } from "../_shared/plan.ts";
+import {
+  ORGANISE_NO_SHOTS_NOTE,
+  ORGANISE_NO_SHOTS_SCHEMA,
+  ORGANISE_SYSTEM,
+  renderSystem,
+  wordingBlock,
+} from "../_shared/prompts.ts";
 
 const MAX_TEXT = 20000;
 
@@ -74,6 +81,7 @@ async function organise(project: Project, dump: string, caller: Caller, deadline
       context.brands,
       context.playbook,
       context.contentPlan,
+      wordingBlock(context.voice, context.wording, { caption: true, hooks: true }),
     ),
     user: organisePrompt(project, board, dump),
     schema: ORGANISE_NO_SHOTS_SCHEMA,
@@ -123,7 +131,12 @@ async function organise(project: Project, dump: string, caller: Caller, deadline
   let ideaIds: number[] = [];
   let developJobIds: number[] = [];
   if (ideaRows.length) {
-    const inserted = check(await db().from("ideas").insert(ideaRows).select("id"), "add ideas") as { id: number }[];
+    let res = await db().from("ideas").insert(ideaRows).select("id");
+    if (res.error && missingColumn(res.error, "hook_options")) {
+      // Before the hook-options update (cloud_setup.py --update): the ideas without them.
+      res = await db().from("ideas").insert(ideaRows.map(({ hook_options: _, ...row }) => row)).select("id");
+    }
+    const inserted = check(res, "add ideas") as { id: number }[];
     ideaIds = inserted.map((r) => r.id);
     const jobs = check(
       await db().from("jobs").insert(ideaIds.map((ideaId) => ({

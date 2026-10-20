@@ -205,6 +205,16 @@ ALLOWED_EMAIL_DOMAINS = tuple(d.strip().lower().lstrip("@") for d in
 
 # Notes marked "remember for future edits" are appended here; the editor reads it.
 PLAYBOOK = ROOT / "playbook.md"
+# Bryan's voice file (voice_file.py): how he sounds, drafted from his own talking-head videos and
+# edited by him in Review (Playbook > Your voice). Every prompt that writes words viewers read gets it.
+VOICE_FILE = ROOT / "voice.md"
+# The de-AI filter on everything Studio writes that viewers read (wording.py): invisible characters
+# and typography are always fixed; on (the default), text that still reads machine-written gets one
+# short Claude rewrite (a cent or two) and the better version is kept. 0 = only the safe fixes.
+HUMANIZE = _flag("STUDIO_HUMANIZE", True)
+# Words and phrases the filter never flags for Bryan (trade terms he really says, like "hack"),
+# one per line; made with a few on first use.
+HUMANIZE_ALLOW = ROOT / "humanize_allow.txt"
 
 # ── Accounts ──────────────────────────────────────────────────────────────────
 # Which Instagram accounts Studio makes content for. For now everything is Urban

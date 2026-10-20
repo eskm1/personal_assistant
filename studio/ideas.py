@@ -14,6 +14,7 @@ import anthropic
 
 import playbook
 import settings
+import wording
 from settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
 
 log = logging.getLogger("studio.ideas")
@@ -97,7 +98,7 @@ Fewer, stronger ideas beat stretching thin footage; return none for an account w
 - segments: the exact pieces of footage, in playback order, by clip id with start and end \
 seconds inside that clip. Use the transcript timestamps so speech starts and ends on whole \
 phrases. A clip may appear in several ideas.
-- caption: a ready-to-edit Instagram caption in Bryan's voice with 3 to 6 relevant hashtags.
+- caption: a ready-to-edit Instagram caption in Bryan's voice with 3 to 5 relevant hashtags (the caption rule below).
 - est_seconds: the finished length.
 - wishlist: up to 4 specific shots Bryan could still film that would make this post noticeably \
 better, each with why (e.g. "5-second close-up of the membrane being rolled onto the wall corner: \
@@ -193,7 +194,7 @@ def generate(conn, focus: str = "", count: int = 6, client: anthropic.Anthropic 
         # Planning is judgment-heavy and runs only when Bryan asks, so think harder than tagging.
         output_config={"effort": "high", "format": {"type": "json_schema", "schema": SCHEMA}},
         system=_SYSTEM.replace("{brands}", brands).replace("{playbook}", playbook.text())
-                      .replace("{count}", str(count)),
+                      .replace("{count}", str(count)) + "\n\n" + wording.guide(caption=True),
         messages=[{"role": "user", "content": user}],
     )
     import usage
@@ -205,6 +206,7 @@ def generate(conn, focus: str = "", count: int = 6, client: anthropic.Anthropic 
     text = next((b.text for b in response.content if b.type == "text"), "")
     durations = {r["id"]: r["duration"] or 0 for r in conn.execute("SELECT id, duration FROM clips")}
     ideas = _clean(json.loads(text)["ideas"], durations)
+    wording.polish_ideas(ideas, "ideas", f"ideas:{batch}", client)  # the words viewers read
     catalog.save_ideas(conn, batch, ideas)
     log.info("Saved %d ideas (batch %s) from %d clips", len(ideas), batch, len(ids))
     return batch, len(ideas)

@@ -35,6 +35,7 @@ import tempfile
 from pathlib import Path
 
 import render
+import wording
 
 W, H, FPS = 1080, 1920, 30
 HERE = render.RENDER_DIR / "motion"
@@ -131,6 +132,7 @@ class _Check:
             self.bad(where, f"{key} must be text")
             return ""
         v = _CTRL.sub("", v.replace("\r", ""))
+        v = wording.tidy(v)  # the safe fixes: invisible characters, em dashes, curly quotes
         parts = [" ".join(p.split()) for p in v.split("\n")]
         parts = [p for p in parts if p][:lines]
         v = "\n".join(parts)

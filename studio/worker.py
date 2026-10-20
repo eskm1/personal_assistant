@@ -747,6 +747,9 @@ def main() -> int:
         updater.tick(idle=idle)
         import previews
         previews.tick(conn, idle)  # older clips and drafts get their light copy, one at a time
+        if idle and use_claude:  # Bryan's voice file, once, when enough of his talking videos are in
+            import voice_file
+            voice_file.tick(conn)
         time.sleep(POLL_SECONDS)
 
 

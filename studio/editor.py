@@ -53,6 +53,7 @@ import music
 import playbook
 import render
 import settings
+import wording
 from settings import ANTHROPIC_API_KEY, CLAUDE_MODEL, ROOT
 
 log = logging.getLogger("studio.editor")
@@ -413,7 +414,7 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
         output_config={"effort": "high", "format": {"type": "json_schema", "schema": _schema()}},
         system=_SYSTEM.replace("{playbook}", playbook.text()).replace("{music_rule}", music_rule)
-        .replace("{pause_rule}", pause_rule).replace("{scene_rule}", _scene_rule()),
+        .replace("{pause_rule}", pause_rule).replace("{scene_rule}", _scene_rule()) + "\n\n" + wording.guide(),
         messages=[{"role": "user", "content": user}],
     )
     import usage
@@ -422,7 +423,50 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes
         raise RuntimeError("Claude declined to plan this edit")
     if response.stop_reason == "max_tokens":
         raise RuntimeError("Claude's edit plan was cut off (max_tokens)")
-    return tidy_plan(json.loads(next(b.text for b in response.content if b.type == "text")))
+    edl = json.loads(next(b.text for b in response.content if b.type == "text"))
+    return tidy_plan(polish_plan(edl, ref or f"production:{production['id']}", client))
+
+
+def polish_plan(edl: dict, ref: str, client=None) -> dict:
+    """The plan's on-screen words (the hook text, each card's or callout's title and lines, a drawn
+    scene's words) through wording.polish: the safe fixes, and one rewrite of whatever still reads
+    machine-written (its cost counted with the edit). The italic *marks* are still in; tidy_plan
+    takes them out after."""
+    fields = {"hook_text": edl.get("hook_text") or ""}
+    scenes = {}
+    for i, g in enumerate(edl.get("graphics") or []):
+        if g.get("style") == "scene":
+            raw = g.get("scene")
+            try:
+                scene = json.loads(raw) if isinstance(raw, str) else raw
+            except ValueError:
+                continue
+            if isinstance(scene, dict):
+                scenes[i] = scene
+                fields.update({f"g{i}.scene.{k}": v for k, v in wording.scene_texts(scene).items()})
+        else:
+            fields[f"g{i}.title"] = g.get("title") or ""
+            fields.update({f"g{i}.lines.{n}": x for n, x in enumerate(g.get("lines") or []) if isinstance(x, str)})
+    out, _ = wording.polish(fields, "edit", ref, client)
+    edl["hook_text"] = out["hook_text"]
+    graphics = edl.get("graphics") or []
+    changed = set()
+    for key, text in out.items():
+        if key == "hook_text" or text == fields.get(key):
+            continue
+        head, part, rest = key.split(".", 2) if key.count(".") >= 2 else (*key.split(".", 1), "")
+        g = graphics[int(head[1:])]
+        if part == "title":
+            g["title"] = text
+        elif part == "lines":
+            g["lines"][int(rest)] = text
+        elif part == "scene":
+            wording.set_scene_text(scenes[int(head[1:])], rest, text)
+            changed.add(int(head[1:]))
+    for i, scene in scenes.items():
+        if i in changed:
+            graphics[i]["scene"] = json.dumps(scene, ensure_ascii=False) if isinstance(graphics[i].get("scene"), str) else scene
+    return edl
 
 
 # ── Cut points ────────────────────────────────────────────────────────────────
@@ -2057,7 +2101,9 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         if fix_loudness(final, loud):
             loud = check_loudness(final)
             checks.append({"did": "set the loudness to Instagram's level", "counted": False})
-        qa = {**loud, **check_words(final, words, work), "sound": sound, "checks": checks}
+        qa = {**loud, **check_words(final, words, work), "sound": sound, "checks": checks,
+              # beats.py's check on the spoken hook: does the first sentence land inside 3 seconds?
+              "hook": wording.hook_timing(words)}
 
     thumb = final.with_suffix(".jpg")
     extract._run([settings.FFMPEG, "-y", "-v", "error", "-ss", f"{min(1.0, total / 2):.2f}", "-i", str(final),

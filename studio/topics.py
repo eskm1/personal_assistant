@@ -36,6 +36,7 @@ import content_plan
 import footage_ideas
 import playbook
 import settings
+import wording
 
 log = logging.getLogger("studio.topics")
 
@@ -383,6 +384,9 @@ def _schema() -> dict:
     return {"type": "object", "properties": {
         "suggestions": {"type": "array", "items": {"type": "object", "properties": {
             "title": {"type": "string"}, "hook": {"type": "string"},
+            "hook_options": {"type": "array", "items": {
+                "type": "object", "properties": {"text": {"type": "string"}, "formula": {"type": "string"}},
+                "required": ["text", "formula"], "additionalProperties": False}},
             "post_type": {"type": "string", "enum": list(KINDS_OK)}, "format": {"type": "string", "enum": formats},
             "why_now": {"type": "string"}, "source": {"type": "string", "enum": list(SOURCES)},
             "clip_id": {"type": "integer"}, "start": {"type": "number"}, "end": {"type": "number"},
@@ -390,7 +394,7 @@ def _schema() -> dict:
             "purpose": {"type": "string"}, "cta": {"type": "string"}, "caption": {"type": "string"},
             "est_seconds": {"type": "number"},
             "slides": {"type": "array", "items": slide}, "shots": {"type": "array", "items": shot}},
-            "required": ["title", "hook", "post_type", "format", "why_now", "source", "clip_id", "start", "end",
+            "required": ["title", "hook", "hook_options", "post_type", "format", "why_now", "source", "clip_id", "start", "end",
                          "question_id", "purpose", "cta", "caption", "est_seconds", "slides", "shots"],
             "additionalProperties": False}},
         "notes": {"type": "string"}},
@@ -428,8 +432,8 @@ suggestions already cover. Never post_type finished: that needs real handover fo
 - format: {formats}
 - title: short and specific (internal). hook: the cover line or the first 3 seconds. purpose: who \
 it's for and what they should do after. cta: the kind's ask; an offer only from the listed offers, \
-worded as listed. caption: ready to edit, in Bryan's voice, 3 to 6 hashtags. est_seconds: a Reel's \
-length (30 for a carousel).
+worded as listed. caption: ready to edit, in Bryan's voice, 3 to 5 hashtags (the caption rule below). \
+est_seconds: a Reel's length (30 for a carousel).
 - slides (carousels; empty for a Reel): the outline, 6 to 9 slides: one cover first (the hook), \
 points (a heading and one or two plain sentences each), one ask last. picture: what picture would \
 suit the slide, in a few words (a still from the cited clip, a project photo, or a concept of the idea).
@@ -465,9 +469,11 @@ def _carousels() -> bool:
 
 
 def system_text() -> str:
+    import wording
     return (_SYSTEM.replace("{brands}", settings.brands_text()).replace("{playbook}", playbook.text())
             .replace("{count}", str(max(settings.TOPICS_COUNT, 1)))
-            .replace("{formats}", _FORMATS if _carousels() else _FORMATS_NO_CAROUSEL))
+            .replace("{formats}", _FORMATS if _carousels() else _FORMATS_NO_CAROUSEL)
+            + "\n\n" + wording.guide(caption=True, hooks=True))
 
 
 def prompt(ctx: dict) -> str:
@@ -556,7 +562,9 @@ def clean(answer: dict, ctx: dict) -> tuple[list[dict], list[dict]]:
     keep, skipped = [], []
     for s in answer.get("suggestions", []):
         title = (s.get("title") or "").strip()[:300]
-        hook = (s.get("hook") or "").strip()
+        hook = written = (s.get("hook") or "").strip()
+        # Three hooks from the formulas, scored (wording.pick_hook): the strongest is the hook.
+        hook, hook_options = wording.pick_hook(s.get("hook_options"), hook)
         def skip(why):
             skipped.append({"title": title or "(untitled)", "why": why})
         if not title:
@@ -605,6 +613,7 @@ def clean(answer: dict, ctx: dict) -> tuple[list[dict], list[dict]]:
             "title": title, "post_type": kind, "format": fmt,
             "brand": settings.SINGLE_BRAND or "urban_makers",
             "hook": _public(hook, names, allowed, 600), "purpose": (s.get("purpose") or "").strip()[:1000],
+            "hook_options": [{**o, "text": _public(o["text"], names, allowed, 600)} for o in hook_options],
             "cta": _public(s.get("cta"), names, allowed, 400), "caption": _public(s.get("caption"), names, allowed, 2200),
             "est_seconds": s.get("est_seconds") if isinstance(s.get("est_seconds"), (int, float))
             and 5 <= s["est_seconds"] <= 180 else 30,
@@ -618,6 +627,9 @@ def clean(answer: dict, ctx: dict) -> tuple[list[dict], list[dict]]:
             if len(fields["slides"]) < 2:
                 skip("no slide outline")
                 continue
+            cover = fields["slides"][0]
+            if cover["role"] == "cover" and hook != written and _norm(cover["heading"]) == _norm(_public(written, names, allowed, 200)):
+                cover["heading"] = fields["hook"][:200]  # the cover is the hook: the stronger one
         else:
             durations = {r["id"]: r["duration"] or 0 for r in ctx["clips"]}
             shots = [footage_ideas._clean_shot(x, durations) for x in s.get("shots") or []]
@@ -745,6 +757,8 @@ def run(api, conn, trigger: str, client=None, now: datetime | None = None) -> di
         ctx = context(api, conn, now)
         answer = _ask(prompt(ctx), f"topics:{run_id}", client)
         picks, skipped = clean(answer, ctx)
+        # The words viewers read: safe fixes, and one rewrite of what still reads machine-written.
+        wording.polish_ideas(picks, "topics", f"topics:{run_id}", client)
         written = write(footage_ideas._Cloud(api, conn), picks, run_id)
         result = {"new_ideas": [w["id"] for w in written], "suggestions": written, "skipped": skipped,
                   "gaps": ctx["gaps"], "notes": (answer.get("notes") or "")[:1000]}

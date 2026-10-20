@@ -721,3 +721,33 @@ one month at a time), More > Results (`#/results`), More > Instagram (`#/instagr
 with the next scheduled posts, Needs your call lists posts that couldn't go out (Try again), the month's slots tick off
 what was posted. An approved idea shows its post and Schedule / Change. The dialogs (Schedule, the Instagram box) are
 `cloud/planner/post-ui.js` + `post-ui.css`, shared with Review (served as `/static/post-ui.*`).
+
+## Hook options and Bryan's voice (migration 20261026000000_hook_options.sql)
+
+From instagram-agent-skill (MIT; `studio/igkit`, `studio/wording.py`, `studio/voice_file.py`).
+
+**Schema.** `ideas.hook_options` jsonb null, checked by `valid_hook_options()`: at most 6 of `{text (<= 1000),
+formula (<= 80), score (number or null)}`, best first. `context.key` also allows `voice` (Bryan's voice file,
+compacted) and `wording` (the "never write these" list with his allowlist). Members edit `hook_options` like any idea
+field.
+
+**Who writes it.**
+- Claude writes three options from the 26 hook formulas wherever it writes an idea's hook: `plan-organise`,
+  `plan-develop` (Reels; `IDEA_FIELDS.hook_options`), `footage_ideas.py`, `topics.py` (and `plan.py` offline).
+  The Edge Functions store them unscored (`{text, formula}`); before the update they insert/update without the
+  column (`missingColumn`).
+- The Studio machine scores (`wording.pick_hook`, igkit/hookscore.py; Chinese = null): its own writers store
+  scored options and the strongest as the hook; options written online are scored by the sync
+  (`cloud_sync.score_hooks`, needs `check_hook_options`): the hook becomes the strongest only while it is still
+  one of Claude's (PATCH filtered on the old hook), so a hook someone typed is never replaced.
+- The planner's idea page (Reels): "Score N" under the Hook when the hook is one of the options, "N other hooks"
+  (or "N hook ideas" for a hand-written hook) opens them with Use this, which sets `hook` (a hand-written hook is
+  kept in the list with `score: null`).
+
+**Prompts.** Every prompt that writes viewer-facing words ends with `wording.guide` / TS `wordingBlock`: the voice
+file (context `voice`), the never list (context `wording`, else `_shared/wording.ts`'s generated `NEVER_WRITE`), the
+caption rule and (ideas) the hook formulas. `_shared/wording.ts` is generated: `python -c "import wording;
+wording.write_ts()"`. The Studio machine pushes `voice` and `wording` with brands/playbook (`_push_context`), once
+the update is online. Text written online gets the safe fixes (`wording.tidy`) when Studio uses it (`make`,
+carousel slides, drawn scenes).
+

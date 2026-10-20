@@ -895,3 +895,15 @@ button.concept-opt:disabled { opacity: .6; cursor: progress; }
 .pr-cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; }
 .pr-cell { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; background: var(--um-paper); border-radius: var(--um-radius-sm); }
 .pr-cell strong { font-family: var(--um-mono); font-size: var(--um-fs-lead); font-weight: 500; }
+
+/* The post caption: what the feed shows before "… more", and the caption check's findings. */
+.cap-feed:empty { display: none; }
+.cap-feed { padding: 8px 12px; background: var(--um-paper-mid); border-radius: var(--um-radius-sm); }
+.cap-line { margin: 0; font-size: var(--um-fs-ui); line-height: 1.45; color: var(--um-ink); overflow-wrap: anywhere; }
+.cap-line .um-label { margin-right: 6px; }
+.cap-more { color: var(--ink-soft); margin-left: 2px; white-space: nowrap; }
+.cap-lint { margin: 6px 0 0; padding: 0 0 0 16px; font-size: var(--um-fs-meta); color: var(--um-warn-ink); line-height: 1.4; }
+.cap-lint li + li { margin-top: 2px; }
+/* A dialog's title with a button beside it (Playbook · Your voice). */
+.modal-head-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-right: 40px; }
+.modal-head-row h2 { margin: 0; }

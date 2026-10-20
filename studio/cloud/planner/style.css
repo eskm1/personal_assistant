@@ -1367,6 +1367,17 @@ details.grp[open] > summary { margin-bottom: 8px; }
 .hook-card .um-label { margin: 0; display: flex; align-items: center; gap: 8px; }
 textarea.hook-input { width: 100%; min-height: 0; padding: 0; border: 0; background: none; resize: none; font-size: 15px; line-height: 1.4; }
 textarea.hook-input:focus { box-shadow: none; }
+/* The hook's score and the other hooks Claude wrote (swap one in). */
+.hook-extra { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 0; }
+.hook-extra:empty { display: none; }
+.hook-score { font-size: var(--um-fs-meta); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.hook-more { font-size: var(--um-fs-meta); }
+.hook-opts { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.hook-opts li { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; padding: 8px 10px; background: var(--um-paper-mid); border-radius: var(--um-radius-sm); }
+.hook-opt-text { font-size: var(--um-fs-body); line-height: 1.4; overflow-wrap: anywhere; }
+.hook-opt-meta { grid-column: 1; font-size: var(--um-fs-meta); color: var(--ink-soft); }
+.hook-opt-meta:empty { display: none; }
+.hook-opts .btn { grid-column: 2; grid-row: 1 / span 2; }
 .idea-body .sec-head { margin: 0; display: flex; line-height: 1.4; justify-content: space-between; gap: 12px; font-family: var(--um-mono); font-size: var(--um-fs-label); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); }
 .idea-shots { display: flex; flex-direction: column; gap: 8px; }
 .idea-shots > p { margin: 0; }

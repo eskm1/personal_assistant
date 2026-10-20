@@ -283,7 +283,22 @@ def _library_info() -> dict | None:
 
 def _push_context(api: Client) -> int:
     import playbook
-    values = {"brands": settings.brands_text(), "playbook": playbook.text()}
+    import voice_file
+    import wording
+    n = _push_values(api, {"brands": settings.brands_text(), "playbook": playbook.text()})
+    # Bryan's voice file and the "never write these" list (with his allowlist), for the Edge
+    # Functions' prompts: keys the database accepts once migration 20261026000000 is online.
+    if _hook_options_online:
+        try:
+            n += _push_values(api, {"voice": voice_file.compact(), "wording": wording.never_text()})
+        except CloudError as e:
+            if "can't reach" in str(e):
+                raise
+            log.debug("The voice file isn't online yet: %s", e)
+    return n
+
+
+def _push_values(api: Client, values: dict[str, str]) -> int:
     changed = []
     for key, value in values.items():
         digest = hashlib.sha256(value.encode()).hexdigest()
@@ -835,6 +850,50 @@ def check_topics(api: Client) -> bool:
             raise
         log.warning("%s (suggested topics and client questions wait for it)", NEEDS_UPDATE)
     return _topics_online
+
+
+_hook_options_online = False  # migration 20261026000000 (ideas.hook_options, context voice/wording) is online
+_hook_options_checked = 0.0
+
+
+def check_hook_options(api: Client) -> bool:
+    """Is the hook-options migration online? Asked again every 10 minutes while it isn't."""
+    global _hook_options_online, _hook_options_checked
+    if _hook_options_online or time.time() - _hook_options_checked < SCHEMA_RECHECK_SECONDS:
+        return _hook_options_online
+    _hook_options_checked = time.time()
+    try:
+        api.request("GET", "/rest/v1/ideas", params={"select": "hook_options", "limit": 1})
+        _hook_options_online = True
+    except CloudError as e:
+        if "HTTP 400" not in str(e) and not _missing_table(e):
+            raise
+        log.warning("%s (hook scores wait for it)", NEEDS_UPDATE)
+    return _hook_options_online
+
+
+def score_hooks(api: Client, ideas: list[dict]) -> int:
+    """Hook options Claude wrote online (plan-organise / plan-develop) scored here with hookscore
+    (wording.pick_hook): the options get their scores, and the hook becomes the strongest one,
+    unless someone has changed the hook meanwhile. Returns how many ideas were scored."""
+    import wording
+    n = 0
+    for idea in ideas:
+        options = idea.get("hook_options")
+        if not isinstance(options, list) or not options or all(
+                isinstance(o, dict) and "score" in o for o in options):
+            continue
+        old = idea.get("hook") or ""
+        texts = {wording.tidy(str(o.get("text") or "")).strip().lower() for o in options if isinstance(o, dict)}
+        best, scored = wording.pick_hook(options, old)
+        values = {"hook_options": scored}
+        if wording.tidy(old).strip().lower() in texts | {""} and best != old:
+            values["hook"] = best  # still Claude's own pick: the strongest replaces it
+        rows = api.update("ideas", {"id": f"eq.{idea['id']}", "hook": f"eq.{old}"}, values)
+        if not rows and "hook" in values:  # the hook was edited meanwhile: score the options only
+            api.update("ideas", {"id": f"eq.{idea['id']}"}, {"hook_options": scored})
+        n += 1
+    return n
 
 
 def _post_folder_name(title: str, taken: set[str]) -> str:
@@ -1414,6 +1473,7 @@ def sync_once(conn, api: Client | None = None) -> dict:
     carousels = check_carousels(api)
     topics_on = check_topics(api)
     check_cleanup(api)
+    hooks_on = check_hook_options(api)
     counts["pulled"] = pulled["stats"]
     counts["clips_pushed"] = push_clips(api, conn)
     new_takes = push_takes(api, conn)
@@ -1448,6 +1508,8 @@ def sync_once(conn, api: Client | None = None) -> dict:
                                                                      remote["arcs"])))
     if content and topics_on:  # suggested topics for the month's gaps (weekly / behind; topics.py)
         steps.append(("suggested topics", lambda: topics.run_due(api, conn, remote["ideas"])))
+    if hooks_on:  # hook options written online, scored here (hookscore)
+        steps.append(("hook scores", lambda: score_hooks(api, remote["ideas"])))
     for name, fn in steps:
         try:
             value = fn()
@@ -1494,7 +1556,7 @@ def sync_once(conn, api: Client | None = None) -> dict:
             log.warning("Cloud sync, references failed (will retry): %s", message)
         status["ref_problems"] = [message]
         refs = {}
-    if not shoot_plan or not footage or not content or not carousels or not topics_on:
+    if not shoot_plan or not footage or not content or not carousels or not topics_on or not hooks_on:
         status["note"] = NEEDS_UPDATE
     jobs += refs.pop("lines", [])
     counts["refs"] = {k: v for k, v in refs.items() if k != "skipped"}

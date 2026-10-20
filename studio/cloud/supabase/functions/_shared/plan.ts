@@ -13,12 +13,19 @@ export interface MusicPlan {
   search?: string;
 }
 
+export interface HookOption {
+  text: string;
+  formula: string;
+}
+
 export interface IdeaFields {
   title: string;
   brand: Brand;
   post_type: PostType | null;
   format: Format;
   hook: string;
+  /** Claude's three hooks (unscored: the Studio machine scores them and may swap the hook). */
+  hook_options: HookOption[];
   purpose: string;
   cta: string;
   caption: string;
@@ -77,12 +84,33 @@ export function ideaFields(v: unknown, defaults: { brand: string; format?: strin
     post_type: oneOf(i.post_type, POST_TYPES),
     format: oneOf(i.format, FORMATS) ?? oneOf(defaults.format, FORMATS) ?? "talking_head",
     hook: text(i.hook, 1000),
+    hook_options: hookOptions(i.hook_options),
     purpose: text(i.purpose, 2000),
     cta: text(i.cta, 500),
     caption: text(i.caption, 4000),
     est_seconds: Math.round(num(i.est_seconds, 5, 600) ?? 30),
     music: musicPlan(i.music),
   };
+}
+
+/** At most three hooks with words, each {text, formula} (like wording.pick_hook, before scoring). */
+export function hookOptions(v: unknown): HookOption[] {
+  const out: HookOption[] = [];
+  for (const raw of Array.isArray(v) ? v : []) {
+    const o = asObject(raw);
+    const t = text(o.text, 300);
+    if (!t || out.some((x) => x.text.toLowerCase() === t.toLowerCase())) continue;
+    out.push({ text: t, formula: text(o.formula, 80) });
+    if (out.length === 3) break;
+  }
+  return out;
+}
+
+/** A write that names a column the database doesn't have yet (before `cloud_setup.py --update`). */
+export function missingColumn(error: unknown, column: string): boolean {
+  const e = asObject(error);
+  const msg = `${e.message ?? ""} ${e.details ?? ""} ${e.hint ?? ""}`;
+  return (e.code === "PGRST204" || e.code === "42703") && msg.includes(column);
 }
 
 /** Like plan.add_shot. */

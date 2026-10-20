@@ -32,6 +32,7 @@ import catalog
 import content_plan
 import playbook
 import settings
+import wording
 
 log = logging.getLogger("studio.footage_ideas")
 
@@ -97,12 +98,16 @@ def _schema() -> dict:
                     "post_type": {"type": "string", "enum": list(content_plan.KINDS)},
                     "format": {"type": "string", "enum": ["talking_head", "day_in_the_life", "compilation"]
                                + (["carousel"] if _carousels() else [])},
-                    "hook": {"type": "string"}, "purpose": {"type": "string"}, "cta": {"type": "string"},
+                    "hook": {"type": "string"},
+                    "hook_options": {"type": "array", "items": {
+                        "type": "object", "properties": {"text": {"type": "string"}, "formula": {"type": "string"}},
+                        "required": ["text", "formula"], "additionalProperties": False}},
+                    "purpose": {"type": "string"}, "cta": {"type": "string"},
                     "caption": {"type": "string"}, "est_seconds": {"type": "number"},
                     "shots": {"type": "array", "items": shot},
                 },
-                "required": ["title", "brand", "post_type", "format", "hook", "purpose", "cta", "caption", "est_seconds",
-                             "shots"],
+                "required": ["title", "brand", "post_type", "format", "hook", "hook_options", "purpose", "cta",
+                             "caption", "est_seconds", "shots"],
                 "additionalProperties": False}},
             "notes": {"type": "string"},
         },
@@ -144,7 +149,8 @@ are short this month.
 - hook: the opening line or visual of the first 3 seconds, quoted from the transcript when possible. \
 purpose: who it's for and what they should think, feel or do. cta: the call to action at the end, \
 fitting the kind's ask; an offer only from the listed offers, worded as listed. \
-caption: a ready-to-edit Instagram caption in Bryan's voice with 3 to 6 hashtags.
+caption: a ready-to-edit Instagram caption in Bryan's voice with 3 to 5 hashtags (the caption rule \
+below).
 - Never invent facts, prices, results, timelines, promotions, offers or client details: use only \
 what the footage shows, what Bryan says and the listed offers. Write [placeholder] where the team \
 must fill something in.
@@ -163,7 +169,8 @@ def _ask(user: str, ref: str, client=None) -> dict:
     client = client or anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY or None)
     system = (_SYSTEM.replace("{brands}", settings.brands_text()).replace("{playbook}", playbook.text())
               .replace("{count}", str(MAX_NEW_IDEAS)).replace("{carousel}", CAROUSEL_RULE if _carousels() else "")
-              .replace("{cameras}", "; ".join(f"{k} = {v}" for k, v in plan.CAMERAS.items())))
+              .replace("{cameras}", "; ".join(f"{k} = {v}" for k, v in plan.CAMERAS.items()))
+              + "\n\n" + wording.guide(caption=True, hooks=True))
     response = llm.final_message(
         client, model=settings.CLAUDE_MODEL, max_tokens=32000,
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
@@ -184,6 +191,12 @@ the moment in start; end as start), on_screen the slide's heading and line its w
 is the cover and cta the last slide. Studio writes the slides properly next. Keep it to Know-how, \
 Ideas or Finished homes posts, and only where it clearly suits: most posts stay Reels.
 """
+
+
+def _hooks_online() -> bool:
+    """ideas.hook_options is online (migration 20261026000000)."""
+    import cloud_sync
+    return cloud_sync._hook_options_online
 
 
 def _carousels() -> bool:
@@ -286,6 +299,8 @@ class _Cloud:
             "hook": f["hook"], "purpose": f["purpose"], "cta": f["cta"], "caption": f["caption"],
             "est_seconds": f["est_seconds"], "decision": "proposed", "status": "new",
             **({"post_type": f["post_type"]} if f.get("post_type") and _plan_online() else {}),
+            # The three hooks and their scores (migration 20261026000000), for the planner's swap.
+            **({"hook_options": f["hook_options"]} if f.get("hook_options") and _hooks_online() else {}),
             **({"slides": f["slides"]} if f.get("slides") else {}),
             # Why Studio suggested it (topics.py; migration 20261022000000), for the planner's card.
             **({"suggestion": f["suggestion"]} if f.get("suggestion") else {}),
@@ -559,13 +574,16 @@ def _apply(store, ref, project: dict, ideas: list[dict], answer: dict, new_ids: 
             continue
         if arc_id is None:
             arc_id = store.arc(ref)
+        hook, hook_options = idea.get("hook") or "", idea.get("hook_options") or []
         fields = {
             "title": (idea.get("title") or "Untitled idea").strip()[:300],
             "brand": settings.SINGLE_BRAND or (idea.get("brand") if idea.get("brand") in settings.BRANDS else "urban_makers"),
             "post_type": content_plan.clean_type(idea.get("post_type")),
             "format": idea.get("format") if idea.get("format") in ("talking_head", "day_in_the_life", "compilation")
             or (idea.get("format") == "carousel" and _carousels() and store.place == "cloud") else "talking_head",
-            "hook": _private(idea.get("hook") or "", names), "purpose": idea.get("purpose") or "",
+            "hook": _private(hook, names), "purpose": idea.get("purpose") or "",
+            "hook_options": [{**o, "text": _private(o["text"], names)} for o in hook_options
+                             if isinstance(o, dict) and "score" in o],
             "cta": _private(idea.get("cta") or "", names), "caption": _private(idea.get("caption") or "", names),
             "est_seconds": idea.get("est_seconds") if isinstance(idea.get("est_seconds"), (int, float))
             and 5 <= idea["est_seconds"] <= 180 else 30}
@@ -637,6 +655,12 @@ def _run_project(conn, store, ref, project: dict, clips: list, trigger: str, cli
         durations = {r["id"]: r["duration"] or 0 for r in [*clips, *older]}
         plan_text = content_plan.context_text(store.api if store.place == "cloud" and _plan_online() else None)
         answer = _ask(_prompt(project, ideas, clips, older, plan_text), f"ideas:footage:{run_id}", client)
+        # Three hooks per new idea, scored (the strongest is the hook); then the words viewers read get
+        # the safe fixes, and one rewrite of what still reads machine-written.
+        new_ideas = [i for i in answer.get("new_ideas", [])[:MAX_NEW_IDEAS] if isinstance(i, dict)]
+        for i in new_ideas:
+            i["hook"], i["hook_options"] = wording.pick_hook(i.get("hook_options"), i.get("hook") or "")
+        wording.polish_ideas(new_ideas, "ideas", f"ideas:footage:{run_id}", client)
         result = _apply(store, ref, project, ideas, answer, set(ids), durations)
         result["clips"] = len(ids)
         conn.execute("UPDATE idea_runs SET state = 'done', result = ?, finished_at = ? WHERE id = ?",

@@ -61,10 +61,12 @@ export async function runJob(id: number, work: () => Promise<Record<string, unkn
   }
 }
 
-/** brands.md and the playbook, pushed by the laptop ("" when missing), and the content plan
+/** brands.md, the playbook, the voice file and the never list, pushed by the laptop ("" when missing), and the content plan
  * section: the kinds of post, this month's gaps and the offers (the defaults when the
  * content_plan table or content_month() isn't there yet). */
-export async function loadContext(): Promise<{ brands: string; playbook: string; contentPlan: string }> {
+export async function loadContext(): Promise<
+  { brands: string; playbook: string; contentPlan: string; voice: string; wording: string }
+> {
   const [ctx, plan, month] = await Promise.all([
     db().from("context").select("key, value"),
     db().from("content_plan").select("posts_per_week, offers").eq("id", 1).maybeSingle(),
@@ -74,5 +76,12 @@ export async function loadContext(): Promise<{ brands: string; playbook: string;
   const get = (k: string) => rows.find((r) => r.key === k)?.value ?? "";
   const planRow = plan.error ? null : plan.data as { posts_per_week?: number; offers?: Offer[] } | null;
   const counts = month.error ? null : month.data as MonthCounts | null;
-  return { brands: get("brands"), playbook: get("playbook"), contentPlan: contentPlanText(planRow, counts) };
+  // voice / wording: Bryan's voice file and the never list (migration 20261026000000; "" before it).
+  return {
+    brands: get("brands"),
+    playbook: get("playbook"),
+    contentPlan: contentPlanText(planRow, counts),
+    voice: get("voice"),
+    wording: get("wording"),
+  };
 }

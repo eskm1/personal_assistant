@@ -36,6 +36,7 @@ import playbook
 import previews
 import usage
 import webassets
+import wording
 from settings import DASHBOARD_HOST, DASHBOARD_PORT, INBOX, VIDEO_EXTS
 from webutil import LOOPBACK, body, client_ip, db, is_local, is_owner, own_origin, owner_only, text
 
@@ -326,7 +327,9 @@ def busy() -> bool:
     import draft_review
     import plan_routes
     import posting
-    return (_ideas_job["running"] or posting.busy() or draft_review.busy() or cleanup.busy() or any(j.get("state") == "building" for j in _resolve_jobs.values())
+    import voice_file
+    return (_ideas_job["running"] or posting.busy() or draft_review.busy() or cleanup.busy() or voice_file.busy()
+            or any(j.get("state") == "building" for j in _resolve_jobs.values())
             or any(j.get("state") == "running" for j in plan_routes._jobs.values()))
 
 
@@ -587,6 +590,7 @@ def _carousel_detail(row: sqlite3.Row) -> dict:
                  "review_error": draft_review.errors.get(row["id"]) if is_owner() else None,
                  "shot_list": False, "edit": None, "transcript": "", "words": 0, "languages": ["en"],
                  "idea": row["idea"], "caption": row["caption"] or "", "sources": [],
+                 "caption_check": wording.caption_check(row["caption"] or ""),
                  "notes": _notes("production", row["id"]), "error": row["error"],
                  "edit_summary": data.get("summary"), "missing_shots": [], "graphics": 0, "wishlist": [],
                  "cost": usage.total_for(db(), f"production:{row['id']}") if is_owner() else None,
@@ -784,6 +788,7 @@ def production_detail(production_id: int):
                           "hook_text": (edl or {}).get("hook_text", "")} if edl else None,
                  "transcript": " ".join(w["word"] for w in words), "words": len(words), "languages": langs})
     item.update({"idea": row["idea"], "caption": row["caption"] or "", "sources": sources,
+                 "caption_check": wording.caption_check(row["caption"] or ""),
                  "notes": _notes("production", production_id), "error": row["error"],
                  "edit_summary": edl["summary"] if edl else None,
                  "missing_shots": (edl or {}).get("missing_shots", []),
@@ -846,6 +851,50 @@ def save_playbook():
     learning.save_bryan_text(text)
     log.info("Playbook edited by %s", g.user["name"])
     return jsonify({"ok": True})
+
+
+@app.post("/api/caption/check")
+def caption_check():
+    """What the feed shows before "... more", and the caption lint's findings (Review, as you type)."""
+    text = (request.json or {}).get("caption")
+    if not isinstance(text, str) or len(text) > 10_000:
+        return jsonify({"error": "send the caption as text"}), 400
+    return jsonify(wording.caption_check(text))
+
+
+@app.get("/api/voice")
+def get_voice():
+    """Bryan's voice file (voice_file.py): its text, how many videos it can learn from, a draft in progress."""
+    import voice_file
+    return jsonify({**voice_file.info(db()), "editable": is_owner()})
+
+
+@app.post("/api/voice")
+@owner_only
+def save_voice():
+    import voice_file
+    text = (request.json or {}).get("text")
+    if not isinstance(text, str):
+        return jsonify({"error": "send the voice file as text"}), 400
+    if len(text) > 30_000:
+        return jsonify({"error": "that's too long for the voice file"}), 400
+    voice_file.save(text)
+    log.info("Voice file edited by %s", g.user["name"])
+    return jsonify({"ok": True})
+
+
+@app.post("/api/voice/write")
+@owner_only
+def write_voice():
+    """Write the voice file from Bryan's own talking-head videos (one Claude call, in the background)."""
+    import catalog
+    import voice_file
+    if not settings.ANTHROPIC_API_KEY:
+        return jsonify({"error": "Studio has no Claude key"}), 409
+    if not voice_file.candidates(db()):
+        return jsonify({"error": "No talking-head videos with speech yet"}), 409
+    voice_file.start(catalog.connect)
+    return jsonify({"started": True})
 
 
 @app.post("/api/playbook/rule/<int:rule_id>/forget")

@@ -37,6 +37,9 @@ def organise(prompt: str) -> dict:
         "ideas": [
             {"arc": "new:waterproofing", "title": "  Why we flood-test every bathroom  ", "brand": "urban_makers",
              "post_type": "knowhow", "format": "talking_head", "hook": "We fill your bathroom with water before you ever see it.",
+             "hook_options": [{"text": "We fill your bathroom with water before you ever see it.", "formula": "Cold Open Demo"},
+                              {"text": "Nobody tells you a bathroom gets flooded on purpose", "formula": "Nobody Tells You"},
+                              {"text": "Skip the flood test and your neighbour pays for it", "formula": "Negative Command"}],
              "purpose": "Homeowners learn what a flood test is and why it matters.", "cta": "Save this for your reno",
              "caption": "Every bathroom gets a 24h flood test. #renovation #singapore #waterproofing",
              "est_seconds": 35, "music": {"mood": "confident", "tempo_bpm": 96, "search": "confident minimal beat"}},
@@ -76,6 +79,8 @@ def develop(prompt: str) -> dict:
         "idea": {"arc": arc.group(1) if arc else "arc:0", "title": (title.group(1) if title else "Idea") + " (developed)",
                  "brand": "urban_makers", "post_type": "offer",
                  "format": "carousel" if "MOCK:tocarousel" in prompt else "talking_head", "hook": "Sharper hook.",
+                 "hook_options": [{"text": "Sharper hook.", "formula": "The Reveal"},
+                                  {"text": "Stop tiling before the flood test", "formula": "Negative Command"}],
                  "purpose": "Clear purpose.",
                  "cta": "Save this", "caption": "Developed caption #reno", "est_seconds": 40,
                  "music": {"mood": "upbeat", "tempo_bpm": 110, "search": "upbeat house"}, "shots": out},

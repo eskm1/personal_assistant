@@ -389,3 +389,30 @@ Deno.test("concept pictures: the prompt says whether they're available, the rule
   assert(SLIDES_SYSTEM.includes("Never in a Finished homes post") && SLIDES_SYSTEM.includes("mainly in Ideas and Know-how"));
   assert(SLIDES_SYSTEM.includes("A real still or photo always beats a concept") && SLIDES_SYSTEM.includes('marks it "Concept"'));
 });
+
+Deno.test("hooks: three options from the formulas, cleaned; the column may not be there yet", async () => {
+  const { hookOptions, missingColumn } = await import("../_shared/plan.ts");
+  const { HOOK_RULE, NEVER_WRITE, CAPTION_RULE } = await import("../_shared/wording.ts");
+  const { wordingBlock, DEVELOP_SCHEMA: DEV } = await import("../_shared/prompts.ts");
+  const f = ideaFields({
+    hook: "Nobody tells you this",
+    hook_options: [{ text: " Nobody tells you this ", formula: "Nobody Tells You" }, { text: "nobody tells you this" },
+      { text: "" }, { text: "Stop tiling first", formula: "Negative Command" }, { text: "Two", formula: "x" }, { text: "Four" }],
+  }, { brand: "urban_makers" });
+  assertEquals(f.hook_options, [{ text: "Nobody tells you this", formula: "Nobody Tells You" },
+    { text: "Stop tiling first", formula: "Negative Command" }, { text: "Two", formula: "x" }]);
+  assertEquals(hookOptions("x"), []);
+  const idea = (DEV as any).properties.idea;
+  assert(idea.required.includes("hook_options") && idea.properties.hook_options.items.required.includes("formula"));
+  assert(missingColumn({ code: "PGRST204", message: "Could not find the 'hook_options' column of 'ideas'" }, "hook_options"));
+  assert(!missingColumn({ code: "23514", message: "violates check constraint" }, "hook_options"));
+  // The block: the voice file when there is one, the pushed never list (else the generated one), the rules.
+  const b = wordingBlock("- **Name:** Bryan", "", { caption: true, hooks: true });
+  assert(b.includes("<voice>\n- **Name:** Bryan\n</voice>") && b.includes(NEVER_WRITE) && b.includes(CAPTION_RULE) && b.includes(HOOK_RULE));
+  assert(!wordingBlock("", "Never write X").includes("<voice>") && wordingBlock("", "Never write X") === "Never write X");
+  assert(HOOK_RULE.includes("26. The Superlative") && NEVER_WRITE.includes("delve") && !NEVER_WRITE.split("Fine for Bryan")[0].includes(" hack,"));
+  const sys = renderSystem(DEVELOP_SYSTEM, "B", "P", "C", b);
+  assert(sys.endsWith(HOOK_RULE) && sys.includes("hook_options: three hooks"));
+  assertEquals(renderSystem("{brands}", "B", "P"), "B");
+  assert(RULES.includes("3 to 5 hashtags") && !RULES.includes("3 to 6"));
+});

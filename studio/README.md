@@ -937,6 +937,32 @@ Settings in `.env` (then **Restart Studio**): `STUDIO_POSTING=0` stops all posti
 the content plan's); `STUDIO_POST_TIME` (19:30); `STUDIO_RESULTS_HOUR` (9); `STUDIO_PUBLIC_URL` (blank = the
 dashboard address; Instagram fetches the files from it, so it must be the https address).
 
+## 17. Words that sound like you (de-AI filter, hooks, caption preview, your voice)
+
+Parts of the MIT-licensed [instagram-agent-skill](https://github.com/Jakeschincariol/instagram-agent-skill) (Jake
+Schincariol) are built in (`studio/igkit`, `wording.py`, `voice_file.py`; Bryan's OK 2026-10-20):
+
+- **Everything Studio writes that viewers read** (post captions, hooks and on-screen titles, cards, drawn animations'
+  words, carousel slides, suggested topics, ideas from footage, Studio's own fixes) gets the safe fixes by code:
+  invisible characters out, em dashes to commas, curly quotes straight. Links, hashtags, @handles, ranges like "3-4"
+  and Chinese punctuation stay as they are. Words are never swapped by code.
+- Claude is told the **never-write list** (stock AI words like "delve", "elevate", "seamless", and Instagram bait like
+  "stop scrolling") and, when one still slips in, Studio asks Claude once to rewrite just that field and keeps the
+  better version (a cent or two; counted with the draft or idea). A rewrite that changes a number, a hashtag or a
+  link, adds a name, or switches language is thrown away. `STUDIO_HUMANIZE=0` = only the safe fixes. Your own trade
+  words go in `Studio\humanize_allow.txt`, one per line (it starts with hack, seamless, showcase and "follow for more").
+- **Hooks**: where Claude writes an idea's hook it writes three, each from one of 26 hook formulas; Studio scores
+  them (0-100: length, something concrete, something at stake, the point up front, spoken to the viewer) and keeps
+  the strongest. The planner's idea page shows the score under the Hook, and the other two one tap away (**Use
+  this**). A hook you typed yourself is never replaced. On a draft, **Checks and measurements** says how long the
+  spoken hook takes and flags one past 3 seconds.
+- **Post caption** in Review shows what the feed shows before "… more", and up to two things worth fixing (a first
+  line that gets cut off, too many hashtags, a link, two asks...).
+- **Your voice** (Review > Rules Studio taught itself > **Your voice**, or the Playbook's **Your voice**): how you
+  sound on camera, which every caption, hook and slide is written in. **Write the voice file from my videos** reads
+  about 20 of your talking-head videos (one Claude call, about 10 cents); Studio does it once by itself when 10 of
+  them are in. Edit it freely; it's `Studio\voice.md`.
+
 ## Day to day
 
 **Updates install themselves.** Every 10 minutes, when Studio is idle (nothing uploading,
@@ -968,5 +994,6 @@ Whisper runs locally for free. Each clip is one Claude call with up to 20 small 
 plus the transcript. AI concept pictures for carousels are Google Gemini's, about US$0.03 each
 (`STUDIO_IMAGE_COST_USD`); the dashboard shows them next to the Claude cost. Suggested topics are one Claude
 call a week (plus any when the month falls behind or someone presses Suggest topics), a few cents each. Check the first week's usage in the Anthropic console before you
-send it a backlog of hundreds of clips. To spend less, set `STUDIO_CLAUDE_EFFORT=low` or
+send it a backlog of hundreds of clips. The words filter (section 17) adds about a cent per draft or idea run when a
+rewrite is needed, and the voice file about 10 cents each time it's written. To spend less, set `STUDIO_CLAUDE_EFFORT=low` or
 lower `STUDIO_MAX_FRAMES`.

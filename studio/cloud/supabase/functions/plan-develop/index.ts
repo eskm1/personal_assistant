@@ -12,13 +12,21 @@ import {
   type DevelopIdea,
   developPrompt,
   ideaFields,
+  missingColumn,
   planShots,
   type ShotRow,
   type ShotState,
   shotState,
   text,
 } from "../_shared/plan.ts";
-import { DEVELOP_SCHEMA, DEVELOP_SYSTEM, renderSystem, SLIDES_SCHEMA, SLIDES_SYSTEM } from "../_shared/prompts.ts";
+import {
+  DEVELOP_SCHEMA,
+  DEVELOP_SYSTEM,
+  renderSystem,
+  SLIDES_SCHEMA,
+  SLIDES_SYSTEM,
+  wordingBlock,
+} from "../_shared/prompts.ts";
 import { type ClipRow, planSlides, slidesPrompt, storedSlides } from "../_shared/slides.ts";
 
 // Clips a carousel may take stills from: the project's own, then recent ones from other projects.
@@ -129,7 +137,13 @@ async function develop(ideaId: number, request: string, deadline: number) {
   const comments = check(commentsRes, "read comments") as { author_name: string; body: string }[];
 
   const { result, usage } = await ask<{ idea?: unknown; changes?: unknown }>({
-    system: renderSystem(DEVELOP_SYSTEM, context.brands, context.playbook, context.contentPlan),
+    system: renderSystem(
+      DEVELOP_SYSTEM,
+      context.brands,
+      context.playbook,
+      context.contentPlan,
+      wordingBlock(context.voice, context.wording, { caption: true, hooks: true }),
+    ),
     user: developPrompt(project, idea, shots, comments, request),
     schema: DEVELOP_SCHEMA,
     effort: "high",
@@ -146,10 +160,13 @@ async function develop(ideaId: number, request: string, deadline: number) {
   const kind = !idea.post_type && newType ? { post_type: newType } : {};
   // Keep the music shortlist / chosen track; only the plan (mood, tempo, search) changes.
   const music = { ...(idea.music ?? {}), ...newMusic };
-  const updated = check(
-    await db().from("ideas").update({ ...ideaUpdate, ...kind, music }).eq("id", ideaId).select("id"),
-    "update idea",
-  ) as { id: number }[];
+  let res = await db().from("ideas").update({ ...ideaUpdate, ...kind, music }).eq("id", ideaId).select("id");
+  if (res.error && missingColumn(res.error, "hook_options")) {
+    // Before the hook-options update (cloud_setup.py --update): the idea without them.
+    const { hook_options: _, ...rest } = ideaUpdate;
+    res = await db().from("ideas").update({ ...rest, ...kind, music }).eq("id", ideaId).select("id");
+  }
+  const updated = check(res, "update idea") as { id: number }[];
   if (!updated.length) throw new JobError("The idea was deleted");
 
   // Shots may have been ticked off while Claude worked: plan against their state now.
@@ -229,7 +246,13 @@ async function writeSlides(
   const current = storedSlides(row?.slides);
 
   const { result, usage } = await ask({
-    system: renderSystem(SLIDES_SYSTEM, context.brands, context.playbook, context.contentPlan),
+    system: renderSystem(
+      SLIDES_SYSTEM,
+      context.brands,
+      context.playbook,
+      context.contentPlan,
+      wordingBlock(context.voice, context.wording, { caption: true }),
+    ),
     user: slidesPrompt(project, idea, current, clips, comments, request, idea.project_id, concepts),
     schema: SLIDES_SCHEMA,
     effort: "high",

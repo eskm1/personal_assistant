@@ -25,6 +25,7 @@ import catalog
 import content_plan
 import playbook
 import settings
+import wording
 from settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
 
 log = logging.getLogger("studio.plan")
@@ -66,6 +67,9 @@ _IDEA = {
         "post_type": {"type": "string", "enum": list(content_plan.KINDS)},
         "format": {"type": "string", "enum": ["talking_head", "day_in_the_life", "compilation"]},
         "hook": {"type": "string"},
+        "hook_options": {"type": "array", "items": {
+            "type": "object", "properties": {"text": {"type": "string"}, "formula": {"type": "string"}},
+            "required": ["text", "formula"], "additionalProperties": False}},
         "purpose": {"type": "string"},
         "cta": {"type": "string"},
         "caption": {"type": "string"},
@@ -79,8 +83,8 @@ _IDEA = {
         },
         "shots": {"type": "array", "items": _SHOT},
     },
-    "required": ["arc", "title", "brand", "post_type", "format", "hook", "purpose", "cta", "caption", "est_seconds",
-                 "music", "shots"],
+    "required": ["arc", "title", "brand", "post_type", "format", "hook", "hook_options", "purpose", "cta", "caption",
+                 "est_seconds", "music", "shots"],
     "additionalProperties": False,
 }
 
@@ -118,7 +122,7 @@ payoff; spoken hooks should sound like Bryan talking, not an ad.
 - post_type: the kind of post, by the job it does (the content plan below lists the five).
 - cta: the call to action at the end, fitting the kind's ask ("Save this for your reno", "Follow \
 this project", ...). An offer only from the listed offers, worded as listed.
-- caption: a ready-to-edit Instagram caption in Bryan's voice with 3 to 6 hashtags.
+- caption: a ready-to-edit Instagram caption in Bryan's voice with 3 to 5 hashtags (the caption rule below).
 - shots: the storyboard, one entry per shot, in playback order, each something the team can \
 actually film on site. kind: talking (to camera), broll (work happening), detail (close-up of a \
 material, fixing, finish), before_after, reaction, screen (a drawing, render or phone screen). \
@@ -207,7 +211,8 @@ def _ask(system: str, user: str, schema: dict, ref: str, client=None, effort: st
         output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
         system=system.replace("{brands}", _brands()).replace("{playbook}", playbook.text())
                      .replace("{content_plan}", content_plan.prompt_text())
-                     .replace("{cameras}", "; ".join(f"{k} = {v}" for k, v in CAMERAS.items())),
+                     .replace("{cameras}", "; ".join(f"{k} = {v}" for k, v in CAMERAS.items()))
+               + "\n\n" + wording.guide(caption=True, hooks=True),
         messages=[{"role": "user", "content": user}],
     )
     import usage
@@ -465,6 +470,14 @@ def _board_text(conn, project_id: int) -> str:
     return "\n".join(lines) or "(empty so far)"
 
 
+def _wording(ideas: list[dict], ref: str, client=None) -> None:
+    """The three hooks scored (the strongest is the hook), then the words viewers read polished
+    (wording.py: safe fixes, one rewrite of what still reads machine-written)."""
+    for idea in ideas:
+        idea["hook"], idea["hook_options"] = wording.pick_hook(idea.get("hook_options"), idea.get("hook") or "")
+    wording.polish_ideas(ideas, "plan", ref, client)
+
+
 def organise(conn, project_id: int, dump: str, user_id: int | None = None, client=None) -> dict:
     """Claude turns a brain-dump into arcs and storyboarded ideas on the board."""
     project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
@@ -474,6 +487,7 @@ def organise(conn, project_id: int, dump: str, user_id: int | None = None, clien
             f"Brief: {project['brief'] or '(none yet)'}\n\nThe board so far:\n{_board_text(conn, project_id)}\n\n"
             f"The team's new ideas:\n<ideas>\n{dump.strip()}\n</ideas>")
     result = _ask(_ORGANISE_SYSTEM, user, ORGANISE_SCHEMA, f"project:{project_id}", client)
+    _wording(result["ideas"], f"project:{project_id}", client)
     existing = {f"arc:{r['id']}": r["id"] for r in conn.execute("SELECT id FROM arcs WHERE project_id = ?",
                                                                   (project_id,))}
     keys = dict(existing)
@@ -511,6 +525,7 @@ def develop(conn, idea_id: int, request: str = "", client=None) -> str:
             + f"The team's request: {request.strip() or '(none: make the plan complete and filmable)'}")
     result = _ask(_DEVELOP_SYSTEM, user, DEVELOP_SCHEMA, f"idea:{idea_id}", client)
     new = result["idea"]
+    _wording([new], f"idea:{idea_id}", client)
     music_plan.update({k: new["music"][k] for k in ("mood", "tempo_bpm", "search")})
     # The kind is filled in when it's empty; one already set stays (it may be someone's choice).
     conn.execute("""UPDATE ideas SET title = ?, brand = ?, format = ?, hook = ?, purpose = ?, cta = ?, caption = ?,

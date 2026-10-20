@@ -41,6 +41,7 @@ import concepts
 import render
 import settings
 import slide_images
+import wording
 
 log = logging.getLogger("studio.carousel")
 
@@ -155,7 +156,8 @@ def clean_slides(raw) -> list[dict]:
     for s in (raw if isinstance(raw, list) else [])[:MAX_SLIDES]:
         if not isinstance(s, dict):
             continue
-        heading, body = _text(s.get("heading"), 200), _text(s.get("body"), 800)
+        # The safe fixes (wording.tidy: invisible characters, em dashes...) on words written online too.
+        heading, body = wording.tidy(_text(s.get("heading"), 200)), wording.tidy(_text(s.get("body"), 800))
         if not heading and not body:
             continue
         out.append({"key": _text(s.get("key"), 40) or _key(), "role": s.get("role") if s.get("role") in ROLES else "point",
@@ -248,7 +250,7 @@ def make(conn, idea_id: int, slides, caption: str | None = None) -> int:
         """INSERT INTO productions (title, brand, format, status, version, idea, source_clips, caption, plan,
                created_at, updated_at) VALUES (?, ?, 'carousel', 'planned', 0, ?, ?, ?, ?, ?, ?)""",
         (idea["title"], idea["brand"], f"{plan['hook']}\n\n{plan['purpose']}".strip(), json.dumps(clip_ids),
-         caption if caption is not None else idea["caption"], json.dumps(plan), stamp, stamp))
+         wording.tidy(caption if caption is not None else idea["caption"]), json.dumps(plan), stamp, stamp))
     conn.execute("UPDATE ideas SET status = 'made', production_id = ?, slides = ? WHERE id = ?",
                  (cur.lastrowid, json.dumps(slides), idea_id))
     conn.commit()
@@ -705,7 +707,7 @@ for a design idea no clip shows. A real still or photo always beats a concept: w
 a real example, use it (a concept can sit beside it). Never in a Finished homes post, which shows \
 only real work. A concept slide's words never say it's a home Urban Makers built or a client's home.
 - caption: a ready-to-edit Instagram caption in Bryan's voice that adds to the slides rather than \
-repeating them, ending with the same ask, with 3 to 6 hashtags."""
+repeating them, ending with the same ask, with 3 to 5 hashtags (the caption rule below)."""
 
 _REVISE_SYSTEM = """You revise a draft Instagram carousel for Bryan, who owns Urban Makers, a \
 renovation company in Singapore, from the notes he left on it.
@@ -834,7 +836,7 @@ def revise(conn, production: dict, slides: list[dict], notes: list[dict], client
     clips = _clips(conn, production, slides)
     kind = post_type(conn, production)
     system = (_REVISE_SYSTEM.replace("{brands}", settings.brands_text()).replace("{playbook}", playbook.text())
-              .replace("{content_plan}", _context_text()))
+              .replace("{content_plan}", _context_text()) + "\n\n" + wording.guide(caption=True))
     client = client or anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY or None)
     response = llm.final_message(
         client, model=settings.CLAUDE_MODEL, max_tokens=24000,
@@ -854,7 +856,21 @@ def revise(conn, production: dict, slides: list[dict], notes: list[dict], client
     if len(new) < 2:
         raise RuntimeError("Claude's revision had no slides; send it back again")
     ids = {n["id"] for n in notes}
-    return {"slides": new, "caption": _text(answer.get("caption"), 4000) if answer.get("caption_changed") else "",
+    # The words viewers read: the safe fixes, and one rewrite of what still reads machine-written
+    # (counted with this revision).
+    caption = _text(answer.get("caption"), 4000) if answer.get("caption_changed") else ""
+    fields = {f"{n}.{k}": s[k] for n, s in enumerate(new) for k in ("heading", "body") if s[k]}
+    if caption:
+        fields["caption"] = caption
+    polished, _ = wording.polish(fields, "carousel", self_fix.ref(production["id"]) if own else f"production:{production['id']}",
+                                 client, limits={**{k: 200 if k.endswith("heading") else 800 for k in fields}, "caption": 4000})
+    for key, text in polished.items():
+        if key == "caption":
+            caption = text
+        else:
+            n, k = key.split(".")
+            new[int(n)][k] = text
+    return {"slides": new, "caption": caption,
             "summary": _text(answer.get("summary"), 600),
             "notes_addressed": [{"note_id": a["note_id"], "how": _text(a.get("how"), 300), "kind": a.get("kind"),
                                  "rule": _text(a.get("rule"), 200), "same_rule": a.get("same_rule") or 0}

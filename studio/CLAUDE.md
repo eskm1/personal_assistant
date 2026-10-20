@@ -154,6 +154,14 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   review goes back to `revising` with `restyle = 1` (a Reel gets a fresh edit; a carousel is rewritten from
   `CAROUSEL_NOTE`, not learned as a rule), Telegram says so. Review's **Edit it again** (one / all waiting) does the
   same. Bump `RELEASE` when the look changes enough to redo what's waiting.
+- Words that sound like Bryan, built 2026-10-20 from instagram-agent-skill (MIT, Bryan approved; not yet proven with
+  real Claude): `igkit/` (vendored, see its README), `wording.py` (safe fixes on all viewer-facing text, the never list
+  + one rewrite pass `STUDIO_HUMANIZE`, allowlist `Studio/humanize_allow.txt`, hook options scored with hookscore,
+  beats' 3 s check in a draft's Checks, the caption preview in Review), `voice_file.py` (`Studio/voice.md`, drafted
+  from ~20 talking-head transcripts, Review > Your voice, in every writing prompt). Migration
+  20261026000000_hook_options (`ideas.hook_options`, context `voice`/`wording`) + updated plan-organise/plan-develop:
+  Bryan runs `cloud_setup.py --update`; until then hooks are still picked on the Studio machine but no scores reach
+  the planner and the Edge Functions use the built-in never list without the voice file.
 - Reference library and taste report built 2026-10-19 (not yet proven against Instagram or real Claude):
   Import many (paste or CSV, dedupe by shortcode, `import_references()`), held until Bryan presses Analyse
   (all, or a stratified sample of 150), paced downloads with backoff and pauses (`ref_library.py`), carousels and

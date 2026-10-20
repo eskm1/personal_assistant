@@ -1,4 +1,5 @@
 // Prompts and JSON schemas ported from studio/plan.py (tuned there; keep the two in step).
+import { CAPTION_RULE, HOOK_RULE, NEVER_WRITE, VOICE_HEAD } from "./wording.ts";
 
 export const SHOT_KINDS = ["talking", "broll", "detail", "before_after", "reaction", "screen"] as const;
 export const FRAMINGS = ["wide", "medium", "close", "detail", "pov", "overhead"] as const;
@@ -87,6 +88,15 @@ const MUSIC_SCHEMA: Schema = {
   additionalProperties: false,
 };
 
+// Three hooks from the 26 formulas (studio/wording.py HOOK_RULE); the Studio machine scores them
+// (hookscore) and keeps the strongest as the hook (cloud_sync.score_hooks).
+export const HOOK_OPTION_SCHEMA: Schema = {
+  type: "object",
+  properties: { text: { type: "string" }, formula: { type: "string" } },
+  required: ["text", "formula"],
+  additionalProperties: false,
+};
+
 const IDEA_FIELDS: Schema = {
   arc: { type: "string" },
   title: { type: "string" },
@@ -94,6 +104,7 @@ const IDEA_FIELDS: Schema = {
   post_type: { type: "string", enum: [...POST_TYPES] },
   format: { type: "string", enum: [...FORMATS] },
   hook: { type: "string" },
+  hook_options: { type: "array", items: HOOK_OPTION_SCHEMA },
   purpose: { type: "string" },
   cta: { type: "string" },
   caption: { type: "string" },
@@ -107,6 +118,7 @@ const IDEA_REQUIRED = [
   "post_type",
   "format",
   "hook",
+  "hook_options",
   "purpose",
   "cta",
   "caption",
@@ -174,7 +186,8 @@ posts stay Reels: propose a carousel only where it clearly suits, never for a po
 footage of the work happening. A carousel has no shots (its slides are written next).
 - cta: the call to action at the end, fitting the kind's ask ("Save this for your reno", "Follow \
 this project", ...). An offer only from the listed offers, worded as listed.
-- caption: a ready-to-edit Instagram caption in Bryan's voice with 3 to 6 hashtags.
+- caption: a ready-to-edit Instagram caption in Bryan's voice with 3 to 5 hashtags (the caption rule below).
+- hook_options: three hooks from the hook formulas below (hook = the one you'd pick).
 - shots: the storyboard, one entry per shot, in playback order, each something the team can \
 actually film on site. kind: talking (to camera), broll (work happening), detail (close-up of a \
 material, fixing, finish), before_after, reaction, screen (a drawing, render or phone screen). \
@@ -339,12 +352,36 @@ export function contentPlanText(
 }
 
 /** Fill {brands}, {playbook}, {content_plan} and {cameras} like plan._ask (brands/playbook from the
- * context table, the content plan from content_plan and content_month()). */
-export function renderSystem(template: string, brands: string, playbook: string, contentPlan = ""): string {
+ * context table, the content plan from content_plan and content_month()); `wording` (wordingBlock)
+ * goes at the end, as studio/wording.guide does in the Studio machine's prompts. */
+export function renderSystem(
+  template: string,
+  brands: string,
+  playbook: string,
+  contentPlan = "",
+  wording = "",
+): string {
   // Function replacers: the texts may contain "$" sequences that string replacements would expand.
-  return template.replaceAll("{brands}", () => brands.trim()).replaceAll("{playbook}", () => playbook.trim())
+  const text = template.replaceAll("{brands}", () => brands.trim()).replaceAll("{playbook}", () => playbook.trim())
     .replaceAll("{content_plan}", () => contentPlan.trim() || contentPlanText())
     .replaceAll("{cameras}", () => camerasText());
+  return wording.trim() ? `${text}\n\n${wording.trim()}` : text;
+}
+
+/** studio/wording.guide: Bryan's voice file and the "never write these" list (both pushed by the
+ * Studio machine into the context table; the generated fallbacks until then), and as asked the
+ * caption rule and the hook formulas. */
+export function wordingBlock(
+  voice: string,
+  never: string,
+  opts: { caption?: boolean; hooks?: boolean } = {},
+): string {
+  const parts: string[] = [];
+  if (voice.trim()) parts.push(`${VOICE_HEAD}\n<voice>\n${voice.trim()}\n</voice>`);
+  parts.push(never.trim() || NEVER_WRITE);
+  if (opts.caption) parts.push(CAPTION_RULE);
+  if (opts.hooks) parts.push(HOOK_RULE);
+  return parts.join("\n\n");
 }
 
 // ── Carousels: the slides of one post (plan-develop on an idea whose format is carousel) ──
@@ -412,7 +449,7 @@ for a design idea no clip shows. A real still or photo always beats a concept: w
 a real example, use it (a concept can sit beside it). Never in a Finished homes post, which shows \
 only real work. A concept slide's words never say it's a home Urban Makers built or a client's home.
 - caption: a ready-to-edit Instagram caption in Bryan's voice that adds to the slides rather than \
-repeating them, ending with the same ask, with 3 to 6 hashtags.`;
+repeating them, ending with the same ask, with 3 to 5 hashtags (the caption rule below).`;
 
 export const SLIDES_SYSTEM = `You are the content producer for Bryan's Instagram account (Urban Makers), \
 writing one carousel post with the team: a set of slides people swipe through.

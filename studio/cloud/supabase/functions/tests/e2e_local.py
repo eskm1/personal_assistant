@@ -168,6 +168,9 @@ try:
     ok(len(ideas) == 3 and all(i["decision"] == "proposed" and i["status"] == "new" and i["created_by"] == team_id
                                for i in ideas), "3 ideas, proposed/new, created_by requester")
     ok(ideas[0]["title"] == "Why we flood-test every bathroom", "idea title trimmed")
+    # Hook options (migration 20261026000000): Claude's three, unscored (the Studio machine scores them).
+    ok(len(ideas[0].get("hook_options") or []) == 3 and all("score" not in o for o in ideas[0]["hook_options"])
+       and ideas[1].get("hook_options") == [], f"hook options stored as Claude wrote them {ideas[0].get('hook_options')}")
     ok(ideas[0]["music"] == {"mood": "confident", "tempo_bpm": 96, "search": "confident minimal beat"},
        f"music plan {ideas[0]['music']}")
     ok(ideas[2]["arc_id"] is None, "unknown arc key -> Unsorted")
@@ -186,6 +189,9 @@ try:
        f"organise request: model/betas/fallbacks/effort medium/no thinking/no shots ({req['beta']})")
     ok("{brands}" not in b["system"] and "{playbook}" not in b["system"] and "{cameras}" not in b["system"] and
        "{content_plan}" not in b["system"] and "iphone = iPhone 16 Pro" in b["system"], "placeholders filled")
+    ok("Never write these" in b["system"] and "Hook formulas" in b["system"] and "125 characters" in b["system"]
+       and "hook_options" in json.dumps(b["output_config"]["format"]["schema"]),
+       "organise prompt: the never list, the caption rule and the hook formulas; the schema asks for hook options")
     month = svc("POST", "rpc/content_month", {})
     offers = svc("GET", "content_plan?id=eq.1")[0]["offers"]
     ok("<content_plan>" in b["system"] and "- finished (Finished homes" in b["system"]
@@ -213,6 +219,8 @@ try:
     a = svc("GET", f"ideas?id=eq.{ideas[0]['id']}")[0]
     ok(a["title"].endswith("(developed)") and a["est_seconds"] == 40 and a["music"]["mood"] == "upbeat",
        "idea fields updated by develop")
+    ok([o["text"] for o in a.get("hook_options") or []] == ["Sharper hook.", "Stop tiling before the flood test"],
+       "develop writes its new hook options")
     kinds = {i["id"]: svc("GET", f"ideas?id=eq.{i['id']}&select=post_type")[0]["post_type"] for i in ideas}
     ok(kinds == {ideas[0]["id"]: "knowhow", ideas[1]["id"]: "offer", ideas[2]["id"]: "onsite"},
        f"develop fills an empty kind, never changes one that's set {kinds}")

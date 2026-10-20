@@ -47,6 +47,7 @@ export async function openIdea(id, cameFrom = null) {
     view.panelSig = "";
     view.openShots = new Set();
     view.allShots = false;
+    view.hookOpen = false;
     $("#player-frame").hidden = false;
     $("#player-frame").innerHTML = `<div class="placeholder"><span class="spin"></span> Loading the plan…</div>`;
     panel().innerHTML = "";
@@ -654,7 +655,7 @@ function renderPanel() {
     ${callHTML(d)}
     ${carousel ? "" : `<section class="hook-card" data-saved-scope aria-label="Hook">
       <h3 class="um-label"><label for="f-hook">Hook</label> <span class="saved" aria-live="polite"></span></h3>
-      <textarea id="f-hook" class="hook-input" data-idea-field="hook" rows="1" maxlength="1000" data-orig="${esc(d.hook)}" placeholder="The line or moment that stops the scroll">${esc(d.hook)}</textarea></section>`}`;
+      <textarea id="f-hook" class="hook-input" data-idea-field="hook" rows="1" maxlength="1000" data-orig="${esc(d.hook)}" placeholder="The line or moment that stops the scroll">${esc(d.hook)}</textarea>${hookExtrasHTML(d)}</section>`}`;
   const main = carousel ? slidesMainHTML(d) : shotsHTML(d);
   const rest = foldsHTML(d) + actionHTML(d);
   // Two columns (a computer): the post and its shots on the left, the folds and the next step on the
@@ -670,6 +671,39 @@ function renderPanel() {
   [frame.scrollTop, panel().scrollTop] = scroll;
   fitTitle();
   if (detailsOpen()) renderDetails();
+}
+
+// The hook's score (Claude writes three hooks from the hook formulas; Studio scores them and keeps
+// the strongest) and the other two, one tap away. The score is hookscore's 0 to 100.
+const sameText = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+function hookOptions(d) {
+  return Array.isArray(d.hook_options) ? d.hook_options.filter((o) => o && typeof o.text === "string" && o.text.trim()) : [];
+}
+function hookExtrasHTML(d) {
+  const opts = hookOptions(d);
+  if (!opts.length) return "";
+  const mine = opts.find((o) => sameText(o.text, d.hook));
+  const others = opts.filter((o) => o !== mine);
+  const scored = (o) => typeof o.score === "number" && Number.isFinite(o.score);
+  const score = mine && scored(mine)
+    ? `<span class="hook-score" title="How strongly Studio rates this first line, 0 to 100">Score ${esc(Math.round(mine.score))}</span>` : "";
+  const open = !!view.hookOpen;
+  const label = open ? "Hide" : mine ? plural(others.length, "other hook") : `${plural(others.length, "hook idea")}`;
+  const list = open ? `<ul class="hook-opts">${others.map((o) => `<li>
+      <span class="hook-opt-text">${esc(o.text)}</span>
+      <span class="hook-opt-meta">${[scored(o) ? `Score ${esc(Math.round(o.score))}` : "", o.formula ? esc(o.formula) : ""].filter(Boolean).join(" · ")}</span>
+      <button type="button" class="btn small" data-hook-use="${esc(opts.indexOf(o))}">Use this</button></li>`).join("")}</ul>` : "";
+  return `<div class="hook-extra">${score}${others.length ? `<button type="button" class="btn-link hook-more" data-hook-more aria-expanded="${open}">${label}</button>` : ""}</div>${list}`;
+}
+// Swap the hook for one of the others. A hook someone wrote by hand stays in the list (unscored).
+async function useHook(d, n) {
+  const opts = hookOptions(d);
+  const pick = opts[n];
+  if (!pick) return;
+  const keep = d.hook?.trim() && !opts.some((o) => sameText(o.text, d.hook)) ? [{ text: d.hook.trim(), formula: "", score: null }] : [];
+  must(await sb.from("ideas").update({ hook: pick.text, ...(keep.length ? { hook_options: [...opts, ...keep].slice(0, 6) } : {}) }).eq("id", d.id));
+  view.hookOpen = false;
+  toast("Hook swapped.");
 }
 
 // The hook and a slide's words: as tall as what's written, so nothing hides behind a scrollbar.
@@ -994,10 +1028,12 @@ inner().addEventListener("click", async (e) => {
     return;
   }
   if (ds.primaryAttach) { openPicker(Number(ds.primaryAttach)); return; }
+  if (ds.hookMore != null) { view.hookOpen = !view.hookOpen; render(true); return; }
   const shotId = Number(t.closest("[data-shot]")?.dataset.shot);
   try {
     if (await slidesClick(t, d)) { await loadIdea(true); return; }
     if (ds.attach != null) { openPicker(shotId); return; }
+    if (ds.hookUse != null) { await useHook(d, Number(ds.hookUse)); await loadIdea(true); return; }
     if (t.id === "shot-add") { await addShot(); return; }
     if (t.id === "comment-add") { await addComment(); return; }
     if (t.id === "refine-go" || t.id === "refine-go-main") { await startRefine(); return; }
