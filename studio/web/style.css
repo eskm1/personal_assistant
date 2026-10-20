@@ -569,7 +569,8 @@ code { background: var(--um-paper-mid); border-radius: 4px; padding: 1px 5px; fo
 .note-list li::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--ink-soft); margin-top: 8px; }
 .note-list li.addressed { opacity: .6; }
 .note-list .time-chip { min-height: var(--um-h-sm); padding: 0 8px; }
-.note-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.note-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.note-list .icon-btn { flex: none; margin-top: -4px; }
 .note-meta { font-size: var(--um-fs-meta); color: var(--ink-soft); }
 .note-rule { color: var(--um-success); }
 .self-fixed { margin-top: -4px; }

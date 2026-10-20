@@ -889,6 +889,25 @@ def add_note(target: str, target_id: int):
     return jsonify({"id": note_id})
 
 
+@app.post("/api/<target>/<int:target_id>/notes/<int:note_id>/delete")
+def delete_note(target: str, target_id: int, note_id: int):
+    """Take back a note added by mistake: its author or the owner, while the editor hasn't
+    acted on it yet. A note that was remembered leaves the playbook too."""
+    row = db().execute("SELECT * FROM feedback WHERE id = ? AND target = ? AND target_id = ?",
+                       (note_id, target, target_id)).fetchone()
+    if row is None:
+        abort(404)
+    if row["status"] != "open":
+        return jsonify({"error": "the editor has already acted on this note"}), 400
+    if not is_owner() and row["author"] != g.user["name"]:
+        return jsonify({"error": "only the person who wrote it can remove it"}), 403
+    db().execute("DELETE FROM feedback WHERE id = ?", (note_id,))
+    db().commit()
+    if row["remember"]:
+        playbook.forget(row["body"])
+    return jsonify({"ok": True})
+
+
 # "Open in DaVinci Resolve": built on request, in the background (it renders the
 # caption and graphics layers again, a minute or two), one at a time.
 _resolve_jobs: dict[int, dict] = {}

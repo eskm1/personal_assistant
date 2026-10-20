@@ -1085,6 +1085,12 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
         "SELECT * FROM feedback WHERE target = 'production' AND target_id = ? AND status = 'open' ORDER BY id",
         (production_id,))]
 
+    # A track Bryan pasted into a note (this round or an earlier one) is the music from then on.
+    linked = music.track_link("\n".join(r["body"] for r in conn.execute(
+        "SELECT body FROM feedback WHERE target = 'production' AND target_id = ? ORDER BY id", (production_id,))))
+    if linked:
+        plan.setdefault("music_plan", {})["chosen"] = linked
+
     edl = plan_edit(conn, production, clips, client)
     edl["cuts"] = _cut(edl, clips)
     _render(conn, production, clips, edl, plan, version, find_track)
@@ -1221,7 +1227,10 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         music_info, music_file = {"mood": edl["music"]["mood"], "tempo_bpm": edl["music"]["tempo_bpm"]}, None
         chosen = (plan.get("music_plan") or {}).get("chosen")
         if music.allowed_for(production["brand"]) and settings.EPIDEMIC_SOUND_API_KEY:
-            brief = (f"Use exactly this track the team picked: \"{chosen['title']}\" by {chosen['artist']} "
+            brief = (f"Use exactly the track Bryan linked: {chosen['url']} (Epidemic Sound track id "
+                     f"{chosen['track_id']}). Look it up by that id or link; don't swap in another track"
+                     if chosen and chosen.get("url") else
+                     f"Use exactly this track the team picked: \"{chosen['title']}\" by {chosen['artist']} "
                      f"(recording id {chosen['recording_id']})" if chosen else
                      f"{edl['music']['mood']}; search: {edl['music']['search']}; about {edl['music']['tempo_bpm']:.0f} BPM")
             try:

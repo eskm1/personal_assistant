@@ -25,3 +25,14 @@ def text() -> str:
 def remember(note: str, context: str) -> None:
     with ensure().open("a", encoding="utf-8") as f:
         f.write(f"- {note.strip()} ({context}, {date.today().isoformat()})\n")
+
+
+def forget(note: str) -> None:
+    """Drop a remembered note's line again (its note was taken back)."""
+    path = ensure()
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    start = f"- {note.strip()} ("
+    hit = next((i for i in range(len(lines) - 1, -1, -1) if lines[i].startswith(start)), None)
+    if hit is not None:
+        del lines[hit]
+        path.write_text("".join(lines), encoding="utf-8")

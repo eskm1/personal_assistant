@@ -1972,7 +1972,9 @@ function noteListHTML(notes, currentVersion, isProduction) {
       n.remember ? "in playbook" : "",
     ].filter(Boolean).join(" · ");
     const rule = n.rule ? `<span class="note-meta note-rule">Studio learned this as a rule: ${esc(n.rule)}</span>` : "";
-    return `<li class="${esc(n.status)}">${n.slide ? slideChip(n.slide) : timeChip(n.at_seconds)}<span class="note-text"><span class="note-body">${esc(n.body)}</span>${tags ? `<span class="note-meta">${esc(tags)}</span>` : ""}${rule}</span></li>`;
+    const mine = n.status === "open" && (isOwner() || n.author === state.me?.name);
+    const remove = mine ? `<button class="icon-btn" data-note-delete="${esc(n.id)}" title="Remove this note" aria-label="Remove note">×</button>` : "";
+    return `<li class="${esc(n.status)}">${n.slide ? slideChip(n.slide) : timeChip(n.at_seconds)}<span class="note-text"><span class="note-body">${esc(n.body)}</span>${tags ? `<span class="note-meta">${esc(tags)}</span>` : ""}${rule}</span>${remove}</li>`;
   }).join("")}</ul>`;
 }
 
@@ -2698,6 +2700,13 @@ async function detailClick(e) {
     } else if (id === "review-get") {
       await api(`/api/production/${d.id}/review`, {});
       await loadDetail();
+    } else if (e.target.closest("[data-note-delete]")) {
+      const b = e.target.closest("[data-note-delete]");
+      b.disabled = true;
+      await api(`/api/${state.current.kind}/${state.current.id}/notes/${b.dataset.noteDelete}/delete`, {});
+      await loadDetail();
+      sync();
+      toast("Note removed.");
     } else if (id === "note-add") await addNote();
     else if (id === "idea-make") {
       await api(`/api/idea/${d.id}/decision`, { decision: "make", caption: $("#caption").value });

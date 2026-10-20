@@ -16,6 +16,18 @@ from settings import EPIDEMIC_SOUND_API_KEY, EPIDEMIC_SOUND_MCP_URL, MUSIC_ACCOU
 PROTOCOL_VERSION = "2025-06-18"
 
 
+# An Epidemic Sound track page pasted into a note: epidemicsound.com/music/tracks/<id>/
+TRACK_LINK = re.compile(r"https?://(?:www\.)?epidemicsound\.com/(?:[a-z]{2}/)?music/tracks/([A-Za-z0-9-]+)/?", re.I)
+
+
+def track_link(text: str) -> dict | None:
+    """The last Epidemic Sound track link in some notes, as a pick for the editor."""
+    hits = list(TRACK_LINK.finditer(text or ""))
+    if not hits:
+        return None
+    return {"title": "", "artist": "", "recording_id": "", "track_id": hits[-1].group(1), "url": hits[-1].group(0)}
+
+
 def allowed_for(brand: str) -> bool:
     return brand in MUSIC_ACCOUNTS
 
