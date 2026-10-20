@@ -24,7 +24,8 @@ Singapore renovation company). Team member: Michelle (marketing). Read README.md
 
 - Branch `claude/sleepy-thompson-iewk09`. The server (and Netlify) deploy whatever is pushed, so never
   push half-built or untested code. No PRs unless asked. Never commit `.env` or secrets; never log keys.
-- Bryan decides: approving/rejecting drafts, Go/Park/Dismiss, spending (Make this), style guides.
+- Bryan decides: approving/rejecting drafts, Dismiss, spending (Make this), style guides. Michelle (team) may also
+  Go/Park ideas and send drafts back with notes (Bryan, 2026-10-20: "Michelle can Go/Park and send back").
   Captions and posting stay his call: Studio posts only what Bryan approved and scheduled (never on its own,
   never twice; `posting.py`), and the Instagram token never leaves the Studio machine (`Studio/instagram.json`).
 - All content is Urban Makers for now (`STUDIO_BRANDS`, personal on hold). Epidemic Sound music is
@@ -91,6 +92,15 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
 
 ## Open items (as of 2026-10-19)
 
+- Help, feedback and usage capture built 2026-10-20 (not yet proven on the server or with real Claude): the Help
+  button on the bar and in the desktop viewers (`shell.js`; `help.js`/`help.css` load on the first press): each page's
+  lines and Show me (`help.js` PAGES), Ask Studio (`help_desk.py`, README sections picked by keyword, `usage` kind
+  `help`, `STUDIO_HELP_DAILY` 30, `STUDIO_HELP_MODEL`), Something not working? (catalog `friction_flags`, More >
+  Feedback); `data-why` on a control that can't act (aria-disabled, shell.js shows why); usage capture
+  (`capture.js` -> `POST /api/usage`, catalog `usage_events`, 180 days, `STUDIO_USAGE=0` off, test walks tagged by
+  `localStorage studio.qa = 1`); the weekly report `GET /api/report/weekly` (`usage_report.py`: G1-G5 funnels,
+  FEATURES, Bearer `Studio/report_token` or the owner; More > Weekly report access). When a feature ships, add it to
+  `usage_report.FEATURES` and its golden-path steps to `StudioUsage.mark`; a new page gets its lines in help.js PAGES.
 - Supabase is up to date through migration 20261026000000_hook_options and the current plan-organise / plan-develop /
   team functions (the CTO session ran `cloud_setup.py --update` on the laptop, 2026-10-20 ~22:10 SGT, project
   nbkhigzlsdlwdaqbhibn). After any new migration or Edge Function change, ask for it with a `NEEDS CTO: cloud_setup
