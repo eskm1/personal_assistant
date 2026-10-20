@@ -64,14 +64,15 @@ export const kindChip = (k) => (isKind(k) ? `<span class="chip kind ${k}">${kind
 // ideas.post_type and the content plan come with a database update; until then the planner
 // asks for ideas without it (see withKinds).
 // ideas.slides (carousels) comes with a later one, the same way.
-export const schema = { kinds: true, slides: true };
+export const schema = { kinds: true, slides: true, suggestion: true };
 export const withKinds = (cols) => `${cols}${schema.kinds ? ",post_type" : ""}${schema.slides ? ",slides" : ""}`;
 // Run a query that names post_type (and slides); if a column isn't there yet, again without it.
 export async function kindsQuery(run) {
   for (;;) {
     try { return await run(); } catch (err) {
       if (!missingTable(err)) throw err;
-      if (schema.slides && /slides/.test(err?.message || "")) schema.slides = false;
+      if (schema.suggestion && /suggestion/.test(err?.message || "")) schema.suggestion = false;
+      else if (schema.slides && /slides/.test(err?.message || "")) schema.slides = false;
       else if (schema.kinds) schema.kinds = false;
       else throw err;
     }
@@ -163,6 +164,13 @@ export function dayLabel(iso, { weekday = true, year = false } = {}) {
   const d = parseDay(iso);
   if (!d) return "";
   return `${weekday ? `${WD[d.getDay()]} ` : ""}${d.getDate()} ${MON[d.getMonth()]}${year ? ` ${d.getFullYear()}` : ""}`;
+}
+// "today", "Thu 23" this month, "Thu 23 Nov" after it.
+export function shortDay(iso) {
+  if (!iso) return "";
+  if (iso === todayISO()) return "today";
+  const d = parseDay(iso), t = new Date();
+  return d && d.getMonth() === t.getMonth() && d.getFullYear() === t.getFullYear() ? `${WD[d.getDay()]} ${d.getDate()}` : dayLabel(iso);
 }
 // "Mon 20 – Tue 21 Oct", "From Mon 20 Oct", "No dates yet"
 export function dayRange(a, b) {
@@ -495,7 +503,9 @@ let modalClick = null;
 let modalReturn = null;
 // On a phone a dialog is a step in the history, so the back gesture closes it.
 const modalStep = { on: false, skip: false, done: null };
-// kind "sheet": full screen on phones (quick add, the footage and shot pickers).
+// kind "sheet": full screen on phones (quick add, the footage and shot pickers). kind "bottom": a sheet
+// up from the bottom on phones (an idea's Details), a dialog on a computer; nothing is focused for
+// typing, so the phone's keyboard stays down.
 export function openModal(html, onClick, wide = false, kind = "") {
   if ($("#modal").hidden) {
     modalReturn = document.activeElement;
@@ -507,12 +517,27 @@ export function openModal(html, onClick, wide = false, kind = "") {
   $("#modal-body").innerHTML = html;
   $("#modal .modal-card").classList.toggle("wide", wide);
   $("#modal").classList.toggle("sheet", kind === "sheet");
+  $("#modal").classList.toggle("bottom", kind === "bottom");
   modalClick = onClick || null;
   $("#modal").hidden = false;
   syncInert();
   document.body.classList.add("locked");
   if (kind === "sheet") $("#modal .modal-card").scrollTop = 0;
-  $("#modal-body").querySelector("input:not([type=hidden]), textarea, select")?.focus();
+  if (kind === "bottom") $("#modal-body").querySelector("[data-autofocus], button")?.focus({ preventScroll: true });
+  else $("#modal-body").querySelector("input:not([type=hidden]), textarea, select")?.focus();
+}
+// Are you sure? In the app's own dialog (it replaces whatever dialog is open). onYes runs on the
+// button; Cancel, the cross or Escape just close it.
+export function askFirst({ title, text = "", ok, danger = false }, onYes) {
+  openModal(`<h2 id="modal-title">${esc(title)}</h2>${text ? `<p>${esc(text)}</p>` : ""}
+    <p class="error-text" id="modal-error" role="alert" hidden></p>
+    <div class="row end"><button type="button" class="btn" data-modal-close>Cancel</button>
+      <button type="button" class="btn ${danger ? "danger" : "primary"}" id="ask-yes" data-autofocus>${esc(ok)}</button></div>`, async (e) => {
+    const b = e.target.closest("#ask-yes");
+    if (!b || b.disabled) return;
+    b.disabled = true;
+    try { await onYes(); } catch (err) { b.disabled = false; formError(`Couldn't do that: ${err.message}`); }
+  }, false, "bottom");
 }
 // Resolves once the history is back where it was (await it before going somewhere else).
 export function closeModal() {

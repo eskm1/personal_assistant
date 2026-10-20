@@ -185,6 +185,9 @@ starts it writes the read for up to 10 drafts waiting for review that don't have
 
 Pause on a moment, type a note, and it's pinned to that time. Tick **Remember for future edits**
 and the note is also added to `Studio\playbook.md`, the rules the editor follows on every edit.
+**×** beside a note takes it back (yours, or anyone's for the owner) until the editor has acted on it. To pick
+the music, paste an Epidemic Sound track link (epidemicsound.com/music/tracks/...) as a note: the next draft
+uses exactly that track, and so do later ones until you paste another.
 After a decision the next draft opens straight away while the editor revises the last one in the
 background. You also write or approve the post caption here. Keyboard: J / K for next and
 previous, Space to play, Esc to go back, Enter to add a note.
@@ -214,8 +217,8 @@ section 11.
 **Clean-up (you only).** Review keeps Studio's disk tidy without ever touching OneDrive:
 
 - **Done**: **Remove** on a rejected draft deletes its videos (it says how much space that frees) and keeps a
-  small record, so the planner and the history still make sense; it can't come back to review. **Clear N
-  rejected** does them all at once, after one question with the count and the space. **Archive** hides an
+  small record, so the planner and the history still make sense; it can't come back to review, and it moves to
+  **Archived**. **Clear N rejected** does them all at once, after one question with the count and the space. **Archive** hides an
   approved or posted draft from Done (it stays in OneDrive's **Studio Ready to post**); the **Archived** view
   lists them, each with **Bring back**.
 - **Library**: **Archive** hides a clip from the Library, footage ideas, suggested topics and the planner's
@@ -309,7 +312,9 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    and `STUDIO_MUSIC_GAP_DB` (default 20) dB under it while you talk, with smooth dips timed to your
    words. Studio measures the gap and turns the music down further if it's short, then sets the
    whole mix to Instagram's -14 LUFS in two passes (no pumping). Urban Makers posts get an Epidemic
-   Sound track; personal posts get no music, plus a note on what to add in the Instagram app.
+   Sound track, searched with your taste in mind (`music.TASTE`: soft, warm, unhurried; tracks you like and
+   ones to avoid; `Studio\music_taste.json` adds to it); personal posts get no music, plus a note on what to
+   add in the Instagram app.
 6. The draft is re-transcribed to check no word was clipped, and its loudness is measured
    (target -14 LUFS, corrected if it's off). Both show under **Checks and measurements**.
 7. Studio's read (`draft_review.py`): Claude looks at stills of the finished draft, its
@@ -485,8 +490,18 @@ edit and posts being filmed. On the side: the month as slots, one per post you w
 for still to plan, coloured by kind), "Still to plan: ...", **Targets and offers**, your projects (each opens
 its board) and Client questions. Archived projects drop out.
 
-**Ideas** is the board of one project at a time (pick it at the top); its **Shoot plan** shows the phases and site
-days.
+**Ideas** is one project at a time: tap the project's name to change project; the line under it says how many
+shots are filmed and the next site day. Ideas are grouped by what to do next: **Ready to make** (every shot
+filmed), **Film these** (Go, shots still to film), **Waiting for your call**, **Parked** and **Made** (both
+folded on a phone; columns on a computer). Each card is a title and one status line. The one orange button is
+**+ New idea**. The project's tools are in its **⋯** menu: Shoot plan (phases and site days), Brief and inbox
+folder, Series, Find ideas in new footage, Today on site, New project, Archive.
+
+An idea opens to its title and one line (kind · format · length · series; tap it for **Details**: the title,
+series, account, kind, format, length, Move to another project, Dismiss), **Your call** (Go / Park, the votes),
+the hook, the shot list (tap a shot for its full editor) and folds for Caption and ask, Music, Comments and
+Change it with Claude. The orange button at the bottom is the next step: **Film shot N** (Upload on a computer),
+then **Make this**.
 
 - **Project**: a job, say *Kensington*, with a short brief (who the client is, what's being done,
   what to show). Making one also makes an inbox subfolder, `Studio Inbox\Kensington`. Uploads
