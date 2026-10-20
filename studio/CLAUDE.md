@@ -91,15 +91,11 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
 
 ## Open items (as of 2026-10-19)
 
-- Bryan to run once on the laptop: `git pull` then `.\venv\Scripts\python cloud_setup.py --update`. It applies every
-  migration not yet online: 20261018000000_shoot_plan, 20261019000000_footage_ideas (the `ideas` job,
-  `clips.usable`/`flagged`), 20261020000000_content_plan (+ the updated plan-organise / plan-develop functions),
-  20261021000000_carousels (+ plan-develop's slide writing) and 20261022000000_topics (`client_questions`,
-  `ideas.suggestion`, the `topics` job), 20261023000000_reference_library (imports, held analyses, taste
-  reports, the `refs`/`taste` jobs), 20261024000000_cleanup (`clips.archived_at`) and 20261025000000_posting (posts,
-  results, the month counting posted posts). Re-run after any new migration.
-  Until then the planner hides the month on Plan, carousels, suggested topics and Client questions, the server sends
-  no `post_type`, and archived clips still show in the planner's footage pickers.
+- Supabase is up to date through migration 20261026000000_hook_options and the current plan-organise / plan-develop /
+  team functions (the CTO session ran `cloud_setup.py --update` on the laptop, 2026-10-20 ~22:10 SGT, project
+  nbkhigzlsdlwdaqbhibn). After any new migration or Edge Function change, ask for it with a `NEEDS CTO: cloud_setup
+  --update` line (laptop, personal_assistant\studio: `git pull` on this branch, then `.\venv\Scripts\python
+  cloud_setup.py --update`; needs Node.js and studio\.env's STUDIO_SUPABASE_URL; no Docker) saying what it changes.
 - Content plan (Bryan approved the proposal 2026-10-18: https://claude.ai/artifact/UyGPCh6YJv3y334g6531Ke), built in
   four steps, all four now built; none yet proven on the server or with real Claude/Gemini. Step 1: kinds of post
   (`ideas.post_type`, `content_plan.py`), the month's mix (`content_plan` table, `content_month()`), the month (now
