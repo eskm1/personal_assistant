@@ -1874,23 +1874,25 @@ function readHTML(d) {
   </section>`;
 }
 
+// Studio's read's fixes for this draft (not "next shoot"): they ride along with any revision.
+const readFixes = (d) => (d.review?.fixes || []).filter((f) => f.when !== "next_shoot").length;
+
 function fixesHTML(d) {
   const r = d.review;
   if (!r) return "";
   const fixes = r.fixes || [];
   if (!fixes.length) return `<section class="d-sec"><h2>Fix before posting</h2><p class="muted">Nothing. Studio found nothing to change.</p></section>`;
   // A fix already sent to the editor shows as added (a note on this version with its words).
-  const added = new Set(d.notes.filter((n) => n.version === d.version).map((n) => n.body.trim()));
   const ready = d.status === "ready";
   return `<section class="d-sec"><h2>Fix before posting</h2>
+    ${ready && readFixes(d) ? `<p class="muted small">These go to the editor by themselves whenever this draft is sent back or edited again, with any notes of yours.</p>` : ""}
     ${fixes.map((f, i) => {
       const next = f.when === "next_shoot";
       let action = "";
       if (next) {
         action = !d.shot_list ? "" : f.shot_added ? `<span class="done-chip">✓ On the shot list</span>`
           : `<button class="btn fix-btn" data-fix-shot="${i}">Add to shot list</button>`;
-      } else if (added.has(String(f.what).trim())) action = `<span class="done-chip">✓ Added</span>`;
-      else if (ready) action = `<button class="btn fix-btn" data-fix-note="${i}">Add as note</button>`;
+      } else if (ready) action = `<span class="done-chip">✓ Goes with Send back</span>`;
       return `<article class="fix-card${next ? " next" : ""}">
         <span class="fix-n" aria-hidden="true">${i + 1}</span>
         <div class="fix-text">
@@ -2160,12 +2162,11 @@ function carouselFixesHTML(d) {
   if (!r) return "";
   const fixes = r.fixes || [];
   if (!fixes.length) return `<section class="d-sec"><h2>Fix before posting</h2><p class="muted">Nothing. Studio found nothing to change.</p></section>`;
-  const added = new Set(d.notes.filter((n) => n.version === d.version).map((n) => n.body.trim()));
   const ready = d.status === "ready";
   return `<section class="d-sec"><h2>Fix before posting</h2>
+    ${ready ? `<p class="muted small">These go to the editor by themselves whenever this carousel is sent back or made again, with any notes of yours.</p>` : ""}
     ${fixes.map((f, i) => {
-      const action = added.has(String(f.what).trim()) ? `<span class="done-chip">✓ Added</span>`
-        : ready ? `<button class="btn fix-btn" data-fix-note="${i}">Add as note</button>` : "";
+      const action = ready ? `<span class="done-chip">✓ Goes with Send back</span>` : "";
       return `<article class="fix-card"><span class="fix-n" aria-hidden="true">${i + 1}</span>
         <div class="fix-text"><div class="fix-what">${esc(f.what)}</div><div class="fix-why">${esc(f.why)}</div></div>
         <div class="fix-actions">${slideChip(f.slide)}${action}</div></article>`;
@@ -2582,7 +2583,7 @@ function renderDecisionBar() {
     bar.innerHTML = `<p class="bar-note"><strong>Bryan decides.</strong> He approves, rejects or sends it back. Your notes go to him and the editor.</p>`;
     return;
   }
-  const n = d.notes.filter((x) => x.status === "open").length;
+  const n = d.notes.filter((x) => x.status === "open").length + readFixes(d);
   const send = phone() ? `Send back (${n})` : `Send back with ${plural(n, "fix", "fixes")}`;
   bar.innerHTML = `${phone() ? "" : `<button class="btn bar-btn ghost" id="decide-reject">Reject</button>`}
     ${n ? `<button class="btn bar-btn" id="decide-changes">${esc(send)}</button>`

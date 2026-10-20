@@ -351,7 +351,19 @@ def _revision_block(conn, production: dict, fixes: list[dict] | None = None) -> 
         (production["id"],)).fetchall()
     note_lines = [f"  note {n['id']}" + (f" at {n['at_seconds']:.1f}s" if n["at_seconds"] is not None else "")
                   + f": {n['body']}" for n in notes]
-    return head + "\n\nBryan's notes on that draft:\n" + ("\n".join(note_lines) or "  (none)")
+    # Studio's read of that draft rides along: Bryan wants its fixes done on every revision without
+    # adding them one by one (self_fix.read_notes).
+    import self_fix
+    read = self_fix.read_notes(production, [dict(n) for n in notes])
+    read_lines = [f"  note {f['id']}" + (f" at {f['at_seconds']:.1f}s" if f.get("at_seconds") is not None else "")
+                  + f": {f['body']}" for f in read]
+    return (head + "\n\nBryan's notes on that draft:\n" + ("\n".join(note_lines) or "  (none)")
+            + ("\n\nStudio's read of that draft also found these. Bryan wants them done too: fix every one you can "
+               "from the footage (address them in notes_addressed like his notes, kind \"editing\", rule \"\"):\n"
+               + "\n".join(read_lines)
+               + ("\nA note that starts \"Draw it for now\" stands in for a shot nobody filmed: make it with a drawn "
+                  "animation (style \"scene\", role \"gap\") at that moment, drawing what it says."
+                  if any(f["body"].startswith("Draw it for now") for f in read) else "") if read else ""))
 
 
 def _parts(cuts: list[dict]) -> list[list[dict]]:

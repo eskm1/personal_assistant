@@ -107,6 +107,28 @@ def _notes(fixes: list[dict]) -> list[dict]:
     return out
 
 
+# Bryan, 2026-10-20: "Every time we do another pass of revisions, just automatically add all of the
+# notes that you had identified ... they're hygiene, so I don't need to review them one by one."
+READ_NOTE_ID = 900000  # ids for the read's fixes when they ride along with Bryan's notes (never a feedback id)
+
+
+def read_notes(row, open_notes: list | None = None) -> list[dict]:
+    """The latest read's fixes for this draft (not "film next time"), as notes for a revision, minus any
+    Bryan already added as a note himself (Review's "Add as note"). Empty when the read is of an
+    older version."""
+    row = dict(row)
+    if not row.get("review") or row.get("review_version") != row.get("version"):
+        return []
+    try:
+        fixes = (json.loads(row["review"]) or {}).get("fixes") or []
+    except ValueError:
+        return []
+    taken = {str(n["body"]).strip() for n in (open_notes or [])}
+    todo = [f for f in fixes if isinstance(f, dict) and f.get("what")
+            and f.get("when", "this_draft") != "next_shoot" and f["what"].strip() not in taken]
+    return [{**n, "id": READ_NOTE_ID + n["id"]} for n in _notes(todo)]
+
+
 def _checks(row: dict) -> list[dict]:
     if row.get("format") == "carousel":
         return []

@@ -1184,7 +1184,8 @@ def decide(production_id: int):
         open_notes = db().execute(
             "SELECT COUNT(*) FROM feedback WHERE target = 'production' AND target_id = ? AND status = 'open'",
             (production_id,)).fetchone()[0]
-        if not open_notes:
+        import self_fix
+        if not open_notes and not self_fix.read_notes(row):  # Studio's read alone is enough to send it back
             return jsonify({"error": "add at least one note first"}), 400
         catalog.set_production_status(db(), production_id, "revising", caption)
     elif decision in ("approve", "reject"):
