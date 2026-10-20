@@ -82,6 +82,7 @@ def _close_db(_exc):
 # The app icons are public too: a phone fetches them for the home screen, sometimes signed out.
 # /public/media/: what Instagram fetches while a post goes out (a signed two-hour link, posting.py).
 _PUBLIC = ("/login", "/setup", "/invite/", "/healthz", "/static/", "/favicon.ico", "/apple-touch-icon", "/public/media/",
+           "/manifest.webmanifest",
            "/plan/favicon.ico", "/plan/apple-touch-icon.png", "/plan/icon-192.png", "/plan/icon-512.png")
 
 
@@ -156,6 +157,21 @@ def _safe_next(target: str | None) -> str:
 @app.get("/healthz")
 def healthz():
     return "ok"
+
+
+@app.get("/manifest.webmanifest")
+def web_manifest():
+    """The home-screen app: one scope for the whole site, so going from Plan (/plan/) to
+    Review (/) stays inside the app instead of opening Safari's in-app browser."""
+    manifest = {"name": "Urban Makers Studio", "short_name": "Studio", "start_url": "/", "scope": "/",
+                "display": "standalone", "background_color": "#FBFAF7", "theme_color": "#FBFAF7",
+                "icons": [{"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
+                          {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
+                          {"src": "/static/apple-touch-icon.png", "sizes": "180x180", "type": "image/png"}]}
+    response = jsonify(manifest)
+    response.mimetype = "application/manifest+json"
+    response.headers["Cache-Control"] = "max-age=3600"
+    return response
 
 
 @app.get("/favicon.ico")
