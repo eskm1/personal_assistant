@@ -571,6 +571,7 @@ code { background: var(--um-paper-mid); border-radius: 4px; padding: 1px 5px; fo
 .fix-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .fix-what { font-size: var(--um-fs-lead); font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
 .fix-why { font-size: var(--um-fs-body); color: var(--ink-soft); line-height: 1.45; }
+.fix-left { margin-top: 4px; font-size: var(--um-fs-meta); color: var(--ink-soft); }
 .fix-tag { display: inline-block; font-family: var(--um-mono); font-size: var(--um-fs-label); font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--um-info); margin-right: 4px; vertical-align: 1px; }
 .fix-actions { flex: none; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .time-chip {

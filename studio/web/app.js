@@ -1991,6 +1991,7 @@ function fixesHTML(d) {
         <div class="fix-text">
           <div class="fix-what">${next ? `<span class="fix-tag">Next shoot</span> ` : ""}${esc(f.what)}</div>
           <div class="fix-why">${esc(f.why)}${next ? " Not needed for this draft." : ""}</div>
+          ${f.left_because?.text && !next ? `<div class="fix-left">${LEFT_TAG[f.left_because.kind] ? `<span class="fix-tag">${esc(LEFT_TAG[f.left_because.kind])}</span> ` : ""}${esc(f.left_because.text)}</div>` : ""}
         </div>
         <div class="fix-actions">${timeChip(f.start, phone() ? "Play " : "")}${action}</div>
       </article>`;
@@ -2018,10 +2019,14 @@ function trendLine(d) {
   return `${line}.`;
 }
 
+// Why a fix Studio's read found is still Bryan's (self_fix.py's left_because).
+const LEFT_TAG = { footage: "Needs footage", yours: "Your call", tried: "Studio tried", stopped: "Not tried" };
+
 function selfFixHTML(d) {
   const fixed = d.self_fix?.fixed || [];
   if (!fixed.length) return "";
-  const cost = isOwner() && d.self_fix_cost ? `<p class="muted small">Studio's own fixes cost ${esc(money(d.self_fix_cost))} (counted in this draft's cost).</p>` : "";
+  const cost = !isOwner() ? "" : d.self_fix?.cost_line ? `<p class="muted small">${esc(d.self_fix.cost_line)}</p>`
+    : d.self_fix_cost ? `<p class="muted small">Studio's own fixes cost ${esc(money(d.self_fix_cost))} (counted in this draft's cost).</p>` : "";
   return `<section class="folds self-fixed">${foldHTML("production", "selffix", `Studio fixed ${plural(fixed.length, "thing")} before showing you this`, "",
     `${bullets(fixed.map(esc))}<p class="muted small">${esc(trendLine(d))}</p>${cost}`)}</section>`;
 }
@@ -2348,7 +2353,8 @@ function carouselFixesHTML(d) {
     ${fixes.map((f, i) => {
       const action = ready ? `<span class="done-chip">✓ Goes with Send back</span>` : "";
       return `<article class="fix-card"><span class="fix-n" aria-hidden="true">${i + 1}</span>
-        <div class="fix-text"><div class="fix-what">${esc(f.what)}</div><div class="fix-why">${esc(f.why)}</div></div>
+        <div class="fix-text"><div class="fix-what">${esc(f.what)}</div><div class="fix-why">${esc(f.why)}</div>
+          ${f.left_because?.text ? `<div class="fix-left">${LEFT_TAG[f.left_because.kind] ? `<span class="fix-tag">${esc(LEFT_TAG[f.left_because.kind])}</span> ` : ""}${esc(f.left_because.text)}</div>` : ""}</div>
         <div class="fix-actions">${slideChip(f.slide)}${action}</div></article>`;
     }).join("")}
   </section>`;

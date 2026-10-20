@@ -34,6 +34,25 @@ MAX_FIXES, MAX_WORKS = 5, 4
 
 _score = {"type": "string", "enum": ["good", "fix"]}
 _seconds = {"anyOf": [{"type": "number"}, {"type": "null"}]}
+_item = {"anyOf": [{"type": "integer"}, {"type": "null"}]}
+
+# What a fix the editor can make does, exactly (fix_actions.py makes it): one machine action per fix.
+REEL_ACTIONS = ("caption_word", "drop_words", "restore_words", "trim_pause", "move_cut", "graphic", "hook_text",
+                "music_level", "replan", "none")
+CAROUSEL_ACTIONS = ("slide_text", "replan", "none")
+ACTION_FIELDS = ("", "before", "after", "time", "title", "lines", "remove", "heading", "body", "caption")
+# Why a fix is Bryan's, not the editor's (Review says it in plain words: self_fix.left_because).
+FOR_BRYAN = ("", "footage", "taste", "message", "spending")
+
+
+def _action_schema(types: tuple) -> dict:
+    return {"type": "object",
+            "properties": {"type": {"type": "string", "enum": list(types)}, "start": _seconds, "end": _seconds,
+                           "from": {"type": "string"}, "to": {"type": "string"}, "item": _item,
+                           "field": {"type": "string", "enum": list(ACTION_FIELDS)}, "amount": _seconds,
+                           "reason": {"type": "string"}},
+            "required": ["type", "start", "end", "from", "to", "item", "field", "amount", "reason"],
+            "additionalProperties": False}
 
 SCHEMA = {
     "type": "object",
@@ -61,9 +80,11 @@ SCHEMA = {
                     "rule": {"type": "string"},
                     "same_rule": {"type": "integer"},
                     "illustrate": {"type": "string"},
+                    "action": _action_schema(REEL_ACTIONS),
+                    "for_bryan": {"type": "string", "enum": list(FOR_BRYAN)},
                 },
                 "required": ["what", "why", "start", "end", "area", "when", "kind", "editor_can_fix", "rule",
-                             "same_rule", "illustrate"],
+                             "same_rule", "illustrate", "action", "for_bryan"],
                 "additionalProperties": False,
             },
         },
@@ -99,6 +120,7 @@ what it's about.
 is "next_shoot", and its "what" says what to film. kind is the kind of shot to film for a \
 next_shoot fix (talking, broll, detail, before_after, reaction, screen), otherwise "none".
 {fixable}
+{actions}
 {illustrate}
 - works: 2 to 4 short points on what already works, so it's kept in the next version.
 - Place names stay internal: if an estate, condo, street or building name, an address or a \
@@ -123,6 +145,43 @@ starts the next"); same_rule is the number of the rule in "Editing rules Studio 
 (R3 = 3), else 0. For other fixes rule is "" and same_rule 0."""
 _REEL_FIXABLE = ("trims and cuts, the order of the opening, the hook text, pace, caption words and timing, a "
                  "graphic's or drawn animation's wording, placement or timing (or removing it), the music level")
+_REEL_ACTIONS = """\
+- action: for an editor_can_fix fix, the exact change, so Studio makes just that change instead of \
+editing the whole draft again. Take the words and times from the material (seconds on the draft's \
+clock). type:
+  - caption_word: a caption shows a wrong word (mis-heard or misspelt, "MCSC" for "MCST"): start = when \
+it's on screen, from = the word(s) as the caption shows them, to = the right word(s).
+  - drop_words: a stutter, a repeated phrase or a false start: start and end = where it's said, from = \
+the words as heard (for "the the", from = "the the").
+  - restore_words: words that were cut but the sentence needs (see "Words cut at joins" and "Ends"): \
+start = that join (0 for the draft's start, its length for its end), from = the words to bring back.
+  - trim_pause: a dead pause: start and end = the pause.
+  - move_cut: a cut too early or too late: start = the cut point (a join from the cut list, 0 or the \
+draft's length), field "before" (moves the end of the shot before it) or "after" (the start of the \
+shot after it), amount = seconds (positive keeps more footage, negative cuts more).
+  - graphic: a card, callout or drawn animation by its number (G2 = item 2): field "time" (start = its \
+new start, amount = its new length in seconds or null), "title" (to = the new title, its one italic \
+word in *asterisks*), "lines" (to = the new lines joined with " / ") or "remove".
+  - hook_text: to = the new on-screen hook (at most 6 words, sentence case, one *italic* word or none), \
+or "" to take it off.
+  - music_level: amount = how many dB to change it by (negative = quieter).
+  - replan: only when none of these can make it (reordering, a different take, a new drawn animation, \
+caption timing, anything across many places): reason = why, in a few words.
+  A fix that isn't editor_can_fix has type "none". Fields a type doesn't use are null, or "" (field "").
+- for_bryan: for a fix that isn't editor_can_fix, why it's Bryan's: "footage" (it needs new footage or \
+photos), "taste" (his judgement, or a choice between good options), "message" (what the post says, an \
+offer, a claim only he can confirm) or "spending" (it costs money, like drawing new pictures). "" for \
+an editor_can_fix fix."""
+_CAROUSEL_ACTIONS = """\
+- action: for an editor_can_fix fix, the exact change: type "slide_text" (item = the slide number, \
+field "heading" or "body", to = its new words in full; or field "caption", item null, to = the whole \
+new caption), or "replan" (reordering, adding or removing a slide, a different picture: reason = why, \
+in a few words). A fix that isn't editor_can_fix has type "none". Unused fields are null, or "".
+- for_bryan: for a fix that isn't editor_can_fix, why it's Bryan's: "footage" (it needs a real photo \
+or footage), "taste", "message" (an offer, a claim only he can confirm) or "spending" (a new concept \
+picture costs money). "" for an editor_can_fix fix."""
+
+
 # Drawn inserts (editor.place_scenes): what the read says about them, and "Draw it for now".
 _ILLUSTRATE = """\
 - Drawn animations: the material lists any animation Studio drew over the footage (drawn, not \
@@ -168,8 +227,11 @@ CAROUSEL_SCHEMA = {
                     "editor_can_fix": {"type": "boolean"},
                     "rule": {"type": "string"},
                     "same_rule": {"type": "integer"},
+                    "action": _action_schema(CAROUSEL_ACTIONS),
+                    "for_bryan": {"type": "string", "enum": list(FOR_BRYAN)},
                 },
-                "required": ["what", "why", "slide", "area", "editor_can_fix", "rule", "same_rule"],
+                "required": ["what", "why", "slide", "area", "editor_can_fix", "rule", "same_rule", "action",
+                             "for_bryan"],
                 "additionalProperties": False,
             },
         },
@@ -203,6 +265,7 @@ with a verb ("Shorten slide 3's text to two lines"). "why" is one plain reason i
 words. slide is the slide number it's about (1 = the cover), or null for the whole post or the \
 caption. area is what it's about.
 {fixable}
+{actions}
 - An offer, price, discount, promotion or deadline that isn't in the listed offers is always a \
 fix (area ask). A place name (estate, condo, street, block, town), an address or a client's name \
 on a slide or in the caption is always a fix to remove it.
@@ -250,6 +313,42 @@ def carousel_context(production: dict, data: dict) -> str:
     return "\n".join(lines)
 
 
+def _clean_action(f: dict, types: tuple, total: float | None = None) -> dict:
+    """The fix's action, inside the vocabulary: "none" for a fix that's Bryan's, and a fix the
+    editor can make with no usable action becomes "replan" (the editor plans that one again)."""
+    a = f.get("action") if isinstance(f.get("action"), dict) else {}
+
+    def num(v):
+        try:
+            return None if v is None or isinstance(v, bool) else round(float(v), 2)
+        except (TypeError, ValueError):
+            return None
+
+    def secs(v):
+        v = num(v)
+        return None if v is None else round(min(max(v, 0.0), total), 2) if total is not None else v
+    kind = a.get("type") if a.get("type") in types else "none"
+    item = a.get("item")
+    out = {"type": kind, "start": secs(a.get("start")), "end": secs(a.get("end")),
+           "from": str(a.get("from") or "").strip()[:120], "to": str(a.get("to") or "").strip()[:400],
+           "item": item if isinstance(item, int) and not isinstance(item, bool) else None,
+           "field": a.get("field") if a.get("field") in ACTION_FIELDS else "", "amount": num(a.get("amount")),
+           "reason": re.sub(r"\s+", " ", str(a.get("reason") or "")).strip()[:160]}
+    if not f.get("editor_can_fix"):
+        return {**out, "type": "none"}
+    if kind == "none":
+        out.update(type="replan", reason=out["reason"] or "no exact change given")
+    return out
+
+
+def _for_bryan(f: dict) -> str:
+    if f.get("editor_can_fix"):
+        return ""
+    if f.get("when") == "next_shoot":
+        return "footage"
+    return f.get("for_bryan") if f.get("for_bryan") in FOR_BRYAN else ""
+
+
 def _learnable(f: dict) -> dict:
     """editor_can_fix, and the rule it teaches (only for the ones the editor can fix)."""
     can = f.get("editor_can_fix") is True and f.get("when", "this_draft") != "next_shoot"
@@ -268,6 +367,8 @@ def _clean_carousel(result: dict, slides: int) -> dict:
                       # Everything in a carousel can change in this draft.
                       "when": "this_draft", "start": None, "end": None, "kind": None,
                       **_learnable(f)})
+        fixes[-1]["action"] = _clean_action({**f, **fixes[-1]}, CAROUSEL_ACTIONS)
+        fixes[-1]["for_bryan"] = _for_bryan({**f, **fixes[-1]})
     works = [w.strip() for w in result.get("works", []) if w.strip()][:MAX_WORKS]
     return {"kind": "carousel", "verdict": result.get("verdict", "").strip(),
             "scores": {k: v for k, v in (result.get("scores") or {}).items() if k in CAROUSEL_SCORES},
@@ -283,7 +384,8 @@ def concept_fixes(production: dict, data: dict, kind: str | None) -> list[dict]:
     def fix(what, why, n):
         # Pictures are Bryan's call (a redraw spends), so these wait for him.
         return {"what": what, "why": why, "slide": n, "area": "picture", "when": "this_draft",
-                "start": None, "end": None, "kind": None, "editor_can_fix": False, "rule": "", "same_rule": 0}
+                "start": None, "end": None, "kind": None, "editor_can_fix": False, "rule": "", "same_rule": 0,
+                "action": {"type": "none"}, "for_bryan": "footage" if kind == concepts.FINISHED else "spending"}
     shown = {p["n"]: p for p in data.get("pictures", [])}
     for n, s in enumerate(data["slides"], 1):
         if s["image"].get("source") != "concept":
@@ -322,7 +424,7 @@ def run_carousel(conn, production: dict, client=None, ref: str | None = None) ->
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
         output_config={"effort": "low", "format": {"type": "json_schema", "schema": CAROUSEL_SCHEMA}},
         system=_CAROUSEL_SYSTEM.replace("{content_plan}", carousel._context_text())
-        .replace("{fixable}", _FIXABLE.replace("{examples}", _CAROUSEL_FIXABLE)),
+        .replace("{fixable}", _FIXABLE.replace("{examples}", _CAROUSEL_FIXABLE)).replace("{actions}", _CAROUSEL_ACTIONS),
         messages=[{"role": "user", "content": content}],
     )
     usage.record("review", ref or f"production:{production['id']}", response)
@@ -412,18 +514,22 @@ def _context(conn, production: dict) -> str:
                       + (f" ({c['why']})" if c.get("why") else ""))
         offset += length
     lines.append("Cut list (draft time: source clip and its seconds):\n" + ("\n".join(placed) or "  (none)"))
+    cut_words = _cut_words(cuts, clips, total)
+    if cut_words:
+        lines.append(cut_words)
     lines.append(f"Hook text on screen for the first ~2.5s: {edl.get('hook_text') or '(none)'}")
-    graphics = [g for g in edl.get("graphics", []) if g.get("style") != "scene"]
-    lines.append("Graphics: " + ("; ".join(
-        f"{g['start']:.1f}-{g['start'] + g['duration']:.1f}s {g['style']} \"{g['title']}\""
-        + (f" ({' / '.join(g['lines'])})" if g.get("lines") else "") for g in graphics) or "none"))
-    drawn = inserts(edl)
+    numbered = [(n, g) for n, g in enumerate(edl.get("graphics", []), 1) if "start" in g]
+    graphics = [(n, g) for n, g in numbered if g.get("style") != "scene"]
+    lines.append("Graphics (numbered: G1 is item 1): " + ("; ".join(
+        f"G{n} {g['start']:.1f}-{g['start'] + g['duration']:.1f}s {g['style']} \"{g['title']}\""
+        + (f" ({' / '.join(g['lines'])})" if g.get("lines") else "") for n, g in graphics) or "none"))
+    drawn = list(zip([n for n, g in numbered if g.get("style") == "scene"], inserts(edl)))
     if drawn:
         import motion
         lines.append("Drawn animations over the footage (drawn by Studio, not filmed; Bryan keeps talking under them):\n"
-                     + "\n".join(f"  {d['start']:.1f}-{d['end']:.1f}s {d['look']} {d['type']} \"{d['title']}\""
+                     + "\n".join(f"  G{n} {d['start']:.1f}-{d['end']:.1f}s {d['look']} {d['type']} \"{d['title']}\""
                                  + (f" ({d['why']})" if d.get("why") else "")
-                                 + f": shows \"{motion.scene_text(d['scene'])[:200]}\"" for d in drawn))
+                                 + f": shows \"{motion.scene_text(d['scene'])[:200]}\"" for n, d in drawn))
     lines.append("Captions on screen (start-end seconds: text):\n"
                  + ("\n".join(f"  {c['start']:.2f}-{c['end']:.2f}: {c['text']}" for c in chunks) or "  (none)"))
     lines.append("Words spoken in the draft (start seconds, word):\n"
@@ -479,6 +585,44 @@ def _context(conn, production: dict) -> str:
     return "\n\n".join(lines)
 
 
+def _cut_words(cuts: list[dict], clips: dict[int, dict], total: float) -> str:
+    """What Bryan said that the cut left out: at each join inside one clip (not hesitations or
+    stutters), and just before the draft's start and after its end, so the read can ask for words
+    back (restore_words) with the words themselves."""
+    import editor
+
+    def said(words, idx):
+        text = " ".join(words[i]["word"].strip() for i in idx[:16])
+        return text + (" ..." if len(idx) > 16 else "")
+    joins, offset = [], 0.0
+    for a, b in zip(cuts, cuts[1:]):
+        offset += a["end"] - a["start"]
+        if a["clip_id"] != b["clip_id"] or b["start"] <= a["end"] + 0.05:
+            continue
+        words = editor._words(clips[a["clip_id"]])
+        free = editor.droppable(words)
+        between = [i for i, w in enumerate(words) if w["start"] >= a["end"] - 0.01 and w["end"] <= b["start"] + 0.01]
+        if any(i not in free for i in between):
+            joins.append(f"  {offset:.1f}s: \"{said(words, between)}\"")
+    ends = []
+    if cuts:
+        first, last = cuts[0], cuts[-1]
+        words = editor._words(clips[first["clip_id"]])
+        before = [i for i, w in enumerate(words) if first["start"] - 6.0 <= w["start"] and w["end"] <= first["start"] + 0.01]
+        if before:
+            ends.append(f"  before 0.0s the clip had: \"{said(words, before[-12:])}\"")
+        words = editor._words(clips[last["clip_id"]])
+        after = [i for i, w in enumerate(words) if w["start"] >= last["end"] - 0.01 and w["start"] <= last["end"] + 6.0]
+        if after:
+            ends.append(f"  after {total:.1f}s (the end) it goes on: \"{said(words, after[:12])}\"")
+    out = []
+    if joins:
+        out.append("Words cut at joins (draft time of the join: the words cut there):\n" + "\n".join(joins[:12]))
+    if ends:
+        out.append("Ends (what Bryan said just outside the draft):\n" + "\n".join(ends))
+    return "\n".join(out)
+
+
 def inserts(edl: dict) -> list[dict]:
     """The draft's drawn animations (editor.place_scenes), for the read and for Review: what was
     drawn, not filmed, and when."""
@@ -514,6 +658,8 @@ def _clean(result: dict, total: float, edl: dict | None = None) -> dict:
             f["kind"] = None
         draw = re.sub(r"\s+", " ", str(f.pop("illustrate", "") or "")).strip().rstrip(".")[:120]
         f = {**f, **_learnable(f)}
+        f["action"] = _clean_action(f, REEL_ACTIONS, total)
+        f["for_bryan"] = _for_bryan(f)
         if f.get("when") == "next_shoot":
             covered = next((d for d in drawn if d["role"] == "gap" and _overlaps(f, d)), None)
             if covered:
@@ -523,7 +669,10 @@ def _clean(result: dict, total: float, edl: dict | None = None) -> dict:
             added += 1
             fixes.append({"what": ILLUSTRATE_PREFIX + draw, "why": "Until it's filmed, a drawing can show it.",
                           "start": f["start"], "end": f["end"], "area": "picture", "when": "this_draft", "kind": None,
-                          "editor_can_fix": True, "rule": "", "same_rule": 0, "illustrates": f["what"]})
+                          "editor_can_fix": True, "rule": "", "same_rule": 0, "illustrates": f["what"],
+                          "action": {"type": "replan", "start": f["start"], "end": f["end"], "from": "", "to": "",
+                                     "item": None, "field": "", "amount": None, "reason": "a new drawn animation"},
+                          "for_bryan": ""})
     works = [w.strip() for w in result.get("works", []) if w.strip()][:MAX_WORKS]
     verdict = result.get("verdict", "").strip()
     if added and re.match(r"(?i)\s*(ready to post|nearly ready)", verdict):
@@ -578,7 +727,7 @@ def run(conn, production_id: int, client=None, ref: str | None = None) -> dict:
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
         output_config={"effort": "low", "format": {"type": "json_schema", "schema": SCHEMA}},
         system=_SYSTEM.replace("{playbook}", playbook.text())
-        .replace("{fixable}", _FIXABLE.replace("{examples}", _REEL_FIXABLE))
+        .replace("{fixable}", _FIXABLE.replace("{examples}", _REEL_FIXABLE)).replace("{actions}", _REEL_ACTIONS)
         .replace("{illustrate}", _ILLUSTRATE if settings.EDIT_SCENES and settings.EDIT_SCENES_MAX > 0 else _NO_ILLUSTRATE),
         messages=[{"role": "user", "content": content}],
     )

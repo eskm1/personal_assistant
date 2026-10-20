@@ -133,9 +133,20 @@ EDIT_PUNCH_ZOOM = float(_env("STUDIO_EDIT_PUNCH_ZOOM", "1.12"))
 EDIT_SCENES = _flag("STUDIO_EDIT_SCENES", True)
 EDIT_SCENES_MAX = min(max(int(_env("STUDIO_EDIT_SCENES_MAX", "3") or 3), 0), 6)
 # Studio fixes its own list (self_fix.py): after a draft renders and Studio's read runs, the
-# fixes the editor can make itself go back to the editor, up to this many rounds, before Bryan
-# sees the draft. Each round is one edit plan and one read (a few tens of cents). 0 = off.
-SELF_FIX_ROUNDS = min(max(int(_env("STUDIO_SELF_FIX_ROUNDS", "2")), 0), 4)
+# fixes the editor can make itself are made, up to this many rounds, before Bryan sees the draft.
+# Most are made directly (a caption word, a stutter, a pause, a cut point, a card, the hook, the
+# music level: no new edit plan, so a round is one render and one read); only what nothing smaller
+# can fix goes back to the editor for a new plan. 0 = off.
+SELF_FIX_ROUNDS = min(max(int(_env("STUDIO_SELF_FIX_ROUNDS", "3")), 0), 5)
+# What Studio may spend on its read, its own fix rounds and the caption spell-check, per draft
+# version (US$). When the next step would pass it, Studio stops and says so on the draft.
+SELF_FIX_MAX_USD = max(float(_env("STUDIO_SELF_FIX_MAX_USD", "1.50")), 0.0)
+# The caption spell-check before each render (spelling.py): one short text-only Claude call that
+# catches words Whisper mis-heard (MCSC for MCST), against the trade glossary (Studio/glossary.txt)
+# and the brief. Off = only the glossary's own "wrong -> right" lines are applied. The model is the
+# main one unless a cheaper one is set (claude-haiku-5-5 costs about a tenth).
+SPELL_CHECK = _flag("STUDIO_SPELL_CHECK", True)
+SPELL_MODEL = _env("STUDIO_SPELL_MODEL", CLAUDE_MODEL)
 # Editing rules Studio learns from the problems it fixed and from Bryan's editing notes,
 # kept in their own section of the playbook (learning.py); at most this many per kind of post.
 LEARN_RULES = _flag("STUDIO_LEARN_RULES", True)

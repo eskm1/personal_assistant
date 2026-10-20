@@ -207,6 +207,14 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   review goes back to `revising` with `restyle = 1` (a Reel gets a fresh edit; a carousel is rewritten from
   `CAROUSEL_NOTE`, not learned as a rule), Telegram says so. Review's **Edit it again** (one / all waiting) does the
   same. Bump `RELEASE` when the look changes enough to redo what's waiting.
+- Fix rounds that fix, built 2026-10-20 (not yet proven with real Claude): Studio's read gives each editor-fixable fix
+  an `action` (caption_word, drop_words, restore_words, trim_pause, move_cut, graphic, hook_text, music_level, replan;
+  carousels slide_text) and a `for_bryan` reason; `self_fix.py` applies them as patches (`fix_actions.py`,
+  `editor.self_patch`, `carousel.patch`), re-plans only the rest once, judges per fix, up to 3 rounds,
+  `STUDIO_SELF_FIX_MAX_USD` 1.50; fixes left carry `left_because` (Review shows it), the summary a `cost_line`.
+  Caption corrections in `edl["corrections"]`; the trade glossary `Studio/glossary.txt` (`glossary.py`) goes to
+  Whisper as hotwords and to the pre-render spell-check (`spelling.py`). Cuts follow the voice (`voice_edges.py`,
+  `join_guard`, the clipped-word check; commit bde7803).
 - Words that sound like Bryan, built 2026-10-20 from instagram-agent-skill (MIT, Bryan approved; not yet proven with
   real Claude): `igkit/` (vendored, see its README), `wording.py` (safe fixes on all viewer-facing text, the never list
   + one rewrite pass `STUDIO_HUMANIZE`, allowlist `Studio/humanize_allow.txt`, hook options scored with hookscore,

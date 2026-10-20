@@ -592,6 +592,67 @@ def self_revise(conn, production_id: int, notes: list[dict], round_no: int, clie
     return out_dir
 
 
+SLIDE_FIELDS = {"heading": 120, "body": 400}  # the most a patch may write (the layout fits what's there)
+
+
+def patch(conn, production_id: int, actions: list[dict], round_no: int) -> tuple[Path | None, list[dict]]:
+    """One of Studio's own fix rounds made as patches: the read's slide_text actions ({n, action:
+    {item, field, to}}) change those words only, no Claude call, and the slides are laid out again
+    as the same version, in a folder of their own. Returns the folder (None when nothing could be
+    changed) and each action's result {n, type, ok, did | why}."""
+    row = conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    data = current(row)
+    slides = json.loads(json.dumps(data["slides"]))
+    caption, results = row["caption"], []
+    for item in actions:
+        a = item["action"]
+        res = {"n": item["n"], "type": a.get("type")}
+        to = re.sub(r"[ \t]+", " ", str(a.get("to") or "").replace("*", "")).strip()
+        field, n = a.get("field"), a.get("item")
+        if a.get("type") != "slide_text":
+            res.update(ok=False, why="that needs the slides written again")
+        elif field == "caption":
+            if not to:
+                res.update(ok=False, why="the read gave no caption")
+            else:
+                caption = to
+                res.update(ok=True, did="rewrote the caption")
+        elif field not in SLIDE_FIELDS or not isinstance(n, int) or not 1 <= n <= len(slides):
+            res.update(ok=False, why="the read named a slide or a part of it the carousel doesn't have")
+        elif not to and field == "heading":
+            res.update(ok=False, why="a slide needs a heading")
+        elif len(to) > SLIDE_FIELDS[field]:
+            res.update(ok=False, why="the new words are too long for the slide")
+        elif to == slides[n - 1].get(field, ""):
+            res.update(ok=False, why="the slide already says that")
+        else:
+            slides[n - 1][field] = to
+            res.update(ok=True, did=f"slide {n}'s {field} now reads \"{to[:60]}{'...' if len(to) > 60 else ''}\"")
+        results.append(res)
+    if not any(r.get("ok") for r in results):
+        return None, results
+    for s in slides:  # the safe fixes on viewer-facing words (no rewrite call: these came from Studio's read)
+        for k in SLIDE_FIELDS:
+            if s.get(k):
+                s[k] = wording.tidy(s[k])
+    out_dir = RENDERS / f"carousel_{production_id}_v{row['version']}_fix{round_no}"
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    made = lay_out(conn, slides, out_dir)
+    thumb = out_dir / "thumb.jpg"
+    _thumb(Path(made["files"][0]), thumb)
+    did = "; ".join(r["did"] for r in results if r.get("ok"))
+    stored = {**data, "version": row["version"], "slides": slides, **made,
+              "summary": _summary(slides, made["pictures"], None) + f" Studio then {did}.",
+              "notes_addressed": [], "patched": [r for r in results if r.get("ok")]}
+    conn.execute("""UPDATE productions SET thumb_path = ?, slides = ?, caption = ?, updated_at = ? WHERE id = ?""",
+                 (str(thumb), json.dumps(stored, ensure_ascii=False), caption, catalog.now(), production_id))
+    conn.commit()
+    log.info("Carousel %s v%s: Studio's fix round %d patched %d thing(s)", production_id, row["version"], round_no,
+             sum(1 for r in results if r.get("ok")))
+    return out_dir, results
+
+
 def _concept_slide(conn, production_id: int, n: int):
     row = conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
     if row is None or row["format"] != "carousel":

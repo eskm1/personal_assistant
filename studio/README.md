@@ -361,6 +361,11 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    add in the Instagram app.
 6. Every join is checked against the source sound for a clipped word; one is extended and that cut rendered again before delivery. The draft is re-transcribed to check no word was clipped, and its loudness is measured
    (target -14 LUFS, corrected if it's off). Both show under **Checks and measurements**.
+   **Captions spelt right**: Whisper is given the trade glossary (`Studio\glossary.txt`: MCST, HDB, BTO, screed, grout,
+   brand names...; add your own, one per line, and `wrong -> right` for a mis-hearing it keeps making), and before each
+   render one short check (`spelling.py`) corrects caption words it mis-heard, against the glossary and the brief. It
+   never changes a number, a name or what you meant. Only the captions change, not your words, and the fix holds through
+   re-renders, revisions and the Resolve project. `STUDIO_SPELL_CHECK`, `STUDIO_SPELL_MODEL`.
 7. Studio's read (`draft_review.py`): Claude looks at stills of the finished draft, its
    captions, words, cut list and checks, and writes the verdict and fix list. Each fix says
    whether the editor can make it itself (trims, the opening, hook text, captions, a card's
@@ -368,13 +373,19 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    When a shot you didn't film could be drawn instead (a build-up, a dimension, a process), the read
    adds "Draw it for now: ..." beside the "film next time" fix: Studio's own round draws it in this
    draft, and the "film next time" fix stays for you, marked as drawn for now.
-8. **Studio fixes its own list** (`self_fix.py`): while the read has fixes the editor can make,
-   up to `STUDIO_SELF_FIX_ROUNDS` rounds (default 2; `0` = off), the editor plans the draft again
-   with them as its notes, renders it and Studio reads it again. A round that makes the read
-   better is kept; one that doesn't (or fails) is dropped and the better version stays. Only then
-   does the draft come to **To review** (and Telegram tells you), as v1, with "Studio fixed N
-   things before showing you this" folded at the top and only what's left as fixes. The rounds
-   cost a few tens of cents each, shown apart in the draft's cost line ("Studio's own fixes").
+8. **Studio fixes its own list** (`self_fix.py`, `fix_actions.py`): each fix Studio's read gives the editor comes with
+   the exact change: a caption word (MCSC to MCST), a stutter or repeat to cut, words to bring back at a join or at the
+   end, a pause to shorten, a cut point to move, a card to move, retime, reword or remove, the hook's words, the music
+   level. Studio makes those changes directly on the draft's own edit (no new plan, so nothing else moves) and renders
+   it again with every check (voice edges, the clipped-word check, loudness). Only what no small change can do
+   (re-ordering, a different take, a new drawing), or a small change that didn't work, goes back to the editor for a
+   new plan, all together, once. Studio then reads the draft again and keeps the round when the fixes it made are gone
+   and nothing got worse; partial progress is kept. Up to `STUDIO_SELF_FIX_ROUNDS` rounds (default 3; `0` = off), and
+   never past `STUDIO_SELF_FIX_MAX_USD` (default US$1.50) for the draft's read, rounds and spell-checks together; when
+   it stops at the limit, the draft says so. Only then does the draft come to **To review** (and Telegram tells you),
+   with "Studio fixed N things before showing you this" folded at the top. Every fix left for you says why: it needs
+   new footage, it's your call (taste, the message, spending), or what Studio tried. The draft's cost line shows what
+   the read and fixes cost (typically US$0.15 to 0.40).
 9. **Studio learns** (`learning.py`): the rule behind each problem a round fixed, and behind each
    of your send-back notes the editor marks as an editing problem (not taste), is kept in its own
    playbook section, "Editing rules Studio learned" (how often it was caught, when last), so the
@@ -389,7 +400,8 @@ The jump cuts, reframing and punch-ins are settings in `.env` (all on by default
 **Restart Studio**): `STUDIO_EDIT_JUMP_CUTS`, `STUDIO_EDIT_MAX_PAUSE` (seconds, default 0.35),
 `STUDIO_EDIT_REFRAME`, `STUDIO_EDIT_PUNCH_INS`, `STUDIO_EDIT_PUNCH_ZOOM` (default 1.12), `STUDIO_EDIT_SCENES`,
 `STUDIO_EDIT_SCENES_MAX` (default 3; `0` = none). The fix rounds,
-learning, caption font and music gap are too: `STUDIO_SELF_FIX_ROUNDS`, `STUDIO_LEARN_RULES`,
+learning, caption font and music gap are too: `STUDIO_SELF_FIX_ROUNDS`, `STUDIO_SELF_FIX_MAX_USD`,
+`STUDIO_SPELL_CHECK`, `STUDIO_SPELL_MODEL`, `STUDIO_LEARN_RULES`,
 `STUDIO_LEARNED_RULES_MAX`, `STUDIO_CAPTION_FONT`, `STUDIO_TITLE_STYLE` (`gallery` or `classic`),
 `STUDIO_MUSIC_GAP_DB`. Older drafts keep their look until they're revised. A draft
 remembers its pieces and framing, so a re-render (after a subtitle fix, say) and the Resolve

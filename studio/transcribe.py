@@ -120,6 +120,18 @@ def _language(audio: np.ndarray) -> tuple[str | None, float | None]:
     return lang, p
 
 
+def _hotwords() -> str | None:
+    """The trade glossary's terms (glossary.py: MCST, HDB, screed, brand names...), so Whisper hears
+    them right. faster-whisper (1.2.1) puts hotwords before every window, not just the first, unlike
+    initial_prompt. None when the glossary can't be read (Whisper still runs)."""
+    try:
+        import glossary
+        return glossary.hotwords()
+    except Exception as e:  # a transcript beats no transcript
+        log.warning("No glossary for Whisper: %s", e)
+        return None
+
+
 def _transcribe_once(wav_path: Path) -> dict:
     audio = _load_wav(wav_path)
     language, picked_p = _language(audio)
@@ -127,6 +139,7 @@ def _transcribe_once(wav_path: Path) -> dict:
         audio,
         language=language,
         initial_prompt=_ZH_PROMPT if language == "zh" else None,
+        hotwords=_hotwords(),
         word_timestamps=True,
         vad_filter=True,  # skips silence, which also stops Whisper inventing words in it
     )

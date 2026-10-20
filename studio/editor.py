@@ -936,21 +936,56 @@ def _timed_notes(notes: list[dict], cuts: list[dict]) -> list[str]:
 
 
 def timeline(cuts: list[dict], clips: dict[int, dict], sound: bool = False) -> list[dict]:
-    """Every kept word on the draft's own clock. sound: each word also gets "sound_end", where
-    its voice really stops (voice_edges; never past its piece), when the clip's sound is known."""
+    """Every kept word on the draft's own clock (with its clip and its start there, "clip_id" and
+    "src"). A word the draft corrects (a piece's "say", attach_corrections: a mis-heard "MCSC"
+    becomes "MCST") reads as corrected, and a word a correction folds into the one before ("") is
+    left out, so the captions, Studio's read, Review and the Resolve captions all show the fix.
+    sound: each word also gets "sound_end", where its voice really stops (voice_edges; never past
+    its piece), when the clip's sound is known."""
     out, offset = [], 0.0
     for c in cuts:
         words = _words(clips[c["clip_id"]])
         v = voice_edges.voice(clips[c["clip_id"]]) if sound and words else None
+        say = c.get("say") or {}
         for k, w in enumerate(words):
             if w["start"] >= c["start"] - 0.01 and w["end"] <= c["end"] + 0.01:
-                out.append({"word": w["word"], "start": offset + w["start"] - c["start"],
-                            "end": offset + w["end"] - c["start"]})
+                text = say.get(f"{w['start']:.2f}", w["word"])
+                if not str(text).strip():
+                    if out:  # folded into the word before: it lasts to this word's end
+                        out[-1]["end"] = offset + w["end"] - c["start"]
+                        if v and "sound_end" in out[-1]:
+                            nxt = words[k + 1]["start"] if k + 1 < len(words) else None
+                            real = voice_edges.end_point(v, w["end"], w["end"], next_start=nxt, limit=c["end"])
+                            out[-1]["sound_end"] = offset + max(w["end"], real - voice_edges.BREATH_OUT) - c["start"]
+                    continue
+                out.append({"word": text, "start": offset + w["start"] - c["start"],
+                            "end": offset + w["end"] - c["start"], "clip_id": c["clip_id"], "src": w["start"]})
                 if v:
                     nxt = words[k + 1]["start"] if k + 1 < len(words) else None
                     real = voice_edges.end_point(v, w["end"], w["end"], next_start=nxt, limit=c["end"])
                     out[-1]["sound_end"] = offset + max(w["end"], real - voice_edges.BREATH_OUT) - c["start"]
         offset += c["end"] - c["start"]
+    return out
+
+
+def attach_corrections(cuts: list[dict], corrections: list[dict] | None) -> list[dict]:
+    """The draft's caption corrections (edl["corrections"]: [{clip_id, at, from, to}], at = the
+    word's start in its clip) put on the pieces that hold those words, as each piece's "say"
+    ({"12.34": "MCST"}), which timeline() reads. Keyed to the clip, not the draft's clock, so they
+    hold through any re-cut, a re-render and the Resolve project."""
+    by_clip: dict[int, dict] = {}
+    for f in corrections or []:
+        try:
+            by_clip.setdefault(int(f["clip_id"]), {})[f"{float(f['at']):.2f}"] = str(f.get("to") or "")
+        except (KeyError, TypeError, ValueError):
+            continue
+    out = []
+    for c in cuts:
+        c = {k: v for k, v in c.items() if k != "say"}
+        say = {t: to for t, to in by_clip.get(c["clip_id"], {}).items() if c["start"] - 0.02 <= float(t) <= c["end"] + 0.01}
+        if say:
+            c["say"] = say
+        out.append(c)
     return out
 
 
@@ -2304,7 +2339,8 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
 
     edl = plan_edit(conn, production, clips, client)
     edl["cuts"] = _cut(edl, clips, client, f"production:{production_id}", [n["body"] for n in notes])
-    _render(conn, production, clips, edl, plan, version, find_track)
+    _keep_corrections(edl, production)
+    _render(conn, production, clips, edl, plan, version, find_track, client=client)
     if notes:  # Bryan's editing notes become rules Studio keeps (learning.py)
         import learning
         learning.from_notes(conn, notes, edl.get("notes_addressed", []), "reel")
@@ -2460,20 +2496,68 @@ def self_revise(conn, production_id: int, fixes: list[dict], round_no: int, clie
     edl["cuts"] = _cut(edl, clips, client, self_fix.ref(production_id), [f["body"] for f in fixes])
     if previous.get("look"):
         edl["look"] = previous["look"]
+    _keep_corrections(edl, production)
     find_track, plan = _same_music(production, plan, find_track)
     return _render(conn, production, clips, edl, plan, production["version"], find_track,
-                   suffix=f"_fix{round_no}", address_notes=False)
+                   suffix=f"_fix{round_no}", address_notes=False, client=client, ref=self_fix.ref(production_id))
+
+
+def _keep_corrections(edl: dict, production: dict) -> None:
+    """A new edit plan keeps the caption corrections the draft before had (they're tied to the
+    clips' words, not the cut) and the words the spell-check already looked at."""
+    previous = json.loads(production.get("edl") or "{}")
+    if previous.get("corrections") and not edl.get("corrections"):
+        edl["corrections"] = previous["corrections"]
+    if previous.get("spell") and not edl.get("spell"):
+        edl["spell"] = previous["spell"]
+
+
+def self_patch(conn, production_id: int, actions: list[dict], round_no: int, client=None,
+               find_track=None) -> tuple[Path | None, list[dict]]:
+    """One of Studio's own fix rounds made as patches (fix_actions.apply): the read's actions on the
+    draft's own edit plan, no new plan, rendered as the same version (a file of its own) with every
+    code check. Returns the render (None when no action could be made) and each action's result."""
+    import fix_actions
+    import self_fix
+    production = dict(conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone())
+    edl = json.loads(production["edl"] or "{}")
+    if not edl.get("cuts"):
+        raise RuntimeError("this draft has no edit to fix")
+    ids = list(dict.fromkeys(c["clip_id"] for c in edl["cuts"]))
+    clips = _clips_for(conn, ids)
+    if set(ids) - set(clips):
+        raise RuntimeError("some of the draft's clips are no longer in the library")
+    new, results = fix_actions.apply(edl, clips, actions)
+    if not any(r.get("ok") for r in results):
+        return None, results
+    find_track, plan = _same_music(production, json.loads(production["plan"] or "{}"), find_track)
+    final = _render(conn, production, clips, new, plan, production["version"], find_track, placed=True,
+                    suffix=f"_fix{round_no}", address_notes=False, client=client, ref=self_fix.ref(production_id))
+    return final, results
 
 
 def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version: int, find_track=None,
-            placed: bool = False, suffix: str = "", address_notes: bool = True) -> Path:
+            placed: bool = False, suffix: str = "", address_notes: bool = True, client=None,
+            ref: str | None = None) -> Path:
     """Render an edit plan (EDL) to the next draft: cut, captions, graphics, music, QA. The
-    draft is stored but stays 'producing': self_fix.deliver sends it to To review."""
+    draft is stored but stays 'producing': self_fix.deliver sends it to To review. client and ref:
+    for the caption spell-check (spelling.py; ref is where its cost is recorded)."""
     production_id = production["id"]
-    cuts = edl["cuts"]
     # What Studio's own checks changed: editing problems (counted in Review's "caught" line) and
     # sound fixes (the recording's level, not an editing mistake).
     checks = [{"did": c, "counted": True} for c in edl.get("checks") or []]
+    # Captions say what Bryan meant: the draft's corrections, and the spell-check's (words it
+    # already checked in this draft aren't sent again).
+    import spelling
+    cuts = edl["cuts"] = attach_corrections(edl["cuts"], edl.get("corrections"))
+    spelled = spelling.run(edl, cuts, clips, production, plan, client, ref or f"production:{production_id}")
+    edl["spell_usd"] = spelled["usd"]  # this render's (self_fix.deliver counts the first one in its cap)
+    if spelled["fixed"]:
+        cuts = edl["cuts"] = attach_corrections(cuts, edl.get("corrections"))
+        shown = ", ".join(f"\"{f['to']}\"" for f in spelled["fixed"][:3])
+        n = len(spelled["fixed"])
+        checks.append({"did": f"corrected {n} caption word{'s' if n != 1 else ''} Whisper mis-heard ({shown})",
+                       "counted": True})
     RENDERS.mkdir(parents=True, exist_ok=True)
     final = RENDERS / f"production_{production_id}_v{version}{suffix}.mp4"
     with tempfile.TemporaryDirectory(prefix="studio-edit-") as tmp:
@@ -2486,7 +2570,7 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         if clipped:
             fixed_cuts, moved = unclip(cuts, clips, clipped)
             if moved:
-                cuts = edl["cuts"] = fixed_cuts
+                cuts = edl["cuts"] = attach_corrections(fixed_cuts, edl.get("corrections"))
                 total = render_cut(cuts, clips, work / "cut.mp4")
                 still = clipped_words(cuts, clips)
         left = {f["piece"] for f in still}
