@@ -560,9 +560,9 @@ function renderCloudPlan() {
   </div>`;
 }
 
-async function sync() {
+async function sync(pending) {
   try {
-    const data = await api("/api/board");
+    const data = await (pending instanceof Promise ? pending : api("/api/board"));
     if (data.version && state.version && data.version !== state.version) {
       // A new version is running: reload to get its screens too, but never
       // under someone's typing (fields save when you click away).
@@ -3528,6 +3528,9 @@ setInterval(async () => {
 }, JOB_POLL_MS);
 
 async function init() {
+  // The board is asked for with the account, not after it: one round trip to the server, not two.
+  const board = api("/api/board");
+  board.catch(() => {});
   try {
     state.me = await api("/api/me");
   } catch (err) {
@@ -3537,8 +3540,10 @@ async function init() {
   renderAccount();
   if (!PLAN_HERE) await loadProjects().catch(() => {});
   shellLinks();
-  await sync();
+  await sync(board);
   await routeFromHash();
-  setInterval(sync, POLL_MS);
+  // Not while the page is out of sight (a tab in the background); straight away when it's back.
+  setInterval(() => { if (!document.hidden) sync(); }, POLL_MS);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) sync(); });
 }
 if (!LEAVING) init();

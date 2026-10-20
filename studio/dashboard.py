@@ -35,6 +35,7 @@ import settings
 import playbook
 import previews
 import usage
+import webassets
 from settings import DASHBOARD_HOST, DASHBOARD_PORT, INBOX, VIDEO_EXTS
 from webutil import LOOPBACK, body, client_ip, db, is_local, is_owner, own_origin, owner_only, text
 
@@ -50,6 +51,22 @@ class _SessionInterface(SecureCookieSessionInterface):
     def get_cookie_secure(self, app):
         return (request.is_secure or request.headers.get("X-Forwarded-Proto") == "https"
                 or (not is_local() and settings.DASHBOARD_URL.startswith("https://")))
+
+    def should_set_cookie(self, app, session):
+        """The sign-in's 30 days start again when a page opens, not on every picture, file and poll:
+        a cookie that changed with every answer made the browser fetch again what it already had."""
+        if session.modified:
+            return True
+        return session.permanent and request.method == "GET" and request.path in _PAGES
+
+    def save_session(self, app, session, response):
+        super().save_session(app, session, response)
+        # Files and pictures are the same whoever asks (each is checked on the way in): kept as they are.
+        if request.path.startswith(("/media/", "/plan/", "/static/")):
+            response.vary.discard("cookie")  # lower case: werkzeug only finds it so
+
+
+_PAGES = ("/", "/plan/")
 
 
 app.session_interface = _SessionInterface()
@@ -82,7 +99,7 @@ def _close_db(_exc):
 # The app icons are public too: a phone fetches them for the home screen, sometimes signed out.
 # /public/media/: what Instagram fetches while a post goes out (a signed two-hour link, posting.py).
 _PUBLIC = ("/login", "/setup", "/invite/", "/healthz", "/static/", "/favicon.ico", "/apple-touch-icon", "/public/media/",
-           "/manifest.webmanifest",
+           "/manifest.webmanifest", "/sw.js",
            "/plan/favicon.ico", "/plan/apple-touch-icon.png", "/plan/icon-192.png", "/plan/icon-512.png")
 
 
@@ -130,7 +147,18 @@ def _headers(response):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "same-origin")
-    return response
+    return webassets.compress(response)
+
+
+def _static(filename: str):
+    """Review's scripts, styles and icons (web/): with the page's ?v= kept a year, gzipped (webassets.py)."""
+    path = (WEB / filename).resolve()
+    if not path.is_relative_to(WEB) or not path.is_file():
+        abort(404)
+    return webassets.send(path)
+
+
+app.view_functions["static"] = _static
 
 
 # ── Sign-in pages ─────────────────────────────────────────────────────────────
@@ -139,7 +167,7 @@ _FORM = (WEB / "login.html")
 
 
 def _page(mode: str, error: str = "", **extra):
-    return render_template_string(_FORM.read_text(encoding="utf-8"), mode=mode, error=error,
+    return render_template_string(webassets.stamp_html(_FORM.read_text(encoding="utf-8"), WEB), mode=mode, error=error,
                                   planner=cloud_sync.enabled(), domain_hint=auth.domain_hint(), **extra)
 
 
@@ -159,11 +187,33 @@ def healthz():
     return "ok"
 
 
+_SW_OFF = """// Studio's service worker is switched off (STUDIO_SERVICE_WORKER=off): it removes itself.
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (e) => e.waitUntil((async () => {
+  for (const name of await caches.keys()) await caches.delete(name);
+  await self.registration.unregister();
+})()));
+"""
+
+
+@app.get("/sw.js")
+def service_worker():
+    """The home-screen app's service worker (web/sw.js), for the whole site; checked by the phone
+    on every open, so switching it off (or a fix) reaches it at once."""
+    body = (WEB / "sw.js").read_text(encoding="utf-8") if settings.SERVICE_WORKER else _SW_OFF
+    response = Response(body, mimetype="text/javascript")
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.get("/manifest.webmanifest")
 def web_manifest():
     """The home-screen app: one scope for the whole site, so going from Plan (/plan/) to
-    Review (/) stays inside the app instead of opening Safari's in-app browser."""
-    manifest = {"name": "Urban Makers Studio", "short_name": "Studio", "start_url": "/", "scope": "/",
+    Review (/) stays inside the app instead of opening Safari's in-app browser. It starts on Plan
+    when the planner is here (from "/" it would load Review's page first, only to leave for Plan);
+    the id keeps it the same app either way."""
+    manifest = {"name": "Urban Makers Studio", "short_name": "Studio", "id": "/",
+                "start_url": "/plan/" if _plan_here() else "/", "scope": "/",
                 "display": "standalone", "background_color": "#FBFAF7", "theme_color": "#FBFAF7",
                 "icons": [{"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
                           {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
@@ -343,8 +393,41 @@ def _file_response(path: str | None):
     mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
     if mime == "video/quicktime":
         mime = "video/mp4"  # browsers play iPhone .MOV (H.264/HEVC) when it's labelled mp4
-    # conditional=True answers Range requests, so the player can seek.
-    return _stream_ranges(send_file(path, mimetype=mime, conditional=True, max_age=3600), path)
+    # conditional=True answers Range requests, so the player can seek. Kept an hour, by this
+    # browser only (it's behind the sign-in).
+    response = send_file(path, mimetype=mime, conditional=True, max_age=3600)
+    response.cache_control.public = False
+    response.cache_control.private = True
+    return _stream_ranges(response, path)
+
+
+STILL_WIDTH = 720
+
+
+def _small_still(path: str | None) -> str | None:
+    """A draft's still for its tile, the home page and the player before it plays: the editor saves
+    the video's own frame (1080 x 1920, a few hundred KB from real footage); a copy 720 wide, made
+    once beside it, looks the same at those sizes for a fraction of the bytes."""
+    if not path or not Path(path).is_file():
+        return path
+    src = Path(path)
+    small = src.with_name(f"{src.stem}.w{STILL_WIDTH}.jpg")
+    try:
+        if small.is_file() and small.stat().st_mtime >= src.stat().st_mtime:
+            return str(small)
+        from PIL import Image
+        with Image.open(src) as img:
+            if img.width <= STILL_WIDTH:
+                return path
+            img = img.convert("RGB")
+            img.thumbnail((STILL_WIDTH, STILL_WIDTH * 4), Image.LANCZOS)
+            tmp = small.with_name(f"{small.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+            img.save(tmp, "JPEG", quality=82, optimize=True, progressive=True)
+        tmp.replace(small)
+        return str(small)
+    except Exception as e:  # the full still still works
+        log.warning("Couldn't make a small still of %s: %s", src.name, e)
+        return path
 
 
 def _stream_ranges(response, path: str):
@@ -554,12 +637,14 @@ def _plan_here() -> bool:
 def index():
     """Review. With the planner here too, the page is marked so app.js opens Plan when
     the address has no Review route (#/tab/..., #/production/12 and so on)."""
-    page = (WEB / "index.html").read_text(encoding="utf-8")
+    page = webassets.stamp_html((WEB / "index.html").read_text(encoding="utf-8"), WEB)
     if _plan_here():
         page = page.replace("<html lang=\"en\">", '<html lang="en" data-plan-here="/plan/">', 1)
+    page = webassets.with_sw(page)
     response = Response(page, mimetype="text/html")
     response.headers["Cache-Control"] = "no-cache"
-    return response
+    response.add_etag()
+    return response.make_conditional(request)
 
 
 @app.get("/api/nav")
@@ -626,7 +711,8 @@ def board():
     }
     if not online:
         out["ideas_job"] = dict(_ideas_job)
-    return jsonify(out)
+    # Polled every 10 s: an unchanged board is a 304, not the whole list again.
+    return webassets.etag_json(jsonify(out))
 
 
 def _machine_info() -> dict:
@@ -1227,7 +1313,7 @@ def production_media(production_id: int, what: str):
         return send_file(row["video_path"], as_attachment=True,
                          download_name=f"{name} v{row['version']}{Path(row['video_path']).suffix}")
     if what == "thumb":
-        return _file_response(row["thumb_path"])
+        return _file_response(_small_still(row["thumb_path"]))
     # The light copy plays in Review; ?full=1 is the file as rendered (Full quality).
     return _file_response(row["video_path"] if request.args.get("full") else previews.draft_video(row["video_path"]))
 

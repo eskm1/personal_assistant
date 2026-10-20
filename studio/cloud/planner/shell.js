@@ -232,3 +232,28 @@ window.StudioShell = (() => {
   paintLinks();
   return { half, links, setLinks, setCurrent, setBadge, closeSheet, current: () => current };
 })();
+
+// The home-screen app's service worker (web/sw.js; pages served by Studio carry <html data-sw>,
+// Netlify's don't): the app opens from its last copy of the page instead of waiting for the server.
+// ?sw=off on the address: this visit without it, and its kept pages are thrown away.
+(() => {
+  if (!("serviceWorker" in navigator)) return;
+  if (/[?&]sw=off\b/.test(location.search)) {
+    navigator.serviceWorker.getRegistrations().then((rs) => Promise.all(rs.map((r) => r.unregister())))
+      .then(() => caches.keys()).then((ks) => Promise.all(ks.map((k) => caches.delete(k)))).catch(() => {});
+    return;
+  }
+  const sw = document.documentElement.dataset.sw;
+  if (!sw) return;
+  const opened = Date.now();
+  let touched = false;
+  for (const ev of ["pointerdown", "keydown"]) addEventListener(ev, () => { touched = true; }, { once: true, capture: true });
+  // Studio was updated since that copy: open the new one, unless someone is already using the page
+  // (then the next open has it).
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data?.studio === "updated" && !touched && Date.now() - opened < 20e3) location.reload();
+  });
+  navigator.serviceWorker.startMessages();
+  const register = () => navigator.serviceWorker.register(sw, { scope: "/" }).catch(() => {});
+  if (document.readyState === "complete") register(); else addEventListener("load", register, { once: true });
+})();

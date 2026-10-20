@@ -52,8 +52,10 @@ const outAt = (p) => p.posted_at || p.scheduled_at;
 export async function loadPosts() {
   const since = new Date(Date.now() - 70 * 864e5).toISOString();
   try {
-    const rows = must(await sb.from("posts").select(POST_COLS).neq("state", "cancelled").gte("scheduled_at", since).order("scheduled_at").limit(500));
-    const posted = must(await sb.from("posts").select(POST_COLS).eq("state", "posted").gte("posted_at", since).lt("scheduled_at", since).limit(200));
+    const [rows, posted] = await Promise.all([
+      sb.from("posts").select(POST_COLS).neq("state", "cancelled").gte("scheduled_at", since).order("scheduled_at").limit(500).then(must),
+      sb.from("posts").select(POST_COLS).eq("state", "posted").gte("posted_at", since).lt("scheduled_at", since).limit(200).then(must),
+    ]);
     posts.list = [...rows, ...posted];
     posts.missing = false;
   } catch (err) {
@@ -77,7 +79,9 @@ async function loadResults() {
   } catch (err) {
     if (!missingTable(err)) throw err;
     posts.missing = true;
+    return true;
   }
+  return false;
 }
 
 // What Plan's home shows: the next scheduled posts, and the ones that couldn't go out.
@@ -115,7 +119,11 @@ export async function loadPostingPage() {
   const route = posts.route;
   if (!route) return;
   if (route.page === "calendar") await loadPosts();
-  if (route.page === "results") { await loadPosts(); await loadResults(); }
+  if (route.page === "results") {
+    // Both at once; the results' tables missing still counts once the posts are in.
+    const [, missing] = await Promise.all([loadPosts(), loadResults()]);
+    if (missing) posts.missing = true;
+  }
   if (posts.route !== route) return;
   render();
 }

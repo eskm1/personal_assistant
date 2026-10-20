@@ -30,7 +30,12 @@
 .shell-more { position: relative; }
 .shell-more-btn::after { content: ""; width: 6px; height: 6px; margin: -3px 0 0 2px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); }
 .shell-more-menu { left: 0; right: auto; min-width: 220px; }
-.shell-more-menu a[aria-current="page"] { font-weight: 600; background: var(--um-paper-mid); }
+/* The page you're on, in the More menu: ink on the paper-mid tint with a marker at its left (13:1),
+   not the bar's ink-filled current item, whose paper text vanished on the tint. Same on hover. */
+.shell-more-menu a[aria-current="page"], .shell-more-menu a[aria-current="page"]:hover {
+  color: var(--um-ink); font-weight: 600; background: var(--um-paper-mid); box-shadow: inset 3px 0 0 var(--um-ink);
+}
+.shell-more-menu a:focus-visible { outline-offset: -2px; }
 .shell-badge {
   display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 6px;
   border-radius: var(--um-radius-pill); background: var(--act-fill); color: #fff; font-family: var(--um-mono); font-size: var(--um-fs-label); font-weight: 500; line-height: 1;

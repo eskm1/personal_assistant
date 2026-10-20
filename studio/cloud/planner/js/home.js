@@ -58,6 +58,7 @@ async function reviewQueue() {
 
 export async function loadHome() {
   const seq = ++home.seq;
+  const queue = reviewQueue();   // the Studio machine is far away: ask it first, alongside everything else
   await loadProjects();
   const active = plan.projects.filter((p) => p.status === "active");
   const ids = active.map((p) => p.id);
@@ -70,7 +71,7 @@ export async function loadHome() {
     maybe(sb.from("taste_reports").select("id,version,status").eq("status", "draft").order("id", { ascending: false }).limit(1)),
     isOwner() ? sb.from("ideas").select("id", { count: "exact", head: true }).eq("status", "dismissed").not("suggestion", "is", null)
       .is("production", null).then((r) => (r.error ? 0 : r.count || 0)) : 0,
-    reviewQueue(),
+    queue,
     loadMonth().catch(() => null),
     loadPosts().catch(() => []),
   ]);

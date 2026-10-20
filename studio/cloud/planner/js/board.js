@@ -29,7 +29,19 @@ const JOB_COLS = "id,kind,runner,project_id,idea_id,state,result,error,created_a
 export const currentProject = () => plan.projects.find((p) => p.id === plan.pid) || null;
 const folderName = (s) => String(s || "").replace(/[<>:"/\\|?*]/g, "").trim().slice(0, 80);
 
-export async function loadProjects() {
+// Asked for at sign-in, with your profile (app.js), so the first page doesn't wait for it after:
+// the first loadProjects() takes that one, every later one asks again.
+let early = null;
+export function prefetchProjects() {
+  early = loadProjectsNow();
+  early.catch(() => {});
+}
+export function loadProjects() {
+  const p = early || loadProjectsNow();
+  early = null;
+  return p;
+}
+async function loadProjectsNow() {
   plan.projects = must(await sb.from("projects").select("*").order("status").order("id", { ascending: false }));
   if (!plan.projects.some((p) => p.id === plan.pid)) {
     const saved = Number(recall("studio.project"));
@@ -56,17 +68,23 @@ export async function loadBoard() {
   const stale = () => pid !== plan.pid || seq !== plan.seq;
   // The shoot plan's tables come with a database update: if they're missing, the board still works.
   const shootLoad = loadShoot(pid).catch((err) => { shoot.error = err.message; return null; });
-  const [arcs, ideas, folders] = await Promise.all([
+  // The jobs come at the same time: the project's own, and its ideas' (one may have moved here
+  // from another project with its jobs).
+  const kinds = ["organise", "develop", "ideas"];
+  const [arcs, ideas, folders, ownJobs, ideaJobs] = await Promise.all([
     sb.from("arcs").select("*").eq("project_id", pid).order("position").order("id").then(must),
     kindsQuery(() => sb.from("ideas").select(withKinds(IDEA_COLS)).eq("project_id", pid).neq("status", "dismissed")
       .order("position").order("id").then(must)),
     sb.from("ideas").select("id,folder").eq("project_id", pid).eq("decision", "go").neq("folder", "").then(must).catch(() => []),
+    sb.from("jobs").select(JOB_COLS).in("kind", kinds).eq("project_id", pid).order("id", { ascending: false }).limit(400).then(must),
+    sb.from("jobs").select(`${JOB_COLS},ideas!inner(project_id)`).in("kind", kinds).eq("ideas.project_id", pid)
+      .order("id", { ascending: false }).limit(400).then(must),
   ]);
   await shootLoad;
-  const ids = ideas.map((i) => i.id);
-  const jobs = must(await sb.from("jobs").select(JOB_COLS).in("kind", ["organise", "develop", "ideas"])
-    .or(ids.length ? `project_id.eq.${pid},idea_id.in.(${ids.join(",")})` : `project_id.eq.${pid}`)
-    .order("id", { ascending: false }).limit(400));
+  const live = new Set(ideas.map((i) => i.id));
+  const byId = new Map(ownJobs.map((j) => [j.id, j]));
+  for (const { ideas: _, ...j } of ideaJobs) if (live.has(j.idea_id)) byId.set(j.id, j);
+  const jobs = [...byId.values()].sort((a, b) => b.id - a.id).slice(0, 400);
   if (stale()) return;
   const develop = new Map();
   for (const j of jobs) if (j.kind === "develop" && j.idea_id && !develop.has(j.idea_id)) develop.set(j.idea_id, j);

@@ -359,7 +359,27 @@ new MutationObserver((records) => {
 
 // ── Stills: signed URLs, cached so re-renders don't reload images ──────────
 
+// Kept across visits too (this browser only): the same still keeps the same address for a few
+// hours, so the phone shows it from its cache instead of fetching it again on every open.
+const SIGN_SECONDS = 4 * 3600;
+const STILLS_KEY = "studio.stills";
 const signed = new Map(); // path -> {url, until}
+try {
+  const saved = JSON.parse(localStorage.getItem(STILLS_KEY) || "null");
+  if (saved?.base === cfg.supabaseUrl) {
+    const soon = Date.now() + 10 * 60e3;
+    for (const [p, url, until] of saved.items || []) if (url && until > soon) signed.set(p, { url, until });
+  }
+} catch { /* private mode, or nothing kept */ }
+let keepTimer = null;
+function keepStills() {
+  clearTimeout(keepTimer);
+  keepTimer = setTimeout(() => {
+    const now = Date.now();
+    const items = [...signed].filter(([, s]) => s.url && s.until > now).slice(-800).map(([p, s]) => [p, s.url, s.until]);
+    try { localStorage.setItem(STILLS_KEY, JSON.stringify({ base: cfg.supabaseUrl, items })); } catch { /* full or private */ }
+  }, 1000);
+}
 export async function signPaths(paths) {
   const now = Date.now();
   const need = [...new Set(paths.filter(Boolean))].filter((p) => {
@@ -368,14 +388,15 @@ export async function signPaths(paths) {
   });
   for (let i = 0; i < need.length; i += 100) {
     const chunk = need.slice(i, i + 100);
-    const { data, error } = await sb.storage.from("thumbs").createSignedUrls(chunk, 3600);
+    const { data, error } = await sb.storage.from("thumbs").createSignedUrls(chunk, SIGN_SECONDS);
     if (error) { for (const p of chunk) signed.set(p, { url: "", until: now + 60e3 }); continue; }
     for (const d of data || []) {
       const url = !d.error && httpUrl(d.signedUrl);
       // Not uploaded yet (the laptop sends stills after the row): try again in a minute.
-      signed.set(d.path, url ? { url, until: now + 3600e3 } : { url: "", until: now + 60e3 });
+      signed.set(d.path, url ? { url, until: now + SIGN_SECONDS * 1000 } : { url: "", until: now + 60e3 });
     }
   }
+  if (need.length) keepStills();
 }
 // The first of these paths that has a still.
 export function stillUrl(...paths) {

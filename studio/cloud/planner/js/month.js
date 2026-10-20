@@ -34,9 +34,9 @@ export async function loadMonth() {
     const [data, plan] = await Promise.all([
       sb.rpc("content_month").then(must),
       sb.from("content_plan").select("*").eq("id", 1).maybeSingle().then(must),
+      loadSuggestions().catch(() => {}),   // at the same time (it copes with the tables missing itself)
     ]);
     Object.assign(month, { data, plan, missing: false, loaded: true });
-    await loadSuggestions().catch(() => {});
   } catch (err) {
     if (!missingTable(err)) throw err;
     Object.assign(month, { data: null, plan: null, missing: true, loaded: true });

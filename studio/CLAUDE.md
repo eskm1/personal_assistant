@@ -82,6 +82,17 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   uploads, laptop-era clips) are first copied to `Studio Archive/<project>/<post or Uploads>/` (`onedrive.upload_original`,
   `--immutable`, never over another file). Originals come back on demand. Library: Shift-click ranges, Ctrl/Cmd-click,
   long-press on phones.
+- Speed for Bryan's phone (2026-10-20; Singapore, the server ~200 ms away, so round trips matter, not bytes): every
+  page names its files with `?v=<hash of the file and its imports>` and they're kept a year (`webassets.py`; pages
+  always checked; a new planner module goes in index.html's `modulepreload` list too); scripts, styles, pages and JSON
+  gzipped by the app (no Caddy change); the session cookie is renewed on page opens only and files/media carry no
+  `Vary: Cookie` (that had made every file re-asked); Review's board answers 304 when unchanged; drafts' stills served
+  720 wide (`_small_still`); a service worker (`web/sw.js`, registered by shell.js) opens `/` and `/plan/` from their
+  last copy and reloads into a new one after an update if untouched (never data, sign-in or media;
+  `STUDIO_SERVICE_WORKER=0` removes it, `?sw=off` one visit); `/` jumps to Plan before Review loads (`web/go.js`; the manifest now starts at `/plan/`, an icon added earlier keeps `/`); the
+  planner asks independent things at once (profile + projects, posts, month + suggestions, board jobs) and skips the
+  full refresh on unchanged heartbeats; signed still URLs kept 4 h across visits. Measured in the sandbox (phone
+  emulation, perf scripts in the scratchpad): opening a view ~2.4-3.3 s -> ~0.8-1.3 s; not yet proven on the iPhone.
 - Built 2026-10-19 (not yet proven on the server): Review plays light copies (`previews.py`: 720p H.264 ~2 Mbps capped
   2.5, faststart; drafts `production_<id>_v<n>.light.mp4` made in `self_fix.deliver`, clips `preview-720.mp4` at
   ingest; older ones in the background when idle or when first played, never all at boot); "720p" / "Full quality" /

@@ -99,6 +99,8 @@ GEMINI_URL = _env("STUDIO_GEMINI_URL", "https://generativelanguage.googleapis.co
 # Review plays a light 720p copy of each draft and clip (previews.py), made as drafts go to review
 # and, for older ones, in the background. Off = no new light copies; Review plays what's there.
 LIGHT_COPIES = _flag("STUDIO_LIGHT_COPIES", True)
+# The home-screen app opens from its last copy of the page (web/sw.js); off removes it from phones.
+SERVICE_WORKER = _flag("STUDIO_SERVICE_WORKER", True)
 
 # ── The editor's cutting and framing ──────────────────────────────────────────
 # Jump cuts: inside every stretch the editor keeps, silences, breaths and lone "um"s

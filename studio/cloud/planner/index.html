@@ -18,6 +18,24 @@
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="shell.css">
   <link rel="stylesheet" href="post-ui.css">
+  <!-- Every module at once, instead of one level of imports after another (far from the server, each level is a round trip). -->
+  <link rel="modulepreload" href="js/app.js">
+  <link rel="modulepreload" href="js/core.js">
+  <link rel="modulepreload" href="js/auth.js">
+  <link rel="modulepreload" href="js/board.js">
+  <link rel="modulepreload" href="js/home.js">
+  <link rel="modulepreload" href="js/idea.js">
+  <link rel="modulepreload" href="js/checklist.js">
+  <link rel="modulepreload" href="js/team.js">
+  <link rel="modulepreload" href="js/refs.js">
+  <link rel="modulepreload" href="js/shoot.js">
+  <link rel="modulepreload" href="js/month.js">
+  <link rel="modulepreload" href="js/upload.js">
+  <link rel="modulepreload" href="js/posting.js">
+  <link rel="modulepreload" href="js/topics.js">
+  <link rel="modulepreload" href="js/slides.js">
+  <link rel="modulepreload" href="js/library.js">
+  <link rel="modulepreload" href="js/refimport.js">
 </head>
 <body>
   <noscript><p class="noscript">Studio needs JavaScript.</p></noscript>

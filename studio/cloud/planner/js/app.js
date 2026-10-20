@@ -6,7 +6,7 @@ import {
   isTyping, laptopOn, laptopSince, underPlan, recall, store,
 } from "./core.js";
 import { showAuth, hideAuth } from "./auth.js";
-import { plan, loadProjects, loadBoard, renderPlanner, selectProject, onBoardRefresh, planMode, showFootageColumn } from "./board.js";
+import { plan, loadProjects, prefetchProjects, loadBoard, renderPlanner, selectProject, onBoardRefresh, planMode, showFootageColumn } from "./board.js";
 import { home, homeOpen, loadHome, renderHome, onHomeRefresh } from "./home.js";
 import { view, openIdea, hideViewer, closeIdea, loadIdea, viewerOpen, step, updateArrows, restoreBoardScroll, forgetBoardScroll } from "./idea.js";
 import { check, openChecklist, hideChecklist, loadChecklist, checklistOpen } from "./checklist.js";
@@ -91,6 +91,13 @@ async function enter(sess, opts = {}) {
   if (!sess) { showAuth("signin", { onSignedIn: enter }); return; }
   const user = sess.user;
   let me;
+  // Everyone's profiles and the Studio machine's heartbeat come with yours (start() uses them):
+  // one round trip instead of two.
+  const early = Promise.all([
+    sb.from("profiles").select("id,name,email,role").then(must).catch(() => []),
+    sb.from("laptop_status").select("*").eq("id", 1).maybeSingle().then(must).catch(() => null),
+  ]);
+  prefetchProjects();   // and the projects, which every page starts from
   try {
     me = must(await sb.from("profiles").select("id,name,email,role").eq("id", user.id).maybeSingle());
   } catch (err) {
@@ -108,14 +115,11 @@ async function enter(sess, opts = {}) {
   hideAuth();
   $("#app").hidden = false;
   if (opts.passwordSet) toast("Password set. Welcome in.");
-  await start();
+  await start(early);
 }
 
-async function start() {
-  const [profiles, laptop] = await Promise.all([
-    sb.from("profiles").select("id,name,email,role").then(must).catch(() => []),
-    sb.from("laptop_status").select("*").eq("id", 1).maybeSingle().then(must).catch(() => null),
-  ]);
+async function start(early) {
+  const [profiles, laptop] = await early;
   state.profiles = new Map(profiles.map((p) => [p.id, p]));
   state.laptop = laptop;
   renderAccount();
@@ -469,9 +473,16 @@ function startRealtime() {
   for (const table of TABLES.filter((t) => !REF_TABLES.has(t))) {
     channel.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => onChange(table, payload));
   }
+  // Subscribed (again, after a drop: a phone asleep, the network gone): read what changed meanwhile.
+  // Not when it's the first time and quick: the page is loading everything at that moment anyway.
+  const since = Date.now();
+  let joined = false;
   channel.subscribe((status) => {
     state.live = status;
-    if (status === "SUBSCRIBED") scheduleRefresh();
+    if (status === "SUBSCRIBED") {
+      if (joined || Date.now() - since > 5000) scheduleRefresh();
+      joined = true;
+    }
   });
   session.channel = channel;
   // Its own channel: until the database update that adds these tables, subscribing
@@ -519,10 +530,16 @@ function startRealtime() {
   session.postChannel = postChannel;
 }
 
+// The Studio machine's heartbeat, without what changes on every one (when, and the sync's own counts).
+const beat = (l) => JSON.stringify([l?.version, { ...(l?.info || {}), sync: null }]);
+
 function onChange(table, payload) {
   if (table === "laptop_status") {
+    const before = state.laptop, wasOn = laptopOn();
     if (payload.new) state.laptop = payload.new;
     renderLaptop();
+    // Every 30 s: the status pill is enough, unless Studio came back or told us something new.
+    if (before && payload.new && beat(before) === beat(payload.new) && wasOn === laptopOn()) return;
   }
   if (table === "shot_uploads" && payload.new) onUploadRow(payload.new);
   // References and style guides only matter while their pages are open.

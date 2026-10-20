@@ -8,15 +8,18 @@ public key; uploads go to this same address), and /api/planner-session opens a
 planner session for whoever is signed in to the dashboard, so the planner opens
 signed in. The Netlify planner keeps working as before.
 """
+import hashlib
 import json
 import logging
+import re
 from pathlib import Path
 
-from flask import Blueprint, Response, abort, g, jsonify, redirect, request, send_from_directory
+from flask import Blueprint, Response, abort, g, jsonify, redirect, request
 
 import cloud_auth
 import cloud_sync
 import settings
+import webassets
 from webutil import own_origin
 
 log = logging.getLogger("studio.dashboard")
@@ -68,16 +71,16 @@ def here() -> bool:
 def shell_file():
     """The top bar and phone tab bar shared by Review and Plan, the look (theme.css) and the
     posting dialogs (post-ui.*): one copy, in the planner's folder (Netlify serves it from there too)."""
-    return send_from_directory(PLANNER, Path(request.path).name, max_age=0)
+    return webassets.send(PLANNER / Path(request.path).name)
 
 
 @bp.get("/static/fonts/<name>")
 def font_file(name: str):
     """The bundled fonts theme.css names (IBM Plex Sans and Mono, Barlow), for Review and
     its sign-in page; the planner has them at /plan/fonts/."""
-    if not name.endswith(".woff2") or "/" in name or name.startswith("."):
+    if not name.endswith(".woff2") or "/" in name or name.startswith(".") or not (PLANNER / "fonts" / name).is_file():
         abort(404)
-    return send_from_directory(PLANNER / "fonts", name, max_age=86400)
+    return webassets.send(PLANNER / "fonts" / name, "public, max-age=86400")
 
 
 @bp.get("/plan")
@@ -94,16 +97,41 @@ def planner_file(name: str = "index.html"):
         return config_js()
     if Path(name).suffix.lower() not in SERVED or name.startswith(".") or "/." in name:
         abort(404)
-    return _secure(send_from_directory(PLANNER, name, max_age=0))
+    if name == "index.html":
+        return index_html()
+    path = (PLANNER / name).resolve()
+    if not path.is_relative_to(PLANNER) or not path.is_file():
+        abort(404)
+    # Scripts, styles, fonts and icons: with the page's ?v= a phone keeps them (webassets.py).
+    response = webassets.send(path)
+    return _secure(response, response.headers["Cache-Control"])
 
 
-def config_js() -> Response:
+def index_html() -> Response:
+    """The planner's page, checked on every visit: its files carry ?v= (kept a year), config.js
+    its own (it only changes with the Supabase project or its key)."""
+    page = webassets.with_sw(webassets.stamp_html((PLANNER / "index.html").read_text(encoding="utf-8")))
+    page = re.sub(r'src="config\.js(\?v=[0-9a-f]+)?"', f'src="config.js?v={_config()[1]}"', page)
+    response = Response(page, mimetype="text/html")
+    response.add_etag()
+    return _secure(response.make_conditional(request))
+
+
+def _config() -> tuple[str, str]:
+    """config.js's text and a short hash of it."""
     key = cloud_auth.anon_key() or ""
     config = {"supabaseUrl": settings.SUPABASE_URL, "supabaseAnonKey": key, "studioUrl": ""}
     if not key:
         config["problem"] = cloud_auth.anon_problem() or "The planner's public key isn't known on this machine"
     body = f"// Made by Studio (planner_site.py).\nwindow.STUDIO_CONFIG = {json.dumps(config, indent=2)};\n"
-    return _secure(Response(body, mimetype="text/javascript"), "no-store")
+    return body, hashlib.sha1(body.encode()).hexdigest()[:10]
+
+
+def config_js() -> Response:
+    body, h = _config()
+    # Kept by the browser only under the address index.html gives it (its hash), and only with a key.
+    keep = request.args.get("v") == h and "problem" not in body
+    return _secure(Response(body, mimetype="text/javascript"), webassets.YEAR if keep else "no-store")
 
 
 @bp.get("/api/planner-session")
