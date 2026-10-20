@@ -36,6 +36,53 @@ Singapore renovation company). Team member: Michelle (marketing). Read README.md
   UMC Lead agent's: consult and defer to it.
 - Plain English for Bryan (not technical); match the code's style (plain docstrings, short comments).
 
+## CTO
+
+The CTO session directs Studio and the UMC lead and reads this lead's transcript (Bryan, 2026-10-20: "yes that's
+mine"). Studio lead: session `session_01SY9MzeiyvFPCXX85UaKQ4V`, shipping from branch `claude/sleepy-thompson-iewk09`.
+
+## The usability standard (gates every push)
+
+Bryan, 2026-10-20: "ALL apps we build have the ULTIMATE aim of being as usable as possible with the lowest learning
+curve for new users. We will dedicate resources to iterate, capture feedback, iterate some more. Put the user before
+capabilities ... use design, UI, hierarchy and all the other best practices to onboard ... AI also has to be on hand to
+help at any moment the user may need assistance. Otherwise no adoption will cause our efforts to be futile, erode our
+competitive edge, and cause the business to be mediocre or fail." And: apps must be "AS OPTIMISED AS POSSIBLE for speed
+and performance, responsive as web apps ... periodically run ALL workflows to catch these optimisations and solve them
+autonomously ... by any means necessary, but any destructive or reductive decisions still must be green lit by me."
+
+1. **Golden paths first.** The jobs Bryan and Michelle do every week get the full treatment (measured, walked as a
+   first-time user at 390 and 1360 wide, polished); everything else lives behind a menu, not on the default screen:
+   - **G1 Review a draft** (Bryan, phone, daily): open it from Review or the Telegram link, watch, note at a moment,
+     approve or send back.
+   - **G2 Decide on ideas** (Bryan, weekly): Plan's "Needs your call" or Ideas > Waiting for your call, Go / Park /
+     Dismiss, then Make this.
+   - **G3 Film or upload to a shot** (Bryan or Michelle, on site, phone): Ideas > Film these, the idea, Film shot N.
+   - **G4 Plan the month** (Michelle, weekly): Plan's month, + New idea into a project, its kind, Go.
+   - **G5 Schedule an approved post** (Bryan, weekly; once Instagram is connected): the draft, Schedule, a time.
+2. **New-user target.** Michelle, first time, unaided, on her phone: G1 (a note pinned to a moment, then send back or
+   approve) in 3 minutes, and G4 (a new idea in a project with its kind) in 2 minutes. Measured by Bryan watching her
+   once, never by us.
+3. **Help one press away on every screen**: a visible place to ask (Ask Studio, an AI that knows Studio), "Show me" in
+   place, and a control that can't act says why and what to do instead (never a silent grey button).
+4. **Feedback where friction happens**: one press to flag friction (page, control, optional words) in Review and the
+   planner, plus usage capture (page views, clicks, dead clicks, cancelled dialogs, errors) per signed-in user, never
+   content. One weekly triage in `docs/usage/<date>.md`; Bryan never relays feedback.
+5. **Nothing new ships over known friction on a golden path.** Each weekly report answers "did anyone use what we
+   built last week?"; when no, the next week simplifies instead of adding. Hide and simplify by usage data, not taste.
+6. **Speed is usability.** Mid-range phone over 4G: main screens paint within 2.5 s, every press answers within
+   100 ms, no layout shift after load, page weight budgeted. A weekly pass walks every golden path under those
+   conditions with timings per step, fixes regressions, writes `docs/perf/<date>.md` with before and after; a budget
+   that improves is tightened.
+7. **The green-light rule.** Destructive or reductive changes wait for Bryan's explicit yes, brought as a short list
+   with evidence: removing a feature or page, hiding a module from everyone, deleting or rewriting data, dropping a
+   library, changing a server or vendor plan, cutting what a client sees. Everything else ships under the normal gate.
+
+**The gate, before any push that reaches a golden path:** walk it as a first-time user at 390 and 1360 with
+screenshots and look at every one; the help, feedback and usage pieces still work on the pages touched; no control
+on the path is silent about why it can't act; the speed budgets hold (the perf harness, numbers in the commit). The
+older rules stand: Bryan decides approvals, spending, captions and posting; never push half-built code.
+
 ## Testing
 
 Local Supabase stack via the Supabase CLI + Docker (`cloud/supabase`), Playwright for the planner,
