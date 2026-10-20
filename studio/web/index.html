@@ -53,6 +53,7 @@
         <div class="tile-meta" id="tile-meta"></div>
       </div>
       <aside class="panel" id="panel"></aside>
+      <button type="button" class="viewer-help" data-help-open aria-label="Help: how this page works, Ask Studio, report a problem">Help</button>
       <button class="close" id="close" title="Close (Esc)" aria-label="Close">&times;</button>
     </div>
     <div class="decision-bar" id="decision-bar" hidden></div>
@@ -70,6 +71,9 @@
   <div class="toast" id="toast" role="status" hidden></div>
   <script src="/static/shell.js"></script>
   <script src="/static/post-ui.js"></script>
+  <script src="/static/capture.js" async></script>
   <script src="/static/app.js"></script>
+  <!-- Help and its look, fetched by shell.js the first time Help is pressed. -->
+  <template id="studio-lazy"><script src="/static/help.js"></script><link rel="stylesheet" href="/static/help.css"></template>
 </body>
 </html>

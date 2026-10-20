@@ -96,6 +96,18 @@ IMAGE_MODEL = _env("STUDIO_IMAGE_MODEL", "gemini-nano-banana-2.1")
 IMAGE_COST_USD = float(_env("STUDIO_IMAGE_COST_USD", "0.034"))
 GEMINI_URL = _env("STUDIO_GEMINI_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
 
+# ── Help, feedback and usage (help_desk.py, activity.py, usage_report.py) ─────
+# Ask Studio: questions a person may ask Claude per day (Singapore day), and the model (the main one
+# unless a cheaper one is set).
+HELP_DAILY = max(int(_env("STUDIO_HELP_DAILY", "30")), 0)
+HELP_MODEL = _env("STUDIO_HELP_MODEL", CLAUDE_MODEL)
+# Usage capture in Review and the planner (page views, clicks, dead clicks, cancelled dialogs, errors; never
+# content). Off = nothing is recorded and the pages stop sending. Kept this many days.
+USAGE = _flag("STUDIO_USAGE", True)
+USAGE_DAYS = max(int(_env("STUDIO_USAGE_DAYS", "180")), 7)
+# The weekly report's key (GET /api/report/weekly, "Authorization: Bearer <it>"), made on first start.
+REPORT_TOKEN_FILE = ROOT / "report_token"
+
 # Review plays a light 720p copy of each draft and clip (previews.py), made as drafts go to review
 # and, for older ones, in the background. Off = no new light copies; Review plays what's there.
 LIGHT_COPIES = _flag("STUDIO_LIGHT_COPIES", True)

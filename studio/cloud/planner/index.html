@@ -67,6 +67,7 @@
           <button class="nav next" id="next" title="Next (J)" aria-label="Next idea">&#8250;</button>
         </div>
         <aside class="panel" id="panel"></aside>
+        <button type="button" class="viewer-help" data-help-open aria-label="Help: how this page works, Ask Studio, report a problem">Help</button>
         <button class="close" id="close" title="Close (Esc)" aria-label="Close">&times;</button>
       </div>
     </div>
@@ -87,6 +88,9 @@
   <script src="config.js"></script>
   <script src="shell.js"></script>
   <script src="post-ui.js"></script>
+  <script src="capture.js" async></script>
   <script type="module" src="js/app.js"></script>
+  <!-- Help and its look, fetched by shell.js the first time Help is pressed. -->
+  <template id="studio-lazy"><script src="help.js"></script><link rel="stylesheet" href="help.css"></template>
 </body>
 </html>

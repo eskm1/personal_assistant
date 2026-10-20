@@ -300,6 +300,52 @@ CREATE TABLE IF NOT EXISTS votes (
     created_at  TEXT NOT NULL,
     PRIMARY KEY (idea_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS usage_events (    -- what people do in Review and the planner, never content (activity.py)
+    id          INTEGER PRIMARY KEY,
+    at          TEXT NOT NULL,
+    user_id     TEXT NOT NULL,             -- the signed-in person's email (Review's cookie or the planner's token)
+    user_name   TEXT,
+    role        TEXT,                      -- owner | team
+    session     TEXT,                      -- random per browser tab
+    page        TEXT,                      -- home, ideas, idea, draft, ... (help.js PAGES)
+    route       TEXT,                      -- the address with ids replaced: #/production/:id
+    kind        TEXT NOT NULL,             -- view | click | dead | rage | dialog | error | api_error | action
+    target      TEXT,                      -- the control: #id, [data-x=y], aria label or tag.class
+    detail      TEXT,                      -- small JSON
+    qa          INTEGER                    -- 1 = a test walk (localStorage studio.qa = 1): left out of the report
+);
+CREATE INDEX IF NOT EXISTS usage_events_at ON usage_events (at);
+
+CREATE TABLE IF NOT EXISTS friction_flags (  -- "Something not working?" (help_desk.py)
+    id          INTEGER PRIMARY KEY,
+    at          TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    user_name   TEXT,
+    page        TEXT,
+    route       TEXT,
+    control     TEXT,                      -- the part they tapped (a descriptor, never its text), or empty
+    words       TEXT,                      -- what they typed, if anything
+    viewport    TEXT,
+    version     TEXT,
+    done_at     TEXT,
+    done_by     TEXT,
+    qa          INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS help_questions (  -- Ask Studio (help_desk.py)
+    id          INTEGER PRIMARY KEY,
+    at          TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    user_name   TEXT,
+    page        TEXT,
+    question    TEXT,
+    answer      TEXT,
+    answered    INTEGER,                   -- 1 = Studio's notes covered it, 0 = they didn't or Claude wasn't there
+    error       TEXT,
+    helpful     INTEGER,                   -- the person's "Did that help?": 1, 0 or NULL
+    qa          INTEGER
+);
 """
 
 # Columns added after the first release, applied to existing databases on connect.

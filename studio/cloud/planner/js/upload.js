@@ -6,7 +6,7 @@
 // the tray at the bottom shows them. Then shot_uploads (live) says what Studio did with it.
 // Photos for carousel slides go the same way (POST with idea_id instead of shot_id); Studio
 // keeps them as JPEGs (an iPhone's HEIC converted) and answers with the photo's id and preview.
-import { $, cfg, esc, sb, state, toast, store, recall, plural, httpUrl, underPlan, laptopOn, ownerName } from "./core.js";
+import { $, cfg, esc, sb, state, toast, store, recall, plural, httpUrl, underPlan, laptopOn, ownerName, mark } from "./core.js";
 
 const MAX_SIZE = 8 * 1024 ** 3;
 const VIDEO_EXT = /\.(mp4|mov|m4v|mts|m2ts|avi|mkv|3gp|webm|insv|lrv|mxf|hevc)$/i;
@@ -343,6 +343,7 @@ function finish(u, r) {
   u.error = "";
   if (u.photo) { donePhoto(u, r); return; }
   u.row = u.row || { state: r.state || "received" };
+  mark("upload_done", { mb: Math.round(u.file.size / 1048576) });
   render();
   // The live update on shot_uploads normally arrives; read it once in case it didn't.
   setTimeout(() => refreshRow(u), 1500);

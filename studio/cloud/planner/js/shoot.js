@@ -6,7 +6,7 @@
 import {
   $, $$, CAMERA_LONG, CAMERA_ORDER, esc, sb, must, toast, store, recall, plural, stillUrl, signPaths, takePaths,
   takeVerdict, prepShots, isFilmed, todayISO, dayOf, dayLabel, dayRange, missingTable, mmss, nameOf, ownerName,
-  openModal, closeModal, formError, jobView, jobActive, laptopWait, state, retakeBadge, takeRetake, liveClips,
+  openModal, closeModal, formError, jobView, jobActive, laptopWait, state, retakeBadge, takeRetake, liveClips, offWhy
 } from "./core.js";
 import { uploadButtonsHTML, rememberShot, onClipDrop, clipDragType, uploadsFor } from "./upload.js";
 
@@ -275,7 +275,7 @@ function unplacedHTML(d) {
           <button type="button" class="btn small ghost" data-shot-place="${esc(s.id)}" data-fk="mu:${esc(s.id)}" aria-label="${esc(`Put on a phase or day: ${s.description}`)}">Move…</button></li>`).join("")}</ul>
         <a class="small" href="#/idea/${esc(g.idea.id)}">Open the post</a></details></li>`).join("")}</ul>`
       : `<p class="muted small">${d.shots.length ? "Every Go shot still to film is on a coming site day." : "No Go ideas with shots yet. Mark ideas Go in the Ideas view."}</p>`}
-    <div class="row"><button class="btn primary" id="sp-place" ${busy || !d.phases.length || !n ? "disabled" : ""}
+    <div class="row"><button class="btn primary" id="sp-place" ${offWhy(busy ? "Claude is placing them now. This updates by itself." : !n ? "Every shot to film is already on a site day." : !d.phases.length ? "Add phases first (below), then Claude can place the shots in them." : "")}
       title="Claude reads each shot and picks the phase whose work it shows. Runs on Studio.">${busy ? "Placing…" : "Place by phase with Claude"}</button></div>
     ${!d.phases.length && n ? `<p class="muted small">Add phases first, then Claude can place the shots in them.</p>` : ""}
     ${placeJobHTML(d)}

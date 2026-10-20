@@ -3,8 +3,7 @@
 // page (#/questions: a fast add box and the list, with the posts they became). The Studio machine
 // writes the suggestions (topics.py); the team keeps the questions.
 import {
-  esc, sb, must, toast, plural, isOwner, ownerName, nameOf, missingTable, shortDate, ago, state, laptopWait, DECISION,
-} from "./core.js";
+  esc, sb, must, toast, plural, isOwner, ownerName, nameOf, missingTable, shortDate, ago, state, laptopWait, DECISION, mark } from "./core.js";
 
 export const topics = { list: [], job: null, missing: false, questions: null, ideas: new Map(), editing: null, busy: new Set() };
 
@@ -83,6 +82,7 @@ export async function suggestClick(t, rerender) {
     const rows = must(await sb.from("ideas").update(values).eq("id", id).select("id"));
     if (!rows?.length) throw new Error(`only ${ownerName()} can decide`);
     topics.list = topics.list.filter((x) => x.id !== id);
+    mark("idea_decided", { decision: act, from: "home" });
     toast(act === "go" ? (i.format === "carousel" ? "Marked Go. Open it to write the slides." : "Marked Go.")
       : act === "parked" ? "Parked." : "Dismissed. Studio won't suggest it again.");
   } finally {

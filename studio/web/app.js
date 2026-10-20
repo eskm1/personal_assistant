@@ -206,6 +206,45 @@ function pbarHTML(p) {
     .map((k) => (p[k] ? `<i class="${k}" style="flex:${Number(p[k]) || 0}"></i>` : "")).join("")}</span>`;
 }
 
+// ── Help, feedback and usage (shell.js, help.js, capture.js) ────────────────
+
+// A golden path's step for usage capture (capture.js may still be loading: it picks these up).
+function mark(name, detail) {
+  if (window.StudioUsage) window.StudioUsage.mark(name, detail);
+  else (window.__su = window.__su || []).push([name, detail]);
+}
+// Where we are, for help and usage: the page's key (help.js PAGES), the address with ids out, and flags the
+// weekly report's golden paths start from (a draft waiting for review, an approved one).
+function pageNow() {
+  const route = `/${location.hash || "#/"}`;
+  if (viewerOpen() && state.current) {
+    const k = state.current.kind;
+    const d = state.detail && String(state.detail.id) === String(state.current.id) ? state.detail : null;
+    if (k === "production") {
+      if (!d) return { key: "draft", route, pending: true };
+      return { key: isCarousel(d) ? "carousel" : "draft", route,
+        flags: { waiting: d.status === "ready", approved: d.status === "approved" && !(d.posting?.post && d.posting.post.state !== "cancelled") } };
+    }
+    if (k === "clip") return { key: "clip", route };
+    return { key: "other", route };
+  }
+  const stage = state.stage;
+  const key = { review: "review", producing: "producing", done: "done", library: "library" }[stage] || "other";
+  return { key, route, pending: !stage };
+}
+function setHelpHost() {
+  shell?.setHost({
+    page: pageNow, api: apiCall, role: () => state.me?.role || "team", version: () => state.me?.version?.commit || "",
+    usage: state.me?.usage === false ? null : { url: "/api/usage" },
+  });
+}
+// Played: once per draft opened (G1's "watch").
+let playedFor = "";
+$("#player-frame").addEventListener("play", () => {
+  const key = `${state.current?.kind}:${state.current?.id}`;
+  if (state.current?.kind === "production" && playedFor !== key) { playedFor = key; mark("video_played"); }
+}, true);
+
 // ── Account ─────────────────────────────────────────────────────────────────
 
 // ── The top bar: Studio on/offline, sections, account (shell.js) ───────────
@@ -862,9 +901,9 @@ function renderSelBar() {
   const hint = phone() ? "Tap clips to pick them" : "Click clips to pick them. Shift-click picks a run of them";
   bar.innerHTML = `${jobRow}<span class="sel-count">${items.length ? `${esc(plural(items.length, "clip"))} picked${bytes ? ` · ${esc(gb(bytes))}` : ""}` : esc(hint)}</span>
     <button type="button" class="btn small" data-tidy="all">Pick all ${esc(state.list.length)}</button>
-    ${archivedView ? `<button type="button" class="btn small" data-tidy="unarchive-clips" ${items.length ? "" : "disabled"}>Bring back</button>`
-      : `<button type="button" class="btn small" data-tidy="archive-clips" ${items.length ? "" : "disabled"}>Archive</button>`}
-    <button type="button" class="btn small danger sel-free" data-tidy="free" ${freeWhy ? "disabled" : ""} title="${esc(freeWhy || "Copies any original OneDrive doesn't have, then deletes Studio's own copy")}">Free up space${bytes ? ` · ${esc(gb(bytes))}` : ""}</button>
+    ${archivedView ? `<button type="button" class="btn small" data-tidy="unarchive-clips" ${items.length ? "" : `aria-disabled="true" data-why="Pick clips first: tap the ones to bring back."`}>Bring back</button>`
+      : `<button type="button" class="btn small" data-tidy="archive-clips" ${items.length ? "" : `aria-disabled="true" data-why="Pick clips first: tap the ones to archive."`}>Archive</button>`}
+    <button type="button" class="btn small danger sel-free" data-tidy="free" ${freeWhy ? `aria-disabled="true" data-why="${esc(freeWhy)}"` : `title="Copies any original OneDrive doesn't have, then deletes Studio's own copy"`}>Free up space${bytes ? ` · ${esc(gb(bytes))}` : ""}</button>
     <button type="button" class="btn small ghost" data-tidy="none">Clear</button>`;
 }
 
@@ -2016,7 +2055,7 @@ async function renderVoice() {
     : !v.exists ? `<p class="muted small">${v.clips >= v.min_clips ? "Not written yet." : `Not written yet. Studio writes it by itself once ${esc(v.min_clips)} of your talking videos are in (${esc(v.clips)} so far).`}</p>` : "";
   $("#modal-body").innerHTML = `<div class="modal-head-row"><h2 id="modal-title">Your voice</h2>${v.editable ? `<button type="button" class="btn" id="playbook-back">Playbook</button>` : ""}</div>
     <p class="muted small">How you sound on camera. Studio writes every caption, hook and slide in it.</p>
-    ${v.editable ? `<div class="row"><button type="button" class="btn" id="voice-write" ${v.running || !v.clips ? "disabled" : ""}>Write the voice file from my videos</button></div>
+    ${v.editable ? `<div class="row"><button type="button" class="btn" id="voice-write" ${v.running ? `aria-disabled="true" data-why="Studio is writing it now. This box updates by itself."` : !v.clips ? `aria-disabled="true" data-why="It needs talking-head videos in the Library first."` : ""}>Write the voice file from my videos</button></div>
       <p class="muted small">Studio reads about ${esc(v.sample)} of your talking videos (about 10 cents) and replaces the text below. The old one is kept.</p>` : ""}
     ${status}
     <label class="form">Voice file<textarea id="voice-text" rows="16" ${v.editable && !v.running ? "" : "readonly"} placeholder="Not written yet.">${esc(draft ?? v.text)}</textarea></label>
@@ -2367,7 +2406,9 @@ function postingHTML(d) {
   if (!post) {
     line = ps.why_not ? `<span class="bad-text">${esc(ps.why_not)}</span>` : "Not scheduled yet.";
     if (!ps.connected) extra = `<p class="muted small">Instagram isn't connected yet${owner ? `: <button class="btn-link" data-ig-connect>connect it</button>` : ""}.</p>`;
-    btns = owner && !ps.why_not ? `<button class="btn act" data-post-schedule="${esc(d.id)}">Schedule…</button>` : "";
+    // A Schedule that can't act yet says why (shell.js), instead of not being there.
+    const why = ps.why_not || (!ps.connected ? "Connect Instagram first: tap connect it, just above. Then Schedule works." : "");
+    btns = owner ? `<button class="btn act" data-post-schedule="${esc(d.id)}" ${why ? `aria-disabled="true" data-why="${esc(why)}"` : ""}>Schedule…</button>` : "";
   } else if (post.state === "scheduled") {
     line = `<strong>Scheduled</strong> for ${esc(when(post.scheduled_at))}.`;
     if (post.error) extra = `<p class="muted small">${esc(post.error)}</p>`;
@@ -2651,7 +2692,8 @@ function renderHead() {
   const last = i < 0 || i >= state.list.length - 1;
   head.innerHTML = `<button class="head-link" data-back title="Back (Esc)" aria-label="Back to ${esc(stage.label)}">‹&nbsp;<span class="hide-phone">${esc(stage.label)}&nbsp;(${count})</span><span class="show-phone">Back</span></button>
     ${pos ? `<span class="head-pos"><span class="hide-phone">${esc(what[0].toUpperCase() + what.slice(1))} </span>${esc(pos)}</span>` : ""}
-    ${kind === "inbox" ? "" : `<button class="head-link head-next" id="head-next" ${last ? "disabled" : ""} title="Next (J)" aria-label="Next ${what}"><span class="hide-phone">Next ${what}&nbsp;</span>›</button>`}`;
+    ${kind === "inbox" ? "" : `<button class="head-link head-next" id="head-next" ${last ? `aria-disabled="true" data-why="${esc(`This is the last ${what} in ${stage.label}. Back takes you to the list.`)}"` : ""} title="Next (J)" aria-label="Next ${what}"><span class="hide-phone">Next ${what}&nbsp;</span>›</button>`}
+    <button type="button" class="viewer-help head-help" data-help-open aria-label="Help: how this page works, Ask Studio, report a problem">Help</button>`;
 }
 
 // Approve / send back / reject, always in reach at the bottom of a draft waiting for review.
@@ -2884,23 +2926,28 @@ async function detailClick(e) {
       await openPlanIdea(d.id);
     } else if (id === "decide-changes") {
       await api(`/api/production/${d.id}/decision`, { decision: "changes", caption: $("#caption").value });
+      mark("sent_back", { fixes: readFixes(d) > 0, notes: d.notes.filter((x) => x.status === "open").length });
       toast("Sent back for changes. Opening the next one.");
       await nextForReview();
     } else if (id === "decide-approve") {
       await api(`/api/production/${d.id}/decision`, { decision: "approve", caption: $("#caption").value });
+      mark("approved");
       toast("Approved. Schedule it on Instagram from its page in Done.");
       await nextForReview();
     } else if (id === "redo-one") {
       await api(`/api/production/${d.id}/decision`, { decision: "redo" });
+      mark("redo");
       toast("Studio is editing it again. The new version comes back to To review.");
       await nextForReview();
     } else if (id === "redo-all") {
       const r = await api("/api/productions/redo", {});
+      mark("redo", { all: true });
       toast(`Studio is editing ${plural(r.count, "draft")} again, one at a time. They come back to To review.`);
       await nextForReview();
     } else if (id === "decide-reject") {
       if (!confirm("Reject this edit? It moves to Done and won't be revised.")) return;
       await api(`/api/production/${d.id}/decision`, { decision: "reject", caption: $("#caption").value });
+      mark("rejected");
       toast("Rejected.");
       await nextForReview();
     } else if (id === "reopen") {
@@ -2960,6 +3007,7 @@ async function addNote(box = "note-body") {
     body, at_seconds: at, remember: !quick && !!$("#note-remember")?.checked, ...(slide !== undefined ? { slide } : {}),
   });
   input.value = "";
+  mark("note_added", { via: quick ? "quick" : "box" });
   await loadDetail();
   sync();
   toast(`Note added at ${mmss(at || 0)}.`);
@@ -3709,6 +3757,7 @@ async function init() {
     return;
   }
   renderAccount();
+  setHelpHost();
   if (!PLAN_HERE) await loadProjects().catch(() => {});
   shellLinks();
   await sync(board);

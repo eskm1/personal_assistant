@@ -461,7 +461,7 @@ code { background: var(--um-paper-mid); border-radius: 4px; padding: 1px 5px; fo
   display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; height: auto; flex: 1 0 auto;
   width: 100%; max-width: 1240px; margin: 0 auto; padding: 24px clamp(16px, 3vw, 28px) 40px;
 }
-.viewer.detail-mode .nav, .viewer.detail-mode .close { display: none; }
+.viewer.detail-mode .nav, .viewer.detail-mode .close, .viewer.detail-mode > .viewer-inner > .viewer-help { display: none; }
 .viewer.detail-mode .player-col {
   flex: 0 1 240px; min-width: 200px; display: flex; flex-direction: column; gap: 10px; padding: 0;
   position: sticky; top: 84px;
@@ -862,8 +862,9 @@ button.concept-opt:disabled { opacity: .6; cursor: progress; }
 .sel-bar .btn { border-color: rgba(251, 250, 247, .7); }
 .sel-bar .btn.danger { background: var(--um-danger); color: #fff; border-color: var(--um-danger); font-weight: 600; }
 .sel-bar .btn.danger:hover:not(:disabled) { background: var(--um-danger); color: #fff; opacity: .9; }
-.sel-bar .btn:disabled, .sel-bar .btn.danger:disabled {
-  opacity: 1; background: transparent; color: rgba(251, 250, 247, .42); border: 1px dashed rgba(251, 250, 247, .3);
+.sel-bar .btn:disabled, .sel-bar .btn.danger:disabled,
+.sel-bar .btn[aria-disabled=true], .sel-bar .btn.danger[aria-disabled=true], .sel-bar .btn.danger[aria-disabled=true]:hover {
+  opacity: 1 !important; background: transparent; color: rgba(251, 250, 247, .42); border: 1px dashed rgba(251, 250, 247, .3);
   font-weight: 500; cursor: not-allowed;
 }
 .sel-bar .btn.ghost { border-color: transparent; }

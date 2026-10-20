@@ -963,6 +963,34 @@ Schincariol) are built in (`studio/igkit`, `wording.py`, `voice_file.py`; Bryan'
   about 20 of your talking-head videos (one Claude call, about 10 cents); Studio does it once by itself when 10 of
   them are in. Edit it freely; it's `Studio\voice.md`.
 
+## 18. Help, feedback and what gets used
+
+**Help** is on the bar on every screen (the **?** on a phone, top right; **Help** on a computer, and inside a draft
+or an idea's page). It opens a panel with:
+
+- **This page**: what the page is for and its main action, in a few lines, and **Show me**, which points at the
+  page's main controls one at a time (**Next**, **Done**; Esc stops).
+- **Ask Studio**: type a how-to question ("How do I send a draft back?"). Claude answers in a few steps from this
+  README and the page you're on, never from what's on screen. Up to 30 questions a person a day (`STUDIO_HELP_DAILY`;
+  usage kind `help`, `STUDIO_HELP_MODEL` for a cheaper model). Without Claude it says so and shows the page's help.
+- **Something not working?**: tap the part that's wrong (or **Skip**), say what happened if you like, **Send**. It
+  sends the page, the part, the screen size and Studio's version; never a screenshot.
+
+**A grey button says why.** Tap (or hover, or tab to) a button that can't act yet, such as Make this before the
+footage is in, Schedule before Instagram is connected or Next on the last draft, and it says why and what to do.
+
+**What gets used** (never content): Review and the planner note page views, presses on controls (by their name in
+the code, never the words on a card, title, caption or note), presses that changed nothing, quick repeated presses,
+dialogs closed without their action, errors, and the golden paths' steps. Batched, sent about every 15 seconds and
+when a page is left, kept 180 days (`STUDIO_USAGE_DAYS`); `STUDIO_USAGE=0` turns it off. A test walk sets
+`localStorage studio.qa = 1` in its browser: its events are marked and left out of the report.
+
+**Bryan only, under More**: **Feedback** (everything flagged, newest first, **Mark done**) and **Weekly report
+access**: the key Studio's own weekly review uses to read `GET /api/report/weekly` (`?start=YYYY-MM-DD`,
+`&format=md`; the last full Monday-Sunday week by default): who was active, the golden paths G1-G5 (started,
+finished, median time, where people stopped), dead and rage clicks, cancelled dialogs, errors, flags, questions to
+Ask Studio and "did anyone use what we built last week?" (`usage_report.FEATURES`). **New key** stops the old one at once.
+
 ## Day to day
 
 **Updates install themselves.** Every 10 minutes, when Studio is idle (nothing uploading,

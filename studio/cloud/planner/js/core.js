@@ -198,6 +198,13 @@ export function copyText(text) {
 }
 // Served by the Studio dashboard at /plan/ (one app with the dashboard) rather than on its own.
 export const underPlan = /^\/plan(\/|$)/.test(location.pathname);
+// A golden path's step for usage capture (capture.js may still be loading: it picks these up). Names, never content.
+export function mark(name, detail) {
+  if (window.StudioUsage) window.StudioUsage.mark(name, detail);
+  else (window.__su = window.__su || []).push([name, detail]);
+}
+// A control that can't act: aria-disabled (so a tap still arrives) and why (shell.js shows it). "" = it can act.
+export const offWhy = (why) => (why ? `aria-disabled="true" data-why="${esc(why)}"` : "");
 
 export function store(key, value) { try { localStorage.setItem(key, value); } catch { /* private mode */ } }
 export function recall(key) { try { return localStorage.getItem(key); } catch { return null; } }

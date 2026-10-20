@@ -50,6 +50,9 @@ window.StudioPost = (() => {
     return { chars: t.length, hashtags: tags, mentions, problems };
   }
 
+  // A button that can't act yet: aria-disabled (so a tap still arrives) and the reason (shell.js shows it).
+  const offWhy = (why) => (why ? `aria-disabled="true" data-why="${esc(why)}"` : "");
+
   // ── The dialog frame (its own, so it works the same on both pages) ─────────
   let modal = null, onClick = null, returnTo = null;
   function frame() {
@@ -191,8 +194,8 @@ window.StudioPost = (() => {
         <div class="sp-actions">
           ${live ? `<button type="button" class="btn ghost danger" data-sp-cancel>Cancel post</button>` : ""}
           <span class="sp-gap"></span>
-          <button type="button" class="btn" data-sp-now ${plan.why_not ? "disabled" : ""}>Post now</button>
-          <button type="submit" class="btn act" data-sp-save ${plan.why_not ? "disabled" : ""}>${live ? (post.state === "failed" ? "Try again at this time" : "Save") : "Schedule"}</button>
+          <button type="button" class="btn" data-sp-now ${offWhy(plan.why_not)}>Post now</button>
+          <button type="submit" class="btn act" data-sp-save ${offWhy(plan.why_not)}>${live ? (post.state === "failed" ? "Try again at this time" : "Save") : "Schedule"}</button>
         </div>
       </form>`;
     open(html, scheduleClick, scheduleInput);
@@ -206,7 +209,11 @@ window.StudioPost = (() => {
     if (!el) return;
     el.innerHTML = c.problems.length ? `<span class="error-text">${esc(c.problems.join(" "))}</span>`
       : `${esc(c.chars.toLocaleString("en"))} / ${LIMITS.chars.toLocaleString("en")} characters · ${esc(plural(c.hashtags, "hashtag"))} (up to ${LIMITS.hashtags})`;
-    for (const b of modal.querySelectorAll("[data-sp-save], [data-sp-now]")) b.disabled = !!plan.why_not || c.problems.length > 0;
+    // Can't post: the buttons say why when pressed (shell.js), not a silent grey.
+    const why = plan.why_not || (c.problems.length ? `Fix the caption first: ${c.problems.join(" ")}` : "");
+    for (const b of modal.querySelectorAll("[data-sp-save], [data-sp-now]")) {
+      if (why) { b.setAttribute("aria-disabled", "true"); b.dataset.why = why; } else { b.removeAttribute("aria-disabled"); delete b.dataset.why; }
+    }
   }
   function updateWhen() {
     const day = $("#sp-day")?.value, time = $("#sp-time")?.value, el = $("#sp-when-note");
@@ -245,6 +252,7 @@ window.StudioPost = (() => {
       const r = post ? await opts.api("POST", `/api/instagram/posts/${post.id}`, body)
         : await opts.api("POST", "/api/instagram/posts", { ...body, production_id: plan.production.id });
       close();
+      window.StudioUsage?.mark("post_scheduled", { now: when === "now" });
       opts.toast(when === "now" ? "Posting now. A Telegram says when it's out (a minute or two)." : `Scheduled for ${whenText(r.post.scheduled_at)}.`);
       opts.onChange(r.post);
     } catch (err) { busy(btn, false); showError(err.message); }

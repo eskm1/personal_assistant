@@ -7,7 +7,7 @@
 // on its own address does without, from ideas.production.
 import {
   $, esc, sb, must, toast, cfg, state, isOwner, ownerName, plural, mmss, todayISO, parseDay, dayLabel, dayOf,
-  POST_TYPES, POST_TYPE, kindDot, missingTable, underPlan, isFilmed, openModal, closeModal, formError,
+  POST_TYPES, POST_TYPE, kindDot, missingTable, underPlan, isFilmed, openModal, closeModal, formError, offWhy
 } from "./core.js";
 import { plan, loadProjects, fromFootage, openQuickAdd, openNewProject } from "./board.js";
 import { month, loadMonth } from "./month.js";
@@ -232,7 +232,7 @@ function needHTML(x) {
   }
   if (x.type === "suggest") {
     const i = x.idea;
-    const busy = topics.busy.has(i.id) ? "disabled" : "";
+    const busy = offWhy(topics.busy.has(i.id) ? "Saving your call. A moment." : "");
     const kind = i.post_type ? `${kindDot(i.post_type)}` : "";
     const what = ["Studio suggests", POST_TYPE[i.post_type], i.format === "carousel" ? "Carousel" : i.suggestion?.clip_id ? "Reel from your footage" : "Reel"].filter(Boolean).join(" · ");
     return `<article class="hm-row" data-sugg="${esc(i.id)}">
@@ -347,7 +347,7 @@ function monthHTML() {
     ${untyped ? `<p class="hm-sub">${esc(plural(untyped, "planned post"))} ${untyped === 1 ? "has" : "have"} no kind yet: Studio sorts ${untyped === 1 ? "it" : "them"} soon.</p>` : ""}
     <div class="hm-month-foot">
       <a href="#/content-plan">Targets and offers</a>
-      ${topics.missing ? "" : `<button type="button" class="btn-link" data-suggest-topics ${busy ? "disabled" : ""} title="Studio reads what Bryan said on site, the client questions and the shoot calendar, and suggests posts for this month's gaps. A minute; a few cents.">${busy ? "Suggesting…" : "Suggest topics"}</button>`}
+      ${topics.missing ? "" : `<button type="button" class="btn-link" data-suggest-topics ${offWhy(busy ? "Studio is already suggesting topics. They appear under Needs your call." : "")} title="Studio reads what Bryan said on site, the client questions and the shoot calendar, and suggests posts for this month's gaps. A minute; a few cents.">${busy ? "Suggesting…" : "Suggest topics"}</button>`}
     </div>
     ${foot ? `<p class="hm-sub" aria-live="polite">${foot}</p>` : ""}
   </section>`;

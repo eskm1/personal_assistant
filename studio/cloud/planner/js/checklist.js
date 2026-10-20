@@ -4,7 +4,7 @@
 // shot filmed (or unticks it). Routes: #/today/<project_id> (and the old #/checklist/<id>).
 import {
   $, CAMERA, CAMERA_LONG, CAMERA_ORDER, FRAMING, KIND, esc, sb, must, toast, store, recall, pbarHTML, fbarHTML, prepShots,
-  progress, takeRetake, takeFlags, nameOf, state, syncInert, dayLabel, plural, stillUrl, takePaths,
+  progress, takeRetake, takeFlags, nameOf, state, syncInert, dayLabel, plural, stillUrl, takePaths, offWhy
 } from "./core.js";
 import { loadShoot, visitFor } from "./shoot.js";
 import { uploadButtonsHTML } from "./upload.js";
@@ -114,7 +114,7 @@ function todayShotHTML(s) {
   const label = [FRAMING[s.framing] ? FRAMING[s.framing].toUpperCase() : "", KIND[s.kind] || "", s.seconds ? `${Math.round(s.seconds * 10) / 10}s` : ""].filter(Boolean).join(" · ");
   const by = nameOf(s.filmed_by);
   const st = s.state === "needed" && s.filmed ? "filmed" : s.state;
-  return `<li class="cl-item" data-drop-shot="${esc(s.id)}"><button class="cl-shot st-${esc(st)}" data-cl-shot="${esc(s.id)}" aria-pressed="${s.filmed}" ${s.takes.length ? 'aria-disabled="true"' : ""}>
+  return `<li class="cl-item" data-drop-shot="${esc(s.id)}"><button class="cl-shot st-${esc(st)}" data-cl-shot="${esc(s.id)}" aria-pressed="${s.filmed}" ${s.takes.length ? offWhy("It has footage, so it stays ticked. To untick it, remove the take on the post's page.") : ""}>
       <span class="cl-icon" aria-hidden="true">${CL_ICON[st] || ""}</span>
       <span class="cl-text">
         ${label ? `<span class="cl-label">${esc(label)}</span>` : ""}

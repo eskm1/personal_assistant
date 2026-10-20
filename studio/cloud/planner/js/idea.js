@@ -8,8 +8,7 @@ import {
   nameOf, state, prepShots, progress, bestTake, takeRetake, retakeBadge, signPaths, stillUrl,
   takePaths, jobView, jobActive, kickDevelop, laptopWait, httpUrl, httpsUrl, openModal, closeModal, syncInert,
   missingTable, dayLabel, folderLineHTML, pageMode, PHONE, POST_TYPES, POST_TYPE, KIND_INFO, kindDot, sentence,
-  isCarousel, REEL_FORMATS, schema, liveClips, isFilmed, todayISO, shortDay, askFirst,
-} from "./core.js";
+  isCarousel, REEL_FORMATS, schema, liveClips, isFilmed, todayISO, shortDay, askFirst, mark, offWhy } from "./core.js";
 import { plan, selectProject } from "./board.js";
 import { uploadButtonsHTML, rememberShot, canUpload } from "./upload.js";
 import { openSchedule, canSchedule } from "./posting.js";
@@ -115,7 +114,7 @@ function renderHead() {
   const back = from === "" || from === "#" || from === "#/" ? "Plan" : /^#\/(today|checklist)\//.test(from) ? "Today" : "Ideas";
   head.innerHTML = `<button type="button" class="head-link" data-back aria-label="Back to ${back}">‹&nbsp;${back}</button>
     ${i >= 0 ? `<span class="head-pos">${i + 1} of ${plan.order.length}</span>` : ""}
-    <button type="button" class="head-link head-next" data-head-next ${last ? "disabled" : ""} aria-label="Next idea">›</button>`;
+    <button type="button" class="head-link head-next" data-head-next ${offWhy(last ? `This is the last idea in the list. ‹ ${back} goes back to it.` : "")} aria-label="Next idea">›</button>`;
 }
 $("#viewer-head").addEventListener("click", (e) => {
   if (e.target.closest("[data-back]")) closeIdea();
@@ -329,8 +328,8 @@ function shotRowHTML(s, i, n) {
         ${s.filmed_at ? `<span class="muted small shot-ticked">Ticked${s.filmed_by && nameOf(s.filmed_by) ? ` by ${esc(nameOf(s.filmed_by))}` : ""} ${esc(ago(s.filmed_at))}</span>` : ""}
         <span class="saved" aria-live="polite"></span>
         <span class="shot-tools">
-          <button class="icon-btn" data-shot-move="-1" ${i === 0 ? "disabled" : ""} title="Move up" aria-label="Move shot ${i + 1} up">↑</button>
-          <button class="icon-btn" data-shot-move="1" ${i === n - 1 ? "disabled" : ""} title="Move down" aria-label="Move shot ${i + 1} down">↓</button>
+          <button class="icon-btn" data-shot-move="-1" ${offWhy(i === 0 ? "It's already the first shot." : "")} title="Move up" aria-label="Move shot ${i + 1} up">↑</button>
+          <button class="icon-btn" data-shot-move="1" ${offWhy(i === n - 1 ? "It's already the last shot." : "")} title="Move down" aria-label="Move shot ${i + 1} down">↓</button>
           <button class="icon-btn danger" data-shot-delete title="Delete shot" aria-label="Delete shot ${i + 1}">×</button>
         </span>
       </div>
@@ -446,7 +445,7 @@ function musicHTML(d) {
       : job?.state === "failed" ? `<p class="error-text small">Couldn't shortlist: ${esc(job.error || "unknown error")}</p>` : "";
   const again = tracks.length || m.note;
   return `<p>${desc || `<span class="muted">No direction yet. Change it with Claude to get one.</span>`}</p>${body}
-    <div class="row mt8"><button class="btn" id="music-shortlist" ${active ? "disabled" : ""}
+    <div class="row mt8"><button class="btn" id="music-shortlist" ${offWhy(active ? "Studio is already shortlisting. The tracks appear here by themselves." : "")}
       title="Runs on Studio. Urban Makers: a few Epidemic Sound tracks to try. Personal: a note on what to pick in Instagram.">${active ? "Shortlisting…" : again ? "Shortlist again" : "Shortlist music"}</button></div>
     ${status}`;
 }
@@ -457,7 +456,7 @@ function refineHTML(d) {
   const changes = job?.result?.changes;
   return `<label class="sr-only" for="refine-request">What should change</label>
     <textarea id="refine-request" data-draft rows="2" maxlength="4000" ${active ? "disabled" : ""} placeholder="What should change? e.g. “make the hook punchier”, “add a before/after”. Leave empty to just complete the plan."></textarea>
-    <div class="row mt8"><button class="btn primary" id="refine-go" ${active ? "disabled" : ""} title="About a minute; costs a few cents">${active ? "Refining…" : "Refine with Claude"}</button>
+    <div class="row mt8"><button class="btn primary" id="refine-go" ${offWhy(active ? "Claude is already reworking the plan. About a minute; this page updates by itself." : "")} title="About a minute; costs a few cents">${active ? "Refining…" : "Refine with Claude"}</button>
       ${active ? `<span class="muted small"><span class="spin"></span> ${job.state === "queued" ? "Starting…" : "Claude is reworking the plan."}</span>` : ""}</div>
     <p class="muted small">Claude rewrites the hook, text and storyboard and reads the comments. Shots already filmed or with footage are always kept; unfilmed ones may be reworded or replaced.</p>
     ${job?.state === "done" && changes ? `<p class="refine-result"><strong>Last refine (${esc(ago(job.updated_at))}):</strong> ${esc(Array.isArray(changes) ? changes.join(" ") : changes)}</p>` : ""}
@@ -497,10 +496,10 @@ function nextStep(d) {
   }
   const failed = job?.state === "failed" ? ` <span class="error-text">Last try failed: ${esc(job.error || "unknown error")}</span>` : "";
   const dev = jobView(d.jobs.develop), writing = jobActive(dev);
-  const make = (on) => `<button class="btn act lg" id="plan-make" ${on ? "" : "disabled"}>Make this</button>`;
+  const make = (on, why) => `<button class="btn act lg" id="plan-make" ${offWhy(on ? "" : why)}>Make this</button>`;
   if (carousel) {
     if (d.slides.length < 2 && !slidesLocked(d)) {
-      return { primary: `<button class="btn act lg" id="refine-go-main" ${writing ? "disabled" : ""}>${writing ? "Writing slides…" : d.slides.length ? "Rewrite slides" : "Write slides"}</button>`,
+      return { primary: `<button class="btn act lg" id="refine-go-main" ${offWhy(writing ? "Claude is writing the slides now. About a minute; this page updates by itself." : "")}>${writing ? "Writing slides…" : d.slides.length ? "Rewrite slides" : "Write slides"}</button>`,
         hint: (writing ? "Claude is writing the slides. About a minute." : "Make this unlocks with a cover and one more slide.") + failed };
     }
     if (owner) {
@@ -510,7 +509,7 @@ function nextStep(d) {
     return { hint: `${esc(ownerName())} sends it to Studio once the slides are ready.${failed}` };
   }
   if (!d.shots.length) {
-    return { primary: `<button class="btn act lg" id="refine-go-main" ${writing ? "disabled" : ""}>${writing ? "Drafting the shots…" : "Storyboard it with Claude"}</button>`,
+    return { primary: `<button class="btn act lg" id="refine-go-main" ${offWhy(writing ? "Claude is drafting the shots now. About a minute; this page updates by itself." : "")}>${writing ? "Drafting the shots…" : "Storyboard it with Claude"}</button>`,
       hint: writing ? "Claude is writing the shots. About a minute." : "Claude plans the shots to film. A few cents." };
   }
   const todo = d.shots.findIndex((s) => !isFilmed(s));
@@ -524,7 +523,7 @@ function nextStep(d) {
     return { primary: film, hint: (owner ? "Make this unlocks when the footage is in." : `${esc(ownerName())} makes it once the footage is in.`) + failed };
   }
   if (owner) {
-    return { primary: make(d.canMake), hint: (d.canMake ? "Cut from the best take of each shot." : "Waiting for the footage to upload.") + failed };
+    return { primary: make(d.canMake, "The footage is still uploading. Make this unlocks by itself once it's in."), hint: (d.canMake ? "Cut from the best take of each shot." : "Waiting for the footage to upload.") + failed };
   }
   return { hint: `${esc(ownerName())} sends it to the editor once the footage is in.${failed}` };
 }
@@ -542,7 +541,12 @@ function postStep(d, prod, link) {
   else line = `<strong>Approved.</strong> Not scheduled yet.`;
   const can = canSchedule() && prod.status === "approved" && p?.state !== "posted" && p?.state !== "publishing";
   const label = p?.state === "scheduled" ? "Change" : p?.state === "failed" ? "Try again" : "Schedule";
-  if (!can) return { hint: line, extra: link };
+  if (!can) {
+    // Bryan, an approved draft, but no way to reach Studio from here: the button says why instead of not being there.
+    const blocked = isOwner() && prod.status === "approved" && !p?.state;
+    return blocked ? { primary: `<button class="btn act lg" data-post-schedule="${esc(prod.id)}" ${offWhy("Scheduling needs the Studio address. It appears when Studio is on, or schedule it from the draft in Review.")}>Schedule</button>`, hint: line, extra: link }
+      : { hint: line, extra: link };
+  }
   if (p?.state === "scheduled") return { hint: line, extra: `<button class="btn" data-post-schedule="${esc(prod.id)}">${label}</button>${link}` };
   return { primary: `<button class="btn act lg" data-post-schedule="${esc(prod.id)}">${label}</button>`, hint: line, extra: link };
 }
@@ -753,7 +757,7 @@ function detailsHTML(d) {
   const format = `<div class="field" data-saved-scope><h3><span id="dt-format">Format</span> <span class="saved" aria-live="polite"></span></h3>
       <div class="pick-grid" role="group" aria-labelledby="dt-format">${formats.map((f) => {
         const on = d.format === f;
-        return `<button type="button" class="btn pick-btn${on ? " on" : ""}" data-set-format="${f}" aria-pressed="${on}" ${locked && !on ? "disabled" : ""}>${esc(FORMAT[f] || f)}</button>`;
+        return `<button type="button" class="btn pick-btn${on ? " on" : ""}" data-set-format="${f}" aria-pressed="${on}" ${offWhy(locked && !on ? (carousel ? "A carousel with slides stays a carousel. Start a new idea for a Reel." : "A Reel with shots stays a Reel. Start a new idea for a carousel.") : "")}>${esc(FORMAT[f] || f)}</button>`;
       }).join("")}</div>
       ${carousel && d.slides.length ? `<p class="muted small">A carousel with slides stays a carousel.</p>` : !carousel && d.shots.length && formats.length === REEL_FORMATS.length && schema.slides ? `<p class="muted small">A Reel with shots stays a Reel.</p>` : ""}</div>`;
   return `<div class="details" id="details-sheet">
@@ -801,6 +805,7 @@ async function onDetailsClick(e) {
   if (ds.setKind != null) {
     if ((d.post_type || "") === ds.setKind) return;
     must(await sb.from("ideas").update({ post_type: ds.setKind || null }).eq("id", d.id));
+    if (ds.setKind) mark("idea_kind", { at: "details" });
     d.post_type = ds.setKind || null;
   } else if (ds.setFormat) {
     if (d.format === ds.setFormat || t.disabled) return;
@@ -820,6 +825,7 @@ async function onDetailsClick(e) {
 function dismissIdea(d) {
   askFirst({ title: `Dismiss “${d.title}”?`, text: "It comes off the board. You can put it back from its Details.", ok: "Dismiss", danger: true }, async () => {
     must(await sb.from("ideas").update({ status: "dismissed" }).eq("id", d.id));
+    mark("idea_decided", { decision: "dismissed", from: "idea" });
     await closeModal();
     toast("Dismissed.");
     closeIdea();
@@ -1045,6 +1051,7 @@ inner().addEventListener("click", async (e) => {
         toast("Back on the board.");
       } else {
         must(await sb.from("ideas").update({ decision: k }).eq("id", d.id));
+        if (k !== "proposed") mark("idea_decided", { decision: k, from: "idea" });
         toast({ go: "Marked Go.", parked: "Parked.", proposed: "Back to undecided." }[k]);
       }
     } else if (ds.vote) {
@@ -1080,6 +1087,7 @@ inner().addEventListener("click", async (e) => {
       if (caption !== d.caption) must(await sb.from("ideas").update({ caption }).eq("id", d.id));
       const kind = isCarousel(d) ? "carousel" : "make";
       must(await sb.from("jobs").insert({ kind, runner: "laptop", idea_id: d.id, project_id: d.project_id, state: "queued", payload: { caption } }));
+      mark("make_this", { carousel: kind === "carousel" });
       toast(kind === "carousel" ? "Sent to Studio to lay out the slides." : "Sent to Studio's editor.");
     } else return;
     await loadIdea(true);
@@ -1166,10 +1174,16 @@ async function loadPicker(projectId, shot) {
 
 // ── Previous / next idea on the board ───────────────────────────────────────
 
+// A static button that can't act: aria-disabled and why (shell.js), not disabled.
+function offButton(b, why) {
+  if (!b) return;
+  b.disabled = false;
+  if (why) { b.setAttribute("aria-disabled", "true"); b.dataset.why = why; } else { b.removeAttribute("aria-disabled"); delete b.dataset.why; }
+}
 function updateArrows() {
   const i = plan.order.indexOf(view.id);
-  $("#prev").disabled = i <= 0;
-  $("#next").disabled = i < 0 || i >= plan.order.length - 1;
+  offButton($("#prev"), i <= 0 ? "This is the first idea in the list." : "");
+  offButton($("#next"), i < 0 || i >= plan.order.length - 1 ? "This is the last idea in the list." : "");
   renderHead();
 }
 // The next post replaces this one in the history: Back still goes to the board.

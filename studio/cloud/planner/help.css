@@ -1,0 +1,98 @@
+/* Help (help.js): the panel (a side panel on a computer, a sheet on a phone), Show me's spotlight, the friction
+   flag's picker and the owner's Feedback and Weekly report access. theme.css tokens only. Over everything the
+   page has (viewer 10, dialogs 30, the More sheet 40), under the toast (50) and the why note (60). */
+.help-root { position: fixed; inset: 0; z-index: 45; background: var(--um-shade); display: flex; justify-content: flex-end; }
+.help-root[hidden] { display: none; }
+.hp-card {
+  width: min(420px, 100vw); height: 100%; overflow-y: auto; overscroll-behavior: contain; background: var(--um-card);
+  border-left: 1px solid var(--um-line); box-shadow: var(--um-shadow-dialog); display: flex; flex-direction: column;
+}
+.hp-head {
+  position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 0 8px 0 20px;
+  background: var(--um-card); border-bottom: 1px solid var(--um-line-soft);
+}
+.hp-head h2 { margin: 0; flex: 1; font-size: var(--um-fs-h2); font-family: var(--um-font-display); font-weight: 600; outline: none; }
+.hp-close, .hp-back {
+  width: 44px; height: 44px; border: 0; background: none; color: var(--ink-soft); font-size: 26px; line-height: 1; border-radius: var(--um-radius-sm); flex: none;
+}
+.hp-back { margin-left: -12px; font-size: 28px; }
+.hp-close:hover, .hp-back:hover { background: var(--um-paper-mid); color: var(--um-ink); }
+.hp-body { display: flex; flex-direction: column; gap: 12px; padding: 16px 20px 24px; }
+.hp-sec { display: flex; flex-direction: column; gap: 10px; padding-bottom: 20px; border-bottom: 1px solid var(--um-line-soft); }
+.hp-sec:last-child { border-bottom: 0; padding-bottom: 0; }
+.hp-sec > .btn { align-self: flex-start; }
+.hp-label { margin: 0; font-family: var(--um-mono); font-size: var(--um-fs-label); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); }
+.hp-lines { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; line-height: 1.45; }
+.hp-small { margin: 0; font-size: var(--um-fs-meta); color: var(--ink-soft); line-height: 1.45; }
+.hp-ask { display: flex; flex-direction: column; gap: 8px; }
+.hp-ask textarea, .hp-body textarea {
+  width: 100%; min-height: 64px; resize: vertical; padding: 8px 10px; border: 1px solid var(--um-line); border-radius: var(--um-radius-sm);
+  background: var(--um-card); font-size: var(--um-fs-body); line-height: 1.4;
+}
+.hp-ask .btn { align-self: flex-end; min-width: 88px; }
+.hp-answer:empty { display: none; }
+.hp-reply { padding: 12px 14px; border-radius: var(--um-radius); background: var(--um-paper-mid); line-height: 1.5; }
+.hp-reply p { margin: 0 0 6px; }
+.hp-reply p:last-child { margin: 0; }
+.hp-reply ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.hp-note { padding: 12px 14px; border-radius: var(--um-radius); background: var(--act-tint); border: 1px solid var(--act-line); }
+.hp-note p { margin: 0 0 4px; }
+.hp-helped { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.hp-flag-btn { align-self: flex-start; }
+.hp-row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.hp-picked { margin: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hp-wrap { margin: 0; overflow-wrap: anywhere; font-size: var(--um-fs-ui); }
+.hp-confirm { padding: 12px 14px; border-radius: var(--um-radius); background: var(--um-danger-tint); border: 1px solid var(--um-danger-line); }
+.hp-confirm p { margin: 0 0 8px; }
+.help-root .sr-only, .hp-pickbar .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* Feedback (owner) */
+.fb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.fb-item { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--um-line); border-radius: var(--um-radius); }
+.fb-item .btn { align-self: flex-start; }
+.fb-item.done { background: var(--um-paper); }
+.fb-item.done .fb-words { color: var(--ink-soft); }
+.fb-top { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+.fb-words { margin: 0; line-height: 1.45; overflow-wrap: anywhere; }
+
+/* Show me: a hole of light around one control, its line in a bubble beside it. */
+.hp-block { position: fixed; inset: 0; z-index: 46; }
+.hp-spot {
+  position: fixed; z-index: 47; border-radius: var(--um-radius); box-shadow: 0 0 0 3px var(--act), 0 0 0 9999px rgba(30, 42, 50, .55);
+  pointer-events: none; transition: left .18s ease, top .18s ease, width .18s ease, height .18s ease;
+}
+.hp-bubble {
+  position: fixed; z-index: 48; padding: 14px 16px 12px; border-radius: var(--um-radius); background: var(--um-card); color: var(--um-ink);
+  box-shadow: var(--um-shadow-dialog); border: 1px solid var(--um-line);
+}
+.hp-step { margin: 0 0 4px; font-family: var(--um-mono); font-size: var(--um-fs-label); color: var(--ink-soft); letter-spacing: .06em; }
+.hp-walk-text { margin: 0 0 12px; line-height: 1.45; }
+.hp-walk-btns { display: flex; align-items: center; gap: 8px; }
+.hp-gap { flex: 1; }
+
+/* Something not working?: tap the part. */
+.hp-pickbar {
+  position: fixed; left: 50%; top: calc(var(--shell-top-h, 60px) + 12px); transform: translateX(-50%); z-index: 49; display: flex; align-items: center; gap: 12px;
+  max-width: calc(100vw - 32px); padding: 10px 12px 10px 16px; border-radius: var(--um-radius); background: var(--um-ink); color: var(--um-paper); box-shadow: var(--um-shadow-dialog);
+}
+.hp-pickbar p { margin: 0; }
+.hp-pick-btns { display: flex; gap: 6px; flex: none; }
+.hp-pickbar .btn { background: var(--um-paper); color: var(--um-ink); }
+.hp-pickbar .btn.ghost { background: transparent; color: var(--um-paper); border-color: var(--um-paper); }
+.hp-pickbox { position: fixed; z-index: 48; pointer-events: none; border: 2px solid var(--act); border-radius: var(--um-radius-sm); background: rgba(232, 99, 10, .08); }
+.hp-pickbox[hidden] { display: none; }
+body.hp-picking, body.hp-picking * { cursor: crosshair !important; }
+body.hp-picking .hp-pickbar, body.hp-picking .hp-pickbar * { cursor: pointer !important; }
+
+@media (max-width: 720px) {
+  .help-root { align-items: flex-end; justify-content: stretch; }
+  .hp-card {
+    width: 100%; height: auto; max-height: 88vh; border-left: 0; border-top: 1px solid var(--um-line);
+    border-radius: var(--um-radius) var(--um-radius) 0 0; padding-bottom: env(safe-area-inset-bottom);
+  }
+  .hp-head { padding-left: 16px; }
+  .hp-body { padding: 12px 16px 20px; }
+  .hp-body .btn, .hp-ask .btn, .hp-walk-btns .btn, .hp-pickbar .btn { min-height: var(--um-touch); }
+  .hp-ask textarea, .hp-body textarea { font-size: 16px; }   /* no zoom on iPhone */
+  .hp-pickbar { top: auto; bottom: calc(var(--shell-bottom, 0px) + 12px); flex-wrap: wrap; justify-content: space-between; }
+}

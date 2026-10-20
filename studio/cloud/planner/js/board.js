@@ -6,8 +6,7 @@ import {
   $, $$, BRAND, ACCOUNTS, oneBrand, esc, sb, must, invoke, toast, options, store, recall, plural,
   prepShots, progress, jobView, jobActive, kickDevelop, openModal, closeModal, formError, askFirst, nameOf, PRODUCTION,
   state, isFilmed, httpsUrl, laptopWait, ago, dayOf, todayISO, parseDay, dayLabel, shortDay, withKinds, kindsQuery, kindDot,
-  schema, POST_TYPES, POST_TYPE, isCarousel,
-} from "./core.js";
+  schema, POST_TYPES, POST_TYPE, isCarousel, mark, offWhy } from "./core.js";
 import { shoot, loadShoot, renderShoot } from "./shoot.js";
 
 export const plan = {
@@ -530,7 +529,7 @@ function renderToolsMenu() {
     <button role="menuitem" data-tool="today">Today on site${sub("The shot list for today's visit, for a phone")}</button>
     <button role="menuitem" data-tool="brief">Brief and inbox folder${sub(brief ? esc(brief) + ((p.brief || "").length > 60 ? "…" : "") : "Add what the job is")}</button>
     <button role="menuitem" data-tool="series">Series${sub(b?.arcs.length ? esc(plural(b.arcs.length, "series", "series")) : "Group posts into a run")}</button>
-    <button role="menuitem" data-tool="find" ${jobActive(job) ? "disabled" : ""}>${jobActive(job) ? "Finding ideas…" : "Find ideas in new footage"}${sub(findIdeasStatus(job))}</button>
+    <button role="menuitem" data-tool="find" ${offWhy(jobActive(job) ? "Studio is already looking. New ideas land in Waiting for your call." : "")}>${jobActive(job) ? "Finding ideas…" : "Find ideas in new footage"}${sub(findIdeasStatus(job))}</button>
     <div class="menu-rule" role="separator"></div>
     <button role="menuitem" data-tool="new">New project</button>
     <button role="menuitem" data-tool="archive"${p.status === "archived" ? "" : ` class="danger"`}>${p.status === "archived" ? "Unarchive project" : "Archive project…"}</button>`;
@@ -690,6 +689,7 @@ async function addIdeas(pid, text, organise) {
   const known = plan.board?.project?.id === pid ? plan.board.ideas : must(await sb.from("ideas").select("position").eq("project_id", pid));
   const pos = Math.max(0, ...known.map((i) => i.position || 0)) + 1;
   must(await sb.from("ideas").insert(lines.map((title, k) => ({ project_id: pid, title, brand: p?.brand || "urban_makers", position: pos + k }))));
+  mark("idea_created", { many: lines.length });
   return `Added ${plural(lines.length, "idea")} to Unsorted${p && pid !== plan.pid ? ` in ${p.name}` : ""}.`;
 }
 
@@ -813,6 +813,8 @@ export function openQuickAdd(opts = {}) {
       const carousel = document.querySelector("input[name=qa-format]:checked")?.value === "carousel";
       row = must(await sb.from("ideas").insert({ project_id: target, title, brand: p?.brand || "urban_makers", arc_id: $("#qa-arc").value ? Number($("#qa-arc").value) : null, position: pos, ...(kind ? { post_type: kind } : {}), ...(carousel ? { format: "carousel" } : {}) }).select("id").single());
       if (link) must(await sb.from("comments").insert({ idea_id: row.id, body: `Link: ${link}` }));
+      mark("idea_created", { kind: !!kind, carousel });
+      if (kind) mark("idea_kind", { at: "new" });
     } catch (err) { t.disabled = false; return formError(err.message); }
     closeModal();
     toast(opts.from === "home" && target !== plan.pid ? `Idea added to ${p?.name || "the project"}.` : "Idea added.");

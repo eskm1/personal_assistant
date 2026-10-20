@@ -14,7 +14,7 @@ import { showTeam, hideTeam } from "./team.js";
 import { refsRoute, showRefs, hideRefs, resetRefs, refsOpen, loadRefs } from "./refs.js";
 import { shoot, onShootRefresh } from "./shoot.js";
 import { month, monthRoute, showMonth, hideMonth, monthOpen, loadMonthPage } from "./month.js";
-import { onUploadRow, renderTray } from "./upload.js";
+import { onUploadRow, renderTray, studioBase, studioApi } from "./upload.js";
 import { postingRoute, showPosting, hidePosting, postingOpen, loadPostingPage } from "./posting.js";
 
 const SET_PASSWORD = "studio.setPassword";
@@ -124,6 +124,7 @@ async function start(early) {
   state.laptop = laptop;
   renderAccount();
   renderLaptop();
+  setHelpHost();
   if (!session.started) {
     session.started = true;
     startRealtime();
@@ -160,6 +161,61 @@ function stop() {
   $("#home").hidden = true;
   Object.assign(shoot, { pid: null, data: null, missing: false, sig: "" });
   renderTray();
+}
+
+// ── Help, feedback and usage (shell.js, help.js, capture.js) ────────────────
+
+// Where we are, for help and usage: the page's key (help.js PAGES), the address with ids out, and flags the weekly
+// report's golden paths start from (ideas waiting for a call, shots to film, an approved draft).
+function pageNow() {
+  const h = location.hash || "#/";
+  const route = `/plan/${h}`;
+  const q = (sel) => document.querySelector(sel);
+  if (viewerOpen()) {
+    const d = view.d;
+    if (!d || String(d.id) !== h.split("/").pop()) return { key: "idea", route, pending: true };
+    const prod = d.production && typeof d.production === "object" ? d.production : null;
+    return { key: "idea", route, flags: {
+      calls: d.decision === "proposed" && d.status !== "dismissed" && !prod,
+      film: d.decision === "go" && (d.shots || []).some((x) => x.state === "needed" || x.state === "retake"),
+      approved: prod?.status === "approved" && !(d.post && d.post.state !== "cancelled"),
+    } };
+  }
+  if (h === "#" || h === "#/") return { key: "home", route, pending: !home.data, flags: { calls: !!q("#home [data-sugg-act]") } };
+  if (/^#\/(today|checklist)\//.test(h)) return { key: "today", route, flags: { film: !!q("#checklist .cl-shot:not([aria-pressed=true])") } };
+  if (h === "#/team") return { key: "team", route };
+  const post = postingRoute(h);
+  if (post) return { key: post.page, route };
+  const month = monthRoute(h);
+  if (month) return { key: month.page === "questions" ? "questions" : "content", route };
+  const ref = refsRoute(h);
+  if (ref) return { key: ref.page === "style" || ref.page === "taste" ? "style" : "refs", route };
+  if (/^#\/(project|ideas)/.test(h)) {
+    return { key: planMode() === "shoot" ? "shoot" : "ideas", route, pending: !plan.board, flags: { calls: !!q(".grp-waiting .card") } };
+  }
+  return { key: "other", route };
+}
+// Help and feedback reach the Studio machine: served by it (/plan/), with the dashboard's cookie, so a person is
+// the same person in Review and Plan; on Netlify, the planner's Bearer token at the Studio address.
+async function helpApi(method, path, body) {
+  if (underPlan) {
+    const res = await fetch(path, { method, credentials: "same-origin",
+      headers: body === undefined ? {} : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    return j;
+  }
+  if (studioBase() === null) throw new Error("the Studio address isn't known yet");
+  return studioApi(method, path, method === "GET" ? undefined : body || {});
+}
+function setHelpHost() {
+  const base = underPlan ? "" : studioBase();
+  window.StudioShell?.setHost({
+    page: pageNow, api: helpApi, role: () => state.me?.role || "team",
+    version: () => machine.me?.version?.commit || state.laptop?.info?.version || "",
+    usage: underPlan ? (machine.me?.usage === false ? null : { url: "/api/usage" })
+      : base ? { url: `${base}/api/usage`, token: async () => (await sb.auth.getSession()).data.session?.access_token || null } : {},
+  });
 }
 
 // ── Header: the laptop and your account ─────────────────────────────────────
@@ -214,7 +270,7 @@ async function loadMachine() {
     const res = await fetch("/api/me", { credentials: "same-origin", headers: { Accept: "application/json" } });
     machine.me = res.ok ? await res.json() : null;
   } catch { machine.me = null; }
-  if (state.me) renderAccount();
+  if (state.me) { renderAccount(); setHelpHost(); }
 }
 $("#account-menu").addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-account]");

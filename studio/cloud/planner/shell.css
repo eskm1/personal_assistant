@@ -56,6 +56,34 @@
 .laptop-info { width: 300px; max-width: calc(100vw - 32px); padding: 12px 14px; gap: 6px; }
 .laptop-info p { margin: 0; line-height: 1.45; }
 
+/* Help: always on the bar, one press away (help.js opens on the first press). */
+.shell-help {
+  display: inline-flex; align-items: center; gap: 6px; min-height: var(--um-h); padding: 0 10px 0 8px; border: 1px solid var(--um-line);
+  border-radius: var(--um-radius-pill); background: var(--um-card); color: var(--um-ink); font-size: var(--um-fs-ui); font-weight: 500; flex: none;
+}
+.shell-help:hover { background: var(--um-paper-mid); }
+.shell-help .shell-icon { width: 18px; height: 18px; }
+/* The owner's tools at the end of More. */
+.shell-more-menu .shell-owner { border-top: 1px solid var(--um-line-soft); }
+.shell-more-menu .shell-owner + .shell-owner { border-top: 0; }
+/* "Why can't I press this?": a small note under a control that can't act (shell.js). */
+.why-tip {
+  position: fixed; z-index: 60; max-width: 300px; padding: 8px 12px; border-radius: var(--um-radius); background: var(--um-ink); color: var(--um-paper);
+  font-size: var(--um-fs-ui); line-height: 1.4; box-shadow: var(--um-shadow-menu); pointer-events: none;
+}
+.why-tip[hidden] { display: none; }
+[aria-disabled=true][data-why] { cursor: help; }
+
+/* The help button inside a viewer on a computer, where the bar is covered (the planner's index.html; Review's draft head). */
+.viewer-help {
+  position: absolute; top: 12px; right: 60px; z-index: 4; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 36px; padding: 0 12px; border: 1px solid var(--um-line); border-radius: var(--um-radius-pill); background: var(--um-card); color: var(--um-ink);
+  font-size: var(--um-fs-ui); font-weight: 500;
+}
+.viewer-help:hover { background: var(--um-paper-mid); }
+.viewer-help .shell-icon { width: 18px; height: 18px; }
+.head-help { position: static; margin-left: 8px; min-height: 32px; }
+
 /* Account */
 .account { position: relative; flex: none; }
 .account-btn {
@@ -96,6 +124,13 @@
   min-height: 48px; padding: 0 12px; border: 0; border-radius: var(--um-radius-sm); background: none; text-align: left; font-size: var(--um-fs-lead); color: var(--um-ink);
 }
 .shell-sheet-account button:hover, .shell-sheet-links a:hover { background: var(--um-paper-mid); }
+.shell-sheet-links .shell-owner {
+  display: flex; align-items: center; gap: 14px; min-height: 52px; padding: 0 12px; border: 0; border-radius: var(--um-radius-sm); background: none;
+  color: var(--um-ink); font-size: var(--um-fs-lead); font-weight: 500; text-align: left;
+}
+.shell-sheet-links .shell-owner .shell-icon { color: var(--ink-soft); }
+.shell-sheet-links .shell-owner:hover { background: var(--um-paper-mid); }
+.shell-owner[hidden] { display: none !important; }
 
 @media (max-width: 1000px) {
   .shell-top { gap: 12px; }
@@ -115,6 +150,10 @@
   .shell-nav { display: none; }
   .shell-right { gap: 4px; }
   .laptop-pill { min-height: 44px; min-width: 44px; justify-content: center; padding: 0 8px; }
+  .shell-help { min-height: 44px; min-width: 44px; justify-content: center; padding: 0; border: 0; background: none; }
+  .shell-help .shell-icon { width: 24px; height: 24px; }
+  .viewer-help { display: none; }
+  .shell-help-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .laptop-pill #laptop-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .account-btn { min-height: 44px; min-width: 44px; justify-content: center; }
   .avatar { width: 30px; height: 30px; }

@@ -104,6 +104,10 @@ _PUBLIC = ("/login", "/setup", "/invite/", "/healthz", "/static/", "/favicon.ico
            "/plan/favicon.ico", "/plan/apple-touch-icon.png", "/plan/icon-192.png", "/plan/icon-512.png")
 
 
+# Routes the planner calls with its Bearer token (and the dashboard with its cookie).
+_BEARER = ("/api/instagram", "/api/usage", "/api/help/", "/api/feedback", "/api/report/token")
+
+
 @app.before_request
 def _auth():
     """Signed-in users only, everywhere except the sign-in pages themselves."""
@@ -113,10 +117,17 @@ def _auth():
         # refuses anything without a valid token.
         import uploads
         return uploads.guard()
-    if request.path.startswith("/api/instagram") and (
+    if request.path.startswith("/api/report/weekly") and request.headers.get("Authorization"):
+        # The weekly usage report, read from outside with its own key (usage_report.py); never logged.
+        import usage_report
+        if not usage_report.token_ok(request.headers.get("Authorization", "")):
+            return jsonify({"error": "wrong or missing report key"}), 401
+        g.report_key = True
+        return None
+    if request.path.startswith(_BEARER) and (
             request.method == "OPTIONS" or request.headers.get("Authorization", "").lower().startswith("bearer ")):
-        # Posting from the planner (posting_routes.py): its Bearer token, like the upload API.
-        # Review calls the same routes with the dashboard cookie (below).
+        # Posting, help, feedback and usage from the planner (posting_routes.py, help_routes.py): its Bearer
+        # token, like the upload API. Review calls the same routes with the dashboard cookie (below).
         import uploads
         return uploads.guard()
     if request.method == "POST":
@@ -142,7 +153,7 @@ def _auth():
 
 @app.after_request
 def _headers(response):
-    if request.path.startswith(("/api/uploads", "/api/instagram")):
+    if request.path.startswith(("/api/uploads", *_BEARER)):
         import uploads
         uploads.cors(response)
     response.headers.setdefault("X-Frame-Options", "DENY")
@@ -305,7 +316,8 @@ def me():
     import updater
     u = g.user
     return jsonify({"id": u["id"], "name": u["name"], "email": u["email"], "role": u["role"],
-                    "local": is_local(), "version": updater.version(), "brands": list(settings.BRANDS)})
+                    "local": is_local(), "version": updater.version(), "brands": list(settings.BRANDS),
+                    "usage": settings.USAGE})
 
 
 @app.post("/api/update")
@@ -1391,6 +1403,7 @@ from uploads import bp as _uploads_bp  # noqa: E402 - footage uploaded from the 
 from ig_signin import bp as _signin_bp  # noqa: E402 - the owner's Instagram sign-in for reference downloads
 from cleanup import bp as _cleanup_bp  # noqa: E402 - Review's clean-up: remove, archive, free up space
 from posting_routes import bp as _posting_bp  # noqa: E402 - Instagram: connect, schedule, results, public media
+from help_routes import bp as _help_bp  # noqa: E402 - help, feedback, usage capture and the weekly report
 
 app.register_blueprint(_plan_bp)
 app.register_blueprint(_planner_bp)
@@ -1398,6 +1411,7 @@ app.register_blueprint(_uploads_bp)
 app.register_blueprint(_signin_bp)
 app.register_blueprint(_cleanup_bp)
 app.register_blueprint(_posting_bp)
+app.register_blueprint(_help_bp)
 
 
 # ── Serve ─────────────────────────────────────────────────────────────────────
@@ -1414,6 +1428,11 @@ def run() -> None:
                   "http://127.0.0.1:%s with STUDIO_DASHBOARD_HOST unset, or run worker.py --add-user).",
                   DASHBOARD_HOST, DASHBOARD_PORT)
         return
+    try:
+        import usage_report
+        usage_report.token()  # the weekly report's key, made on first start (Studio/report_token, 0600)
+    except OSError as e:
+        log.warning("Couldn't make the weekly report's key: %s", e)
     from waitress import serve
     log.info("Dashboard on http://%s:%s", DASHBOARD_HOST, DASHBOARD_PORT)
     for attempt in range(30):  # after an update restart, the old worker may still hold the port briefly

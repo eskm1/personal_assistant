@@ -25,7 +25,7 @@ HERE = Path(__file__).resolve().parent
 PLANNER = HERE / "cloud" / "planner"
 WEB = HERE / "web"
 # Review's /static/ serves these from the planner's folder (planner_site.py): one copy of each.
-SHARED = {"shell.js", "shell.css", "theme.css", "post-ui.js", "post-ui.css"}
+SHARED = {"shell.js", "shell.css", "theme.css", "post-ui.js", "post-ui.css", "help.js", "help.css", "capture.js"}
 
 TEXT = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml"}
 TYPES = {**TEXT, ".woff2": "font/woff2", ".png": "image/png", ".ico": "image/x-icon", ".webp": "image/webp",

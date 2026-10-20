@@ -102,6 +102,10 @@ input[type=checkbox], input[type=radio], input[type=range] { accent-color: var(-
 .btn:hover:not(:disabled) { background: var(--um-paper-mid); color: var(--um-ink); }
 .btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled, .btn[aria-disabled=true] { opacity: .45; cursor: default; }
+/* A control that can't act (aria-disabled, so a tap can say why: shell.js): no hover or press look. */
+.btn[aria-disabled=true] { opacity: .45 !important; }
+.btn[aria-disabled=true]:active { transform: none !important; }
+.icon-btn[aria-disabled=true], .head-link[aria-disabled=true], .nav[aria-disabled=true] { opacity: .35; }
 .btn.primary { background: var(--um-ink); border-color: var(--um-ink); color: var(--um-paper); }
 .btn.primary:hover:not(:disabled) { background: var(--um-ink); color: var(--um-paper); opacity: .9; }
 .btn.act { background: var(--act-fill); border-color: var(--act-fill); color: #fff; font-weight: 600; }
