@@ -16,6 +16,31 @@ from settings import EPIDEMIC_SOUND_API_KEY, EPIDEMIC_SOUND_MCP_URL, MUSIC_ACCOU
 PROTOCOL_VERSION = "2025-06-18"
 
 
+# Bryan's music taste (2026-10-20), kept in Studio/music_taste.json so it can grow; this is the start.
+TASTE = {
+    "like": ["Carefree Morning by Rebecca Mardal", "Oh by Sulu", "flyttfågel by bomull"],
+    "avoid": ["Streamer by Bonkers Beat Club (too jarring)", "Run It Back (Instrumental Version) by Trinity"],
+    "summary": "Soft, warm and unhurried: gentle acoustic or light electronic, airy, low-key, nothing that "
+               "competes with the voice. No hard beats, drops, hype, trap or busy synths.",
+}
+
+
+def taste() -> dict:
+    import settings
+    path = settings.ROOT / "music_taste.json"
+    try:
+        return {**TASTE, **json.loads(path.read_text(encoding="utf-8"))}
+    except (OSError, ValueError):
+        return TASTE
+
+
+def taste_brief() -> str:
+    t = taste()
+    return (f"Bryan's taste: {t['summary']} Tracks he likes (find music that feels like these): "
+            f"{'; '.join(t['like'])}. Tracks he doesn't want (never these, nor anything like them): "
+            f"{'; '.join(t['avoid'])}.")
+
+
 # An Epidemic Sound track page pasted into a note: epidemicsound.com/music/tracks/<id>/
 TRACK_LINK = re.compile(r"https?://(?:www\.)?epidemicsound\.com/(?:[a-z]{2}/)?music/tracks/([A-Za-z0-9-]+)/?", re.I)
 
@@ -209,6 +234,7 @@ def find_track(brief: str, seconds: float, out_dir, client=None, es: "EpidemicSo
 
     track = _tool_loop(
         f"Find one Epidemic Sound music track for a {seconds:.0f}-second Instagram Reel. Brief: {brief}\n\n"
+        f"{taste_brief()} (A brief that names one exact track overrides the taste.)\n\n"
         "Search the catalogue, pick the best fit (instrumental, works under speech), and get a download "
         "link for an MP3 of it. If the tools can make a version edited to the Reel's length, use that "
         "version. When done, answer with the track's details and the download URL exactly as the tools "
@@ -226,7 +252,7 @@ def shortlist(brief: str, seconds: float, count: int = 4, client=None, es: "Epid
     """A few candidate tracks for the team to listen to and pick from (nothing downloaded)."""
     return _tool_loop(
         f"Shortlist {count} Epidemic Sound tracks for a planned {seconds:.0f}-second Instagram Reel. "
-        f"Brief: {brief}\n\nSearch the catalogue and pick {count} different options that fit "
+        f"Brief: {brief}\n{taste_brief()}\n\nSearch the catalogue and pick {count} different options that fit "
         "(instrumental, works under speech; vary them a little so the team has a real choice). For each, "
         "give a preview or stream URL and the track's Epidemic Sound page URL exactly as the tools "
         "returned them (\"\" if the tools give none), its BPM (0 if unknown), and one line on why it fits. "

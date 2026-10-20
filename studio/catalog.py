@@ -393,6 +393,9 @@ def connect(db_path: Path = CATALOG_DB) -> sqlite3.Connection:
         for name, sql_type in columns.items():
             if name not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
+    # Rejected drafts whose files were removed before that moved them to Archived (2026-10-20).
+    conn.execute("""UPDATE productions SET archived_at = removed_at
+                    WHERE status = 'rejected' AND removed_at IS NOT NULL AND archived_at IS NULL""")
     conn.commit()
     return conn
 

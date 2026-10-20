@@ -111,8 +111,9 @@ def remove_production(conn, row) -> int:
             freed += size
         except OSError as e:
             log.warning("Clean-up: couldn't delete %s: %s", p, e)
-    conn.execute("""UPDATE productions SET removed_at = ?, removed_bytes = COALESCE(removed_bytes, 0) + ?, video_path = NULL
-                    WHERE id = ?""", (catalog.now(), freed, row["id"]))
+    # With its files gone there's nothing left to look at: it moves to Archived.
+    conn.execute("""UPDATE productions SET removed_at = ?, removed_bytes = COALESCE(removed_bytes, 0) + ?, video_path = NULL,
+                        archived_at = COALESCE(archived_at, ?) WHERE id = ?""", (catalog.now(), freed, catalog.now(), row["id"]))
     conn.commit()
     return freed
 
