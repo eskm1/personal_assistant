@@ -8,9 +8,9 @@ import {
   nameOf, state, prepShots, progress, bestTake, takeRetake, retakeBadge, signPaths, stillUrl,
   takePaths, jobView, jobActive, kickDevelop, laptopWait, httpUrl, httpsUrl, openModal, closeModal, syncInert,
   missingTable, dayLabel, folderLineHTML, pageMode, PHONE, POST_TYPES, POST_TYPE, KIND_INFO, kindDot, sentence,
-  isCarousel, REEL_FORMATS, schema, liveClips, isFilmed, todayISO, shortDay, askFirst, mark, offWhy } from "./core.js";
+  isCarousel, REEL_FORMATS, schema, liveClips, isFilmed, todayISO, shortDay, askFirst, mark, offWhy, setCall } from "./core.js";
 import { plan, selectProject } from "./board.js";
-import { uploadButtonsHTML, rememberShot, canUpload } from "./upload.js";
+import { uploadButtonsHTML, rememberShot, canUpload, shotUploadState } from "./upload.js";
 import { openSchedule, canSchedule } from "./posting.js";
 import {
   prepSlides, slidePaths, slidesMainHTML, writeSlidesHTML, saveSlideField, slidesClick, slidesLocked,
@@ -150,13 +150,16 @@ export async function loadIdea(force = false) {
   }
   // Phases and site days (for "Phase" / "Day" on each shot) come with a database update.
   const optional = (q) => q.then(must).catch((err) => (missingTable(err) ? null : []));
-  const [arcs, phases, days, post] = await Promise.all([
+  const shotIds = (idea.shots || []).map((s) => s.id);
+  const [arcs, phases, days, post, received] = await Promise.all([
     sb.from("arcs").select("id,title,position").eq("project_id", idea.project_id).order("position").order("id").then(must),
     optional(sb.from("phases").select("id,name,position").eq("project_id", idea.project_id).order("position").order("id")),
     optional(sb.from("site_days").select("id,day,phase_id").eq("project_id", idea.project_id).order("day")),
     // Its Instagram post (the posting update): the newest that isn't cancelled.
     optional(sb.from("posts").select("id,production_id,state,scheduled_at,posted_at,permalink,error").eq("idea_id", idea.id)
       .neq("state", "cancelled").order("id", { ascending: false }).limit(1)),
+    // Footage that reached Studio and is being checked (not on its shot yet): "Uploaded · Studio is checking it".
+    shotIds.length ? optional(sb.from("shot_uploads").select("shot_id").in("shot_id", shotIds).eq("state", "received")) : [],
   ]);
   if (stale()) {
     if (force && view.id === id) view.forceNext = true;
@@ -169,6 +172,7 @@ export async function loadIdea(force = false) {
   d.phases = phases;
   d.days = days;
   d.post = (post || [])[0] || null;
+  d.received = new Set((received || []).map((r) => r.shot_id));
   for (const s of d.shots) rememberShot(s.id, `${s.description} (for: ${d.title})`);
   const up = [], down = [];
   let mine = 0;
@@ -208,6 +212,9 @@ const WIDE = window.matchMedia("(min-width: 861px)");
 const twoCol = () => WIDE.matches;
 const inner = () => $("#viewer .viewer-inner");
 WIDE.addEventListener("change", () => { if (viewerOpen() && view.d) render(true); });
+// An upload to one of its shots started, finished or was checked (upload.js): the shot's line and the button.
+// After the tray has painted (the press answers first).
+document.addEventListener("studio:uploads", () => { setTimeout(() => { if (viewerOpen() && view.d) render(); }, 60); });
 
 // Re-render what changed; never under someone's unsaved typing.
 function render(force = false) {
@@ -217,7 +224,8 @@ function render(force = false) {
   // The stills' addresses too: they're signed again now and then.
   const sig = JSON.stringify([d, jobs, state.laptop?.last_seen ? Math.floor(Date.parse(state.laptop.last_seen) / 60e3) : 0,
     state.laptop?.info?.concepts?.on === true, twoCol(),
-    d.shots.map((s) => s.takes.map((t) => stillUrl(...takePaths(t)))), d.slides.map((x) => stillUrl(x.image?.thumb_path))]);
+    d.shots.map((s) => s.takes.map((t) => stillUrl(...takePaths(t)))), d.slides.map((x) => stillUrl(x.image?.thumb_path)),
+    d.shots.map((s) => upState(s, d))]);
   if (!force && sig === view.panelSig) return;
   if (!force && typingIn(inner())) { view.pending = true; return; }
   renderPanel();
@@ -363,8 +371,16 @@ function dueDay(s, d) {
 }
 const takeLength = (t) => (t && t.start != null && t.end != null ? Number(t.end) - Number(t.start) : Number(t?.clips?.duration) || 0);
 // "Got it · 0:04", "To film · Thu 23", "Filmed · waiting for the upload", "Retake".
+// Footage on its way to a shot from here, or at Studio being checked: the shot isn't "To film" any more.
+function upState(s, d) {
+  if (s.state === "got") return "";
+  return shotUploadState(s.id) || (d.received?.has(s.id) ? "received" : "");
+}
 function shotStatus(s, d) {
   if (s.state === "got") { const len = takeLength(bestTake(s)); return `Got it${len > 0 ? ` · ${mmss(len)}` : ""}`; }
+  const up = upState(s, d);
+  if (up === "uploading") return "Uploading…";
+  if (up === "received") return "Uploaded · Studio is checking it";
   if (s.state === "retake") return "Retake";
   if (s.state === "filmed") return "Filmed · waiting for the upload";
   const day = dueDay(s, d);
@@ -512,7 +528,8 @@ function nextStep(d) {
     return { primary: `<button class="btn act lg" id="refine-go-main" ${offWhy(writing ? "Claude is drafting the shots now. About a minute; this page updates by itself." : "")}>${writing ? "Drafting the shots…" : "Storyboard it with Claude"}</button>`,
       hint: writing ? "Claude is writing the shots. About a minute." : "Claude plans the shots to film. A few cents." };
   }
-  const todo = d.shots.findIndex((s) => !isFilmed(s));
+  // The next shot to film: not filmed, and nothing uploaded to it from here or being checked at Studio.
+  const todo = d.shots.findIndex((s) => !isFilmed(s) && !upState(s, d));
   if (todo >= 0) {
     const s = d.shots[todo], n = todo + 1;
     const film = canUpload()
@@ -602,20 +619,24 @@ function callHTML(d) {
   const owner = isOwner();
   const v = d.votes;
   const who = votesText(v);
-  // Go / Park; pressing the one that's on puts it back to undecided.
-  const seg = owner
+  // Go / Park; pressing the one that's on puts it back to undecided. The team too (Bryan, 2026-10-20), on an
+  // idea that isn't dismissed or made; Dismiss and Make this stay his.
+  const can = owner || (d.status === "new" && !d.production);
+  const hint = view.callHint && view.callHint.id === d.id && view.callHint.until > Date.now() ? view.callHint.text : "";
+  const seg = can
     ? `<div class="seg decision-seg" role="group" aria-label="Your call">${["go", "parked"].map((k) => {
       const on = d.decision === k;
-      return `<button type="button" data-plan-decision="${on ? "proposed" : k}" class="${on ? `on ${k}` : ""}" aria-pressed="${on}" ${on ? `title="Press again to undo"` : ""}>${k === "go" ? "Go" : "Park"}</button>`;
+      return `<button type="button" data-plan-decision="${on ? "proposed" : k}" data-k="${k}" class="${on ? `on ${k}` : ""}" aria-pressed="${on}" ${on ? `title="Press again to undo"` : ""}>${k === "go" ? "Go" : "Park"}</button>`;
     }).join("")}</div>`
     : `<span class="call-now">${esc(DECISION[d.decision] || d.decision)}</span>`;
   return `<div class="idea-call">
-    <span class="um-label">${owner ? "Your call" : `${esc(ownerName())}'s call`}</span>${seg}
+    <span class="um-label">${can ? "Your call" : `${esc(ownerName())}'s call`}</span>${seg}
+    ${hint ? `<span class="call-hint" role="status">${esc(hint)}</span>` : ""}
     <span class="votes">
       <button class="vote${v.mine === 1 ? " on" : ""}" data-vote="1" aria-pressed="${v.mine === 1}" title="Worth making" aria-label="Worth making, ${v.up.length} so far">👍 ${v.up.length}</button>
       <button class="vote${v.mine === -1 ? " on down" : ""}" data-vote="-1" aria-pressed="${v.mine === -1}" title="Not worth it" aria-label="Not worth it, ${v.down.length} so far">👎 ${v.down.length}</button>
     </span>
-    ${who ? `<span class="muted small call-who">${esc(who)}</span>` : owner ? "" : `<span class="muted small call-who">Vote to tell ${esc(ownerName())} what you think.</span>`}
+    ${who ? `<span class="muted small call-who">${esc(who)}</span>` : can ? "" : `<span class="muted small call-who">Vote to tell ${esc(ownerName())} what you think.</span>`}
   </div>`;
 }
 
@@ -793,7 +814,12 @@ function openDetails() {
 function renderDetails() {
   const body = $("#modal-body");
   if (!view.d || !detailsOpen() || typingIn(body)) return;
+  // The control that had the focus keeps it (the sheet drawn again under it used to drop it to the page).
+  const was = body.contains(document.activeElement) ? document.activeElement : null;
+  const key = was && (was.id ? `#${CSS.escape(was.id)}`
+    : [...was.attributes].filter((a) => a.name.startsWith("data-")).map((a) => `[${a.name}="${CSS.escape(a.value)}"]`).join(""));
   keepDrafts(body, () => { body.innerHTML = detailsHTML(view.d); });
+  if (key && !body.contains(document.activeElement)) body.querySelector(key)?.focus({ preventScroll: true });
   fitTitle();
 }
 
@@ -1050,8 +1076,20 @@ inner().addEventListener("click", async (e) => {
         must(await sb.from("ideas").update({ status: "new" }).eq("id", d.id));
         toast("Back on the board.");
       } else {
-        must(await sb.from("ideas").update({ decision: k }).eq("id", d.id));
-        if (k !== "proposed") mark("idea_decided", { decision: k, from: "idea" });
+        // The buttons answer at once; the page is drawn again from the database after (or put back if refused).
+        for (const b of t.closest(".decision-seg")?.querySelectorAll("button") || []) {
+          const on = b === t && k !== "proposed";
+          b.classList.toggle("on", on);
+          b.classList.toggle("go", on && k === "go");
+          b.classList.toggle("parked", on && k === "parked");
+          b.setAttribute("aria-pressed", String(on));
+          if (b.dataset.k) b.dataset.planDecision = on ? "proposed" : b.dataset.k;   // a second tap undoes, as drawn
+        }
+        try { await setCall(d.id, { decision: k }); } catch (err) { render(true); throw err; }
+        if (k !== "proposed") mark("idea_decided", { decision: k, from: "idea", team: !isOwner() });
+        // No tooltips on a phone: the line beside the buttons says how to undo, for a few seconds.
+        view.callHint = { id: d.id, until: Date.now() + 6000,
+          text: { go: "Go. Tap Go again to undo.", parked: "Parked. Tap Park again to undo.", proposed: "Back to undecided." }[k] };
         toast({ go: "Marked Go.", parked: "Parked.", proposed: "Back to undecided." }[k]);
       }
     } else if (ds.vote) {
@@ -1092,7 +1130,7 @@ inner().addEventListener("click", async (e) => {
     } else return;
     await loadIdea(true);
   } catch (err) {
-    toast(`Couldn't do that: ${err.message}`);
+    toast(`Couldn't do that: ${err.message}`, 6000);
   }
 });
 

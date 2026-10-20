@@ -203,6 +203,19 @@ export function mark(name, detail) {
   if (window.StudioUsage) window.StudioUsage.mark(name, detail);
   else (window.__su = window.__su || []).push([name, detail]);
 }
+// Go / Park / undecided on an idea: Bryan, and since 2026-10-20 the team too ("Michelle can Go/Park").
+// Before the database update that lets the team (migration 20261027000000_team_go_park) the database
+// refuses a team member's call: say so plainly, never a silent failure.
+export const callRefusedText = () => `Go and Park for the team need a one-time Studio update that isn't in yet. Until then ${ownerName()} makes the call: your vote tells him.`;
+export async function setCall(id, values) {
+  const { data, error } = await sb.from("ideas").update(values).eq("id", id).select("id");
+  if (error) {
+    if (!isOwner() && /42501|only the owner/i.test(`${error.code || ""} ${error.message || ""}`)) throw new Error(callRefusedText());
+    throw new Error(error.message || String(error));
+  }
+  if (!data?.length) throw new Error(isOwner() ? "it's gone (someone may have deleted it)" : callRefusedText());
+  return data;
+}
 // A control that can't act: aria-disabled (so a tap still arrives) and why (shell.js shows it). "" = it can act.
 export const offWhy = (why) => (why ? `aria-disabled="true" data-why="${esc(why)}"` : "");
 
@@ -286,11 +299,32 @@ export async function invoke(name, opts = {}) {
   return data;
 }
 
+// A new box each time (changing the text of a centred box moved it, and that counted as the page
+// jumping). action: { label, href } or { label, run } puts a button on it ("Open"), and it stays longer.
 let toastTimer;
-export function toast(text, ms = 3200) {
-  const el = $("#toast");
+export function toast(text, ms = 3200, action = null) {
+  const old = $("#toast");
+  const el = old.cloneNode(false);
+  el.removeAttribute("style");
   el.textContent = text;
+  if (action) {
+    const b = document.createElement(action.href ? "a" : "button");
+    b.className = "toast-act";
+    b.textContent = action.label;
+    if (action.href) b.href = action.href; else b.type = "button";
+    b.addEventListener("click", () => {
+      el.hidden = true;
+      if (action.mark) mark(action.mark);
+      action.run?.();
+    });
+    el.append(" ", b);
+    ms = Math.max(ms, 6000);
+    // Not while a finger or the cursor is on it.
+    el.addEventListener("pointerenter", () => clearTimeout(toastTimer));
+    el.addEventListener("pointerleave", () => { toastTimer = setTimeout(() => { el.hidden = true; }, 2500); });
+  }
   el.hidden = false;
+  old.replaceWith(el);
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.hidden = true; }, ms);
 }

@@ -131,13 +131,19 @@ async function api(path, body) {
   return data;
 }
 
+// A new box each time, held where it first lands: changing the text (or the decision bar coming and going
+// under it) used to move it, and that moved the page's layout score too.
 let toastTimer;
-function toast(text) {
-  const el = $("#toast");
+function toast(text, ms = 2800) {
+  const old = $("#toast");
+  const el = old.cloneNode(false);
+  el.removeAttribute("style");
   el.textContent = text;
   el.hidden = false;
+  old.replaceWith(el);
+  el.style.bottom = getComputedStyle(el).bottom;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 2800);
+  toastTimer = setTimeout(() => { el.hidden = true; }, ms);
 }
 
 // Posting to Instagram: the dialogs shared with Plan (/static/post-ui.js), with this page's cookie.
@@ -186,12 +192,16 @@ function chips(item, short = false) {
   if (item.brand && !oneBrand()) out.push(`<span class="chip ${esc(item.brand)}">${esc(BRAND[item.brand] || item.brand)}</span>`);
   if (item.kind === "production" && item.version) out.push(`<span class="chip">v${esc(item.version)}</span>`);
   if (item.open_notes) out.push(`<span class="chip notes">${esc(item.open_notes)} note${item.open_notes > 1 ? "s" : ""}</span>`);
+  // A tile shows one state: Scheduled (or Couldn't post) is newer than Approved, so it takes its place.
+  let posting = false;
   if (item.post?.state === "scheduled" || item.post?.state === "publishing") {
     const when = window.StudioPost?.whenText(item.post.at) || "";
     out.push(`<span class="chip wait" title="${esc(`On Instagram ${when}`)}">Scheduled${short ? "" : ` ${esc(when.split(",")[0])}`}</span>`);
-  } else if (item.post?.state === "failed") out.push(`<span class="chip failed">Couldn't post</span>`);
+    posting = true;
+  } else if (item.post?.state === "failed") { out.push(`<span class="chip failed">Couldn't post</span>`); posting = true; }
   const status = item.kind === "clip" && item.status === "tagged" ? (item.reviewed ? "Checked" : null)
-    : (short && STATUS_SHORT[item.status]) || STATUS[item.status];
+    : short && posting && item.status === "approved" ? null
+      : (short && STATUS_SHORT[item.status]) || STATUS[item.status];
   if (item.kind === "clip" && item.usable === 0) out.push(`<span class="chip failed">Unusable</span>`);
   if (item.kind === "clip") out.push(retakeBadge(item));
   if (status) out.push(`<span class="chip status ${esc(item.status)}">${esc(status)}</span>`);
@@ -292,7 +302,8 @@ function renderAccount() {
   if (!me) return;
   $("#brand-filter").hidden = oneBrand();
   if (oneBrand()) state.brand = "";
-  $("#account-btn").innerHTML = `<span class="avatar">${esc((me.name || "?").slice(0, 1).toUpperCase())}</span><span class="account-name">${esc(me.name)}</span>`;
+  $("#account-btn").innerHTML = `<span class="avatar" aria-hidden="true">${esc((me.name || "?").slice(0, 1).toUpperCase())}</span><span class="account-name">${esc(me.name)}</span>`;
+  store("studio.meName", me.name || "");
   $("#account-menu").innerHTML = `<div class="menu-head"><strong>${esc(me.name)}</strong>
       <span class="muted small">${esc(me.email)} · ${isOwner() ? "Owner" : "Team"}</span></div>
     ${isOwner() ? `<button role="menuitem" data-account="team">Team…</button>` : ""}
@@ -333,6 +344,7 @@ $("#account-menu").addEventListener("click", async (e) => {
     } catch (err) { toast(`Couldn't start the update: ${err.message}`); }
   }
   else if (btn.dataset.account === "signout") {
+    store("studio.meName", "");
     // Out of Plan too: its sign-in on this address lives in this browser's storage.
     try {
       for (const key of Object.keys(localStorage)) if (/^sb-.+-auth-token$/.test(key)) localStorage.removeItem(key);
@@ -468,15 +480,22 @@ function visible(stage) {
 const ideasHere = () => !!state.ideasHere;
 const shownStage = (key) => key !== "plan" && (key !== "ideas" || ideasHere());
 
+// On a phone the strip shows To review, Done and the Library (what the weekly walks use); the stages that are
+// the machine at work sit under More (Bryan approved, 2026-10-20). The stage you're on always shows.
+const EXTRA_STAGES = new Set(["producing", "ideas", "ingesting", "cloud"]);
 function renderTabs() {
   // Plan (the local board) is the top bar's Plan, not one of these.
   if (state.stage === "ideas" && !ideasHere()) state.stage = "library";
-  $("#tabs").innerHTML = STAGES.filter((s) => shownStage(s.key)).map((s) => {
+  const stages = STAGES.filter((s) => shownStage(s.key));
+  const extra = stages.filter((s) => EXTRA_STAGES.has(s.key));
+  $("#tabs").innerHTML = stages.map((s) => {
     const n = visible(s.key).length;
     const hot = s.key === "review" && n ? " hot" : "";
     const on = s.key === state.stage;
-    return `<button data-stage="${s.key}" class="${on ? "on" : ""}"${on ? ` aria-current="page"` : ""}>${s.label}<span class="count${hot}">${n}</span></button>`;
-  }).join("");
+    return `<button data-stage="${s.key}" class="${[on ? "on" : "", EXTRA_STAGES.has(s.key) ? "extra" : ""].filter(Boolean).join(" ")}"${on ? ` aria-current="page"` : ""}>${s.label}<span class="count${hot}">${n}</span></button>`;
+  }).join("") + (extra.length ? `<button type="button" class="tab-more" id="tabs-more" aria-haspopup="menu" aria-expanded="${!$("#tabs-menu").hidden}" aria-controls="tabs-menu">More<svg class="chev" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6"/></svg></button>` : "");
+  $("#tabs-menu").innerHTML = extra.map((s) => `<button role="menuitemradio" aria-checked="${s.key === state.stage}" data-stage="${s.key}">
+    <span class="grow">${esc(s.label)}</span><span class="count">${visible(s.key).length}</span></button>`).join("");
   $("#subnav").hidden = state.stage === "plan";
   shell?.setCurrent(state.stage === "plan" ? "plan" : "review");
   shell?.setBadge(state.items.filter((i) => i.stage === "review").length);
@@ -662,8 +681,10 @@ async function sync(pending) {
 
 setInterval(() => { if (state.lastSync) renderStatus(); }, 1000);
 
-// Hover previews: play a muted loop of the video under the pointer.
-$("#grid").addEventListener("mouseover", (e) => {
+// Hover previews: play a muted loop of the video under a mouse pointer. Not for a finger (a tap sends
+// mouseover too, and that started downloading the whole video the moment a draft was opened).
+$("#grid").addEventListener("pointerover", (e) => {
+  if (e.pointerType !== "mouse") return;
   const tile = e.target.closest(".tile");
   if (!tile || tile.classList.contains("playing")) return;
   const item = state.list[Number(tile.dataset.index)];
@@ -678,12 +699,22 @@ $("#grid").addEventListener("mouseover", (e) => {
   tile.classList.add("playing");
   video.play().catch(() => {});
 });
-$("#grid").addEventListener("mouseout", (e) => {
+$("#grid").addEventListener("pointerout", (e) => {
   const tile = e.target.closest(".tile");
   if (!tile || tile.contains(e.relatedTarget)) return;
   tile.classList.remove("playing");
   tile.querySelector("video")?.pause();
 });
+// Leaving the list: the previews stop downloading (a draft's page shouldn't share the line with them).
+function stopPreviews() {
+  for (const v of document.querySelectorAll("#grid video")) {
+    v.pause();
+    v.removeAttribute("src");
+    v.load();
+    v.closest(".tile")?.classList.remove("playing");
+    v.remove();
+  }
+}
 $("#grid").addEventListener("click", (e) => {
   if (e.target.closest("[data-tidy]")) return;  // a clean-up action under a tile (handled below)
   const tile = e.target.closest(".tile");
@@ -739,9 +770,21 @@ $("#grid").addEventListener("contextmenu", (e) => {
   if (tidy.pressFire) { e.preventDefault(); tidy.pressFire(); return; }
   if (tidy.select || tidy.pressed) e.preventDefault();
 });
-$("#tabs").addEventListener("click", (e) => {
+function setTabsMenu(open) {
+  $("#tabs-menu").hidden = !open;
+  $("#tabs-more")?.setAttribute("aria-expanded", String(open));
+  if (open) $("#tabs-menu [aria-checked=true], #tabs-menu button")?.focus();
+}
+document.addEventListener("click", (e) => { if (!e.target.closest?.("#tabs-more, #tabs-menu")) setTabsMenu(false); });
+$("#tabs-menu").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.stopPropagation(); setTabsMenu(false); $("#tabs-more")?.focus(); }
+});
+for (const id of ["#tabs", "#tabs-menu"]) $(id).addEventListener("click", (e) => {
+  if (e.target.closest("#tabs-more")) { setTabsMenu($("#tabs-menu").hidden); return; }
   const btn = e.target.closest("button[data-stage]");
   if (!btn) return;
+  setTabsMenu(false);
+  if (id === "#tabs-menu") mark("stage_menu", { stage: btn.dataset.stage });
   state.stage = btn.dataset.stage;
   store("studio.stage", state.stage);
   // The address names the stage, so a reload (or Studio's own restart) comes back here.
@@ -1533,6 +1576,7 @@ function openAny(item) {
 
 async function openItem(item) {
   if (!item) return;
+  stopPreviews();
   const fresh = !viewerOpen();
   if (fresh) rememberList();
   $("#player-frame").querySelectorAll("video, audio").forEach((m) => m.pause());
@@ -1546,6 +1590,14 @@ async function openItem(item) {
   $("#viewer").scrollTop = 0;
   if (!isDetail(item.kind)) { $("#detail-head").innerHTML = ""; $("#tile-meta").innerHTML = ""; renderDecisionBar(); }
   syncPage();
+  // The page's top line now, not after the draft has loaded: drawn later, it pushed the whole page down.
+  if (isDetail(item.kind) || phone()) renderHead();
+  // Its title from the list until the page loads, in the place the page puts it (so nothing moves after).
+  if (isDetail(item.kind) && String(state.detail?.id) !== String(item.id)) {
+    $("#tile-meta").innerHTML = "";   // the last draft's box under the video goes, rather than moving
+    $("#panel").innerHTML = titleHTML(item, [item.version ? `v${item.version}` : "", item.duration ? mmss(item.duration) : "",
+      item.video && !isCarousel(item) ? "tap to play" : ""].filter(Boolean).join(" · "));
+  }
   if (phone()) window.scrollTo(0, 0);
   renderPlayer(item);
   await loadDetail();
@@ -1616,7 +1668,9 @@ function renderTile(item, video, original, thumb) {
   const frame = $("#player-frame");
   const useOriginal = original && recall("studio.original") === "1";
   const what = item.kind === "production" ? "draft" : "clip";
-  frame.innerHTML = `<video playsinline preload="metadata" src="${esc(useOriginal ? original : video)}" ${thumb ? `poster="${esc(thumb)}"` : ""}></video>
+  // preload="none": nothing is downloaded until Play. "metadata" kept a request open that pulled megabytes in
+  // the background (a draft is 5-6 MB), and on 4G every other press (Schedule…) queued behind it.
+  frame.innerHTML = `<video playsinline preload="none" src="${esc(useOriginal ? original : video)}" ${thumb ? `poster="${esc(thumb)}"` : ""}></video>
     <button class="tile-play" id="tile-play" aria-label="Play the ${what}"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg></button>
     ${item.duration ? `<span class="tile-time">${esc(mmss(item.duration))}</span>` : ""}
     ${original ? `<button class="quality${useOriginal ? " on" : ""}" id="quality" title="${esc(QUALITY_TIP)}">${qualityLabel(item, useOriginal)}</button>` : ""}`;
@@ -2084,7 +2138,7 @@ async function voiceClick(e) {
 $("#modal").addEventListener("input", (e) => { if (e.target.id === "voice-text") e.target.dataset.dirty = "1"; });
 
 function noteListHTML(notes, currentVersion, isProduction) {
-  if (!notes.length) return `<p class="muted small">No notes yet.</p>`;
+  if (!notes.length) return `<p class="muted small" data-no-notes>No notes yet.</p><ul class="note-list" hidden></ul>`;
   return `<ul class="note-list">${notes.map((n) => {
     const tags = [
       n.author,
@@ -2404,7 +2458,7 @@ function postingHTML(d) {
   const when = (iso) => window.StudioPost?.whenText(iso) || "";
   let line = "", btns = "", extra = "";
   if (!post) {
-    line = ps.why_not ? `<span class="bad-text">${esc(ps.why_not)}</span>` : "Not scheduled yet.";
+    line = ps.why_not ? `<span class="bad-text">${esc(ps.why_not)}</span>` : owner ? "Not scheduled yet." : "Not scheduled yet. Bryan schedules it.";
     if (!ps.connected) extra = `<p class="muted small">Instagram isn't connected yet${owner ? `: <button class="btn-link" data-ig-connect>connect it</button>` : ""}.</p>`;
     // A Schedule that can't act yet says why (shell.js), instead of not being there.
     const why = ps.why_not || (!ps.connected ? "Connect Instagram first: tap connect it, just above. Then Schedule works." : "");
@@ -2495,9 +2549,11 @@ function productionPageHTML(d) {
     ${selfFixHTML(d)}
     ${fixesHTML(d)}
     ${worksHTML(d)}
-    <section class="d-sec"><h2>Your notes for the editor${notesNow ? ` <span class="count-pill">${notesNow}</span>` : ""}</h2>
+    <section class="d-sec" id="notes-sec"><h2>Your notes for the editor${notesNow ? ` <span class="count-pill">${notesNow}</span>` : ""}</h2>
       ${noteListHTML(d.notes, d.version, true)}
-      ${composerRowHTML("What should change? e.g. \"Cut the first two seconds\"")}
+      ${d.video ? `<div class="row note-jump-row"><button class="btn" id="note-jump">Add a note at a moment</button></div>
+        <p class="muted small">Play, pause where it needs a change, and write it in the box under the video: the note is pinned to that moment.</p>`
+        : composerRowHTML("What should change? e.g. \"Cut the first two seconds\"")}
     </section>
     <section class="folds">${folds}</section>`;
 }
@@ -2674,6 +2730,8 @@ function renderTileMeta(d) {
         <input id="quick-note" maxlength="2000" autocomplete="off" enterkeyhint="send" placeholder="Note at ${esc(at)}"></label>
       <button class="btn" id="quick-add">Add</button>
     </div>
+    ${d.kind === "production" && isOwner() ? `<label class="check small quick-remember" title="Adds it to the playbook the editor follows on every future edit"><input type="checkbox" id="note-remember"> Remember for future edits</label>` : ""}
+    <div class="quick-status small" id="quick-status" aria-live="polite"></div>
     <div class="tile-links"><button class="link" id="play-full">Play full screen</button>
       <button class="link watch-close" id="watch-close">Close video</button></div>` : ""}`;
 }
@@ -2703,16 +2761,24 @@ function renderDecisionBar() {
   const show = detailMode() && d?.kind === "production" && d.status === "ready";
   bar.hidden = !show;
   if (!show) { bar.innerHTML = ""; return; }
+  const notes = d.notes.filter((x) => x.status === "open").length, fixes = readFixes(d);
+  const addNote = `<button class="btn bar-btn" id="decide-note" title="Pause where it needs a change and say what. The editor works from your notes.">Add a note</button>`;
+  // The team sends it back with notes (Bryan, 2026-10-20); approving and rejecting stay his.
   if (!isOwner()) {
-    bar.innerHTML = `<p class="bar-note"><strong>Bryan decides.</strong> He approves, rejects or sends it back. Your notes go to him and the editor.</p>`;
+    bar.innerHTML = `<p class="bar-note">${notes ? `<strong>Bryan approves it.</strong> Your notes and Studio's fixes go to the editor.`
+      : `<strong>Bryan approves it.</strong> Add a note to send it back to the editor.`}</p>
+      ${notes ? `<button class="btn bar-btn" id="decide-changes">${esc(sendLabel(notes, fixes))}</button>` : addNote}`;
     return;
   }
-  const n = d.notes.filter((x) => x.status === "open").length + readFixes(d);
-  const send = phone() ? `Send back (${n})` : `Send back with ${plural(n, "fix", "fixes")}`;
   bar.innerHTML = `${phone() ? "" : `<button class="btn bar-btn ghost" id="decide-reject">Reject</button>`}
-    ${n ? `<button class="btn bar-btn" id="decide-changes">${esc(send)}</button>`
-      : `<button class="btn bar-btn" id="decide-note" title="Pause where it needs a change and say what. The editor works from your notes.">Add a note</button>`}
+    ${notes + fixes ? `<button class="btn bar-btn" id="decide-changes">${esc(sendLabel(notes, fixes))}</button>` : addNote}
     <button class="btn bar-btn good" id="decide-approve">Approve</button>`;
+}
+// "Send back with 3 fixes"; with only Studio's own fixes it says so (they aren't notes anyone wrote).
+function sendLabel(notes, fixes) {
+  const n = notes + fixes;
+  if (!notes) return phone() ? `Send back (${plural(fixes, "fix", "fixes")})` : `Send back with Studio's ${plural(fixes, "fix", "fixes")}`;
+  return phone() ? `Send back (${n})` : `Send back with ${plural(n, "fix", "fixes")}`;
 }
 
 // Notes are pinned to where the video is: the button says when.
@@ -2904,8 +2970,17 @@ async function detailClick(e) {
       await loadDetail();
       sync();
       toast("Note removed.");
+    } else if (e.target.closest("[data-quick-undo]")) {
+      const b = e.target.closest("[data-quick-undo]");
+      b.disabled = true;
+      await api(`/api/${state.current.kind}/${state.current.id}/notes/${b.dataset.quickUndo}/delete`, {});
+      quickStatus("Note taken back.");
+      mark("note_undone");
+      await loadDetail();
+      sync();
     } else if (id === "note-add") await addNote();
     else if (id === "quick-add") await addNote("quick-note");
+    else if (id === "note-jump") noteHere();
     else if (id === "watch-close") stopWatching();
     else if (id === "decide-note") noteHere();
     else if (id === "idea-make") {
@@ -2926,7 +3001,7 @@ async function detailClick(e) {
       await openPlanIdea(d.id);
     } else if (id === "decide-changes") {
       await api(`/api/production/${d.id}/decision`, { decision: "changes", caption: $("#caption").value });
-      mark("sent_back", { fixes: readFixes(d) > 0, notes: d.notes.filter((x) => x.status === "open").length });
+      mark("sent_back", { fixes: readFixes(d) > 0, notes: d.notes.filter((x) => x.status === "open").length, team: !isOwner() });
       toast("Sent back for changes. Opening the next one.");
       await nextForReview();
     } else if (id === "decide-approve") {
@@ -2994,24 +3069,76 @@ $("#panel").addEventListener("change", async (e) => {
   if (e.target.id === "adopt-project") fillAdoptArcs().catch(() => {});
 });
 
-// The box under the notes, or the quick one under the video (always pinned to the moment).
+// The quick box under the video (always pinned to the moment), or the box under a clip's or a carousel's notes.
+// At once: the box clears and the note shows in the list, marked "Saving…"; if it doesn't save, it comes off
+// the list and goes back in the box, with why.
 async function addNote(box = "note-body") {
   const input = $(`#${box}`);
+  if (!input) return;
   const body = input.value.trim();
   if (!body) { input.focus(); return; }
   const quick = box === "quick-note";
   const video = player();
   const at = video && (quick || ($("#note-pin")?.checked ?? true)) ? video.currentTime : null;
   const slide = !quick && $("#note-slide") ? Number($("#note-slide").value) || null : undefined;
-  await api(`/api/${state.current.kind}/${state.current.id}/notes`, {
-    body, at_seconds: at, remember: !quick && !!$("#note-remember")?.checked, ...(slide !== undefined ? { slide } : {}),
-  });
+  const rememberBox = $("#note-remember");
+  const remember = !!rememberBox?.checked;
+  const target = { kind: state.current.kind, id: state.current.id };
+  const here = () => state.current && state.current.kind === target.kind && String(state.current.id) === String(target.id);
+  const when = slide ? `slide ${slide}` : mmss(at || 0);
   input.value = "";
+  if (rememberBox) rememberBox.checked = false;
+  const li = pendingNote(body, at, slide);
+  quickStatus(quick ? `Saving the note at ${when}…` : "");
+  let saved;
+  try {
+    saved = await api(`/api/${target.kind}/${target.id}/notes`, {
+      body, at_seconds: at, remember, ...(slide !== undefined ? { slide } : {}),
+    });
+  } catch (err) {
+    li?.remove();
+    if (here()) {
+      const list = $("#panel .note-list");
+      if (list && !list.children.length) {
+        list.hidden = true;
+        if (!$("#panel [data-no-notes]")) list.insertAdjacentHTML("beforebegin", `<p class="muted small" data-no-notes>No notes yet.</p>`);
+      }
+      const again = $(`#${box}`);
+      if (again && !again.value) again.value = body;
+      if (rememberBox && remember) rememberBox.checked = true;
+      quickStatus(quick ? `Couldn't save the note: ${err.message}. It's back in the box.` : "", true);
+    }
+    toast(`Couldn't save the note: ${err.message}. It's back in the box.`);
+    return;
+  }
   mark("note_added", { via: quick ? "quick" : "box" });
-  await loadDetail();
+  if (here() && quick && $("#quick-status")) quickStatus(`Note added at ${when}.`, false, saved?.id);
+  else toast(`Note added at ${when}.`);
+  if (here()) await loadDetail();
   sync();
-  toast(`Note added at ${mmss(at || 0)}.`);
-  $(`#${box}`)?.focus();
+  if (here()) $(`#${box}`)?.focus();
+}
+// The note in the list straight away, before the server answers.
+function pendingNote(body, at, slide) {
+  const list = $("#panel .note-list");
+  if (!list) return null;
+  $("#panel [data-no-notes]")?.remove();
+  list.hidden = false;
+  const li = document.createElement("li");
+  li.className = "open pending";
+  li.innerHTML = `${slide ? slideChip(slide) : timeChip(at)}<span class="note-text"><span class="note-body">${esc(body)}</span><span class="note-meta">Saving…</span></span>`;
+  list.appendChild(li);
+  return li;
+}
+// The line under the quick box: saving, added (with Undo), or why it didn't save.
+let quickTimer = null;
+function quickStatus(text, bad = false, noteId = null) {
+  const el = $("#quick-status");
+  if (!el) return;
+  clearTimeout(quickTimer);
+  el.classList.toggle("bad-text", bad);
+  el.innerHTML = text ? `${esc(text)}${noteId ? ` <button type="button" class="link" data-quick-undo="${esc(noteId)}">Undo</button>` : ""}` : "";
+  if (text && !bad && noteId) quickTimer = setTimeout(() => { if ($("#quick-status")) $("#quick-status").innerHTML = ""; }, 8000);
 }
 
 $("#panel").addEventListener("keydown", (e) => {
@@ -3283,12 +3410,11 @@ function renderPlanPanel() {
   const field = (key, label, ph, rows = 2, max = 1000) => `<div class="field" data-saved-scope>
     <h3><label for="f-${key}">${esc(label)}</label> <span class="saved" aria-live="polite"></span></h3>
     <textarea id="f-${key}" data-idea-field="${key}" rows="${rows}" maxlength="${max}" placeholder="${esc(ph)}">${esc(d[key])}</textarea></div>`;
-  const decision = owner
-    ? `<div class="row">
+  // Go / Park: anyone on the team (Bryan, 2026-10-20); Dismiss stays his.
+  const decision = `<div class="row">
         <div class="seg decision-seg" role="group" aria-label="Decision">${["go", "parked", "proposed"].map((k) =>
           `<button data-plan-decision="${k}" class="${d.decision === k ? `on ${k}` : ""}" aria-pressed="${d.decision === k}">${{ go: "Go", parked: "Park", proposed: "Undecided" }[k]}</button>`).join("")}</div>
-        <button class="btn small ghost danger" data-plan-decision="dismissed" title="Take it off the board">Dismiss…</button></div>`
-    : `<p><span class="chip ${esc(d.decision)}">${esc(DECISION[d.decision] || d.decision)}</span> <span class="muted small">Bryan decides Go or Park. Vote to tell him what you think.</span></p>`;
+        ${owner ? `<button class="btn small ghost danger" data-plan-decision="dismissed" title="Take it off the board">Dismiss…</button>` : ""}</div>`;
   const made = d.status === "made";
   const makeBar = made
     ? `<div class="decision row"><span><strong>In the edit.</strong></span>
@@ -3760,8 +3886,11 @@ async function init() {
   setHelpHost();
   if (!PLAN_HERE) await loadProjects().catch(() => {});
   shellLinks();
+  // Opening a draft or clip by its link on a phone: the page, not the list first (the list drew, then moved away).
+  if (phone() && /^#\/(production|clip)\//.test(location.hash)) document.body.classList.add("viewer-page");
   await sync(board);
   await routeFromHash();
+  syncPage();
   // Not while the page is out of sight (a tab in the background); straight away when it's back.
   setInterval(() => { if (!document.hidden) sync(); }, POLL_MS);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) sync(); });

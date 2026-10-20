@@ -18,7 +18,7 @@ from flask import Blueprint, abort, g, jsonify, request, send_file
 import catalog
 import plan
 import settings
-from webutil import body, db, is_owner, owner_only, text
+from webutil import body, db, is_owner, text
 
 log = logging.getLogger("studio.plan")
 bp = Blueprint("plan", __name__)
@@ -411,10 +411,13 @@ def vote(idea_id: int):
 
 
 @bp.post("/api/plan-idea/<int:idea_id>/decision")
-@owner_only
 def decide(idea_id: int):
+    """Go / Park / undecided: anyone on the team (Bryan, 2026-10-20: "Michelle can Go/Park").
+    Dismiss stays Bryan's."""
     _plan_idea(idea_id)
     decision = body().get("decision")
+    if decision not in DECISIONS and not is_owner():
+        return jsonify({"error": "only Bryan can do this"}), 403
     if decision in DECISIONS:
         db().execute("UPDATE ideas SET decision = ?, updated_at = ? WHERE id = ?", (decision, catalog.now(), idea_id))
     elif decision == "dismissed":

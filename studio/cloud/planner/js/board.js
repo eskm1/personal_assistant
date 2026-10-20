@@ -6,7 +6,7 @@ import {
   $, $$, BRAND, ACCOUNTS, oneBrand, esc, sb, must, invoke, toast, options, store, recall, plural,
   prepShots, progress, jobView, jobActive, kickDevelop, openModal, closeModal, formError, askFirst, nameOf, PRODUCTION,
   state, isFilmed, httpsUrl, laptopWait, ago, dayOf, todayISO, parseDay, dayLabel, shortDay, withKinds, kindsQuery, kindDot,
-  schema, POST_TYPES, POST_TYPE, isCarousel, mark, offWhy } from "./core.js";
+  schema, POST_TYPES, POST_TYPE, isCarousel, mark, offWhy, isOwner } from "./core.js";
 import { shoot, loadShoot, renderShoot } from "./shoot.js";
 
 export const plan = {
@@ -43,13 +43,35 @@ export function loadProjects() {
   return p;
 }
 async function loadProjectsNow() {
+  const saved = Number(recall("studio.project"));
+  // A first visit (nothing remembered on this device) opens on the project with work: asked alongside.
+  const first = !saved && !plan.pid ? workFirst() : null;
   plan.projects = must(await sb.from("projects").select("*").order("status").order("id", { ascending: false }));
   if (!plan.projects.some((p) => p.id === plan.pid)) {
-    const saved = Number(recall("studio.project"));
     const active = plan.projects.filter((p) => p.status === "active");
-    plan.pid = (plan.projects.find((p) => p.id === saved) || active[0] || plan.projects[0] || {}).id ?? null;
+    const pick = plan.projects.find((p) => p.id === saved) || (first && pickWorkProject(active, await first))
+      || active.find((p) => !p.standing) || active[0] || plan.projects[0] || {};
+    plan.pid = pick.id ?? null;
+    // Kept for this device, so the next visits don't ask again (and a project picked later replaces it).
+    if (first && plan.pid) store("studio.project", String(plan.pid));
   }
 }
+// The next site day, else the latest change to an idea: which client project has work now.
+async function workFirst() {
+  const [days, ideas] = await Promise.all([
+    sb.from("site_days").select("project_id,day").gte("day", todayISO()).order("day").limit(20).then(must).catch(() => []),
+    sb.from("ideas").select("project_id,updated_at").neq("status", "dismissed").order("updated_at", { ascending: false }).limit(30).then(must).catch(() => []),
+  ]);
+  return { days, ideas };
+}
+function pickWorkProject(active, work) {
+  const client = new Map(active.filter((p) => !p.standing).map((p) => [p.id, p]));
+  for (const d of work?.days || []) if (client.has(d.project_id)) return client.get(d.project_id);
+  for (const i of work?.ideas || []) if (client.has(i.project_id)) return client.get(i.project_id);
+  return null;
+}
+// The picker: client projects first (newest first), the standing ones (Everyday posts, Topics) last.
+const standingLast = (a, b) => (a.standing ? 1 : 0) - (b.standing ? 1 : 0);
 
 export function selectProject(pid) {
   if (pid === plan.pid) return;
@@ -169,7 +191,14 @@ export function renderPlanner(force = false) {
   $("#ideas-view").hidden = mode !== "ideas";
   $("#plan-add-one").hidden = mode !== "ideas";
   if (!plan.board || plan.board.project?.id !== plan.pid) {
-    $("#plan-board").innerHTML = `<p class="muted"><span class="spin"></span> Loading the ideas…</p>`;
+    // Loading: the line sits where the banner goes and the board waits hidden, so the banner and the
+    // cards arrive together (a banner landing above drawn cards pushed them down).
+    $("#plan-board").innerHTML = "";
+    if (mode === "ideas") {
+      $("#ideas-view").hidden = true;
+      $("#plan-banner").innerHTML = `<p class="muted plan-loading"><span class="spin"></span> Loading the ideas…</p>`;
+      plan.topSig = "";
+    }
     if (mode === "shoot") $("#shoot-view").innerHTML = `<p class="muted"><span class="spin"></span> Loading the shoot plan…</p>`;
     return;
   }
@@ -433,7 +462,8 @@ function groupHTML(g, list, ctx) {
   const cards = shown.map((i) => cardHTML(i, ctx)).join("") || `<p class="muted small grp-empty">${esc(g.empty)}</p>`;
   const toggle = more > 0 ? `<button type="button" class="btn-link grp-more" data-more="${g.key}">Show ${more} more</button>`
     : all && list.length > limit ? `<button type="button" class="btn-link grp-more" data-less="${g.key}">Show fewer</button>` : "";
-  const title = `${esc(g.title)} · ${list.length}`;
+  // The team decides Go / Park too (Bryan, 2026-10-20): the group says what to do, not whose call it is.
+  const title = `${esc(g.key === "waiting" && !isOwner() ? "Waiting for Go or Park" : g.title)} · ${list.length}`;
   if (folded) {
     const open = recall(foldKey(g.key)) === "1";
     return `<details class="grp grp-${g.key}" data-fold="${g.key}" ${open ? "open" : ""}>
@@ -509,7 +539,7 @@ function closeMenus(refocus = true) {
 }
 
 function renderProjectMenu() {
-  const active = plan.projects.filter((x) => x.status === "active");
+  const active = plan.projects.filter((x) => x.status === "active").sort(standingLast);
   const archived = plan.projects.filter((x) => x.status !== "active");
   const item = (x) => `<a role="menuitemradio" aria-checked="${x.id === plan.pid}" href="#/project/${esc(x.id)}" data-pick-project="${esc(x.id)}">
     <span class="pm-name">${esc(x.name)}</span>${x.id === plan.pid ? `<span class="pm-tick" aria-hidden="true">✓</span>` : ""}</a>`;
@@ -529,7 +559,7 @@ function renderToolsMenu() {
     <button role="menuitem" data-tool="today">Today on site${sub("The shot list for today's visit, for a phone")}</button>
     <button role="menuitem" data-tool="brief">Brief and inbox folder${sub(brief ? esc(brief) + ((p.brief || "").length > 60 ? "…" : "") : "Add what the job is")}</button>
     <button role="menuitem" data-tool="series">Series${sub(b?.arcs.length ? esc(plural(b.arcs.length, "series", "series")) : "Group posts into a run")}</button>
-    <button role="menuitem" data-tool="find" ${offWhy(jobActive(job) ? "Studio is already looking. New ideas land in Waiting for your call." : "")}>${jobActive(job) ? "Finding ideas…" : "Find ideas in new footage"}${sub(findIdeasStatus(job))}</button>
+    <button role="menuitem" data-tool="find" ${offWhy(jobActive(job) ? `Studio is already looking. New ideas land in ${isOwner() ? "Waiting for your call" : "Waiting for Go or Park"}.` : "")}>${jobActive(job) ? "Finding ideas…" : "Find ideas in new footage"}${sub(findIdeasStatus(job))}</button>
     <div class="menu-rule" role="separator"></div>
     <button role="menuitem" data-tool="new">New project</button>
     <button role="menuitem" data-tool="archive"${p.status === "archived" ? "" : ` class="danger"`}>${p.status === "archived" ? "Unarchive project" : "Archive project…"}</button>`;
@@ -742,10 +772,15 @@ export function openNewProject() {
   $("#np-folder").addEventListener("input", hint);
 }
 
-// New idea, phone-friendly (a full-screen sheet on narrow screens): one idea (a line, an optional
-// link kept as its first comment, Reel or carousel, its series and kind), or several at once (a
-// list or a messy brain-dump, added as written or organised by Claude). From Plan's home it asks
-// which project; on Ideas it's the open project.
+// New idea's kind by default: the kind the month is shortest of (home.js sets it; "" = let Studio decide).
+let kindHint = () => "";
+export function setKindHint(fn) { kindHint = fn; }
+
+// New idea, phone-friendly (a full-screen sheet on narrow screens): the essentials first (the project,
+// the idea, its kind; Bryan approved trimming it, 2026-10-20), and under More the rest: Reel or carousel,
+// an optional link kept as its first comment, its series, and several at once (a list or a messy
+// brain-dump, added as written or organised by Claude). From Plan's home it asks which project; on
+// Ideas it's the open project. opts.kind: the kind chosen (+ Add on a month's gap).
 export function openQuickAdd(opts = {}) {
   const active = plan.projects.filter((p) => p.status === "active");
   const cur = plan.projects.find((p) => p.id === plan.pid);
@@ -754,25 +789,30 @@ export function openQuickAdd(opts = {}) {
   const choices = cur && cur.status !== "active" && opts.from !== "home" ? [cur, ...active] : active;
   const projectField = choices.length > 1 || opts.from === "home"
     ? `<label>Project<select id="qa-project">${choices.map((p) => `<option value="${esc(p.id)}" ${p.id === pid ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>` : "";
+  const preset = schema.kinds ? (opts.kind ?? kindHint() ?? "") : "";
   openModal(`<h2 id="modal-title">New idea</h2>
     <form class="form" id="qa-form">
       ${projectField}
-      <div class="seg qa-mode" role="group" aria-label="How many ideas">
-        <button type="button" data-qa-mode="one" class="on" aria-pressed="true">One idea</button>
-        <button type="button" data-qa-mode="many" aria-pressed="false">Several at once</button>
-      </div>
       <div class="form" id="qa-one">
-        <label>Idea<textarea id="qa-text" rows="4" maxlength="300" placeholder="e.g. Why we flood-test every bathroom for 24 hours"></textarea></label>
-        <label><span>Link <span class="muted">(optional, e.g. a reel that inspired it)</span></span><input id="qa-link" type="url" inputmode="url" maxlength="500" placeholder="https://"></label>
-        ${schema.slides ? `<fieldset class="qa-format"><legend>Make it as</legend>
-          <label class="radio"><input type="radio" name="qa-format" value="reel" checked> A Reel <span class="muted small">(filmed)</span></label>
-          <label class="radio"><input type="radio" name="qa-format" value="carousel"> A carousel <span class="muted small">(slides; no filming)</span></label></fieldset>` : ""}
-        <label>Series<select id="qa-arc"><option value="">Unsorted</option></select></label>
-        ${schema.kinds ? `<label>Kind of post<select id="qa-kind">${options(POST_TYPES, POST_TYPE, "", "Let Studio decide")}</select></label>` : ""}
+        <label>Idea<textarea id="qa-text" rows="3" maxlength="300" placeholder="e.g. Why we flood-test every bathroom for 24 hours"></textarea></label>
+        ${schema.kinds ? `<label>Kind of post<select id="qa-kind">${options(POST_TYPES, POST_TYPE, preset, "Let Studio decide")}</select></label>
+          ${preset && !opts.kind ? `<p class="muted small qa-kind-why">The month is shortest of ${esc(POST_TYPE[preset])} posts.</p>` : ""}` : ""}
+        <details class="qa-more" id="qa-more">
+          <summary>More: ${schema.slides ? "Reel or carousel, " : ""}link, series, several at once</summary>
+          <div class="form">
+            ${schema.slides ? `<fieldset class="qa-format"><legend>Make it as</legend>
+              <label class="radio"><input type="radio" name="qa-format" value="reel" checked> A Reel <span class="muted small">(filmed)</span></label>
+              <label class="radio"><input type="radio" name="qa-format" value="carousel"> A carousel <span class="muted small">(slides; no filming)</span></label></fieldset>` : ""}
+            <label><span>Link <span class="muted">(optional, e.g. a reel that inspired it)</span></span><input id="qa-link" type="url" inputmode="url" maxlength="500" placeholder="https://"></label>
+            <label>Series<select id="qa-arc"><option value="">Unsorted</option></select></label>
+            <button type="button" class="btn-link qa-switch" data-qa-mode="many">Add several ideas at once instead</button>
+          </div>
+        </details>
       </div>
       <div class="form" id="qa-many" hidden>
         <label>Ideas<textarea id="plan-dump" rows="7" maxlength="20000" placeholder="One per line, or paste a messy brain-dump"></textarea></label>
         <p class="muted small">Add as ideas puts each line in Unsorted as written. Organise with Claude sorts them into series and drafts a storyboard for each (a minute or two; a few cents).</p>
+        <button type="button" class="btn-link qa-switch" data-qa-mode="one">Just one idea instead</button>
       </div>
       <p class="error-text" id="modal-error" role="alert" hidden></p>
       <div class="row end" id="qa-one-btns"><button type="button" class="btn" data-modal-close>Cancel</button><button type="submit" class="btn primary" id="qa-add">Add</button></div>
@@ -813,18 +853,16 @@ export function openQuickAdd(opts = {}) {
       const carousel = document.querySelector("input[name=qa-format]:checked")?.value === "carousel";
       row = must(await sb.from("ideas").insert({ project_id: target, title, brand: p?.brand || "urban_makers", arc_id: $("#qa-arc").value ? Number($("#qa-arc").value) : null, position: pos, ...(kind ? { post_type: kind } : {}), ...(carousel ? { format: "carousel" } : {}) }).select("id").single());
       if (link) must(await sb.from("comments").insert({ idea_id: row.id, body: `Link: ${link}` }));
-      mark("idea_created", { kind: !!kind, carousel });
+      mark("idea_created", { kind: !!kind, carousel, preset: !!kind && kind === preset, more: !!$("#qa-more")?.open });
       if (kind) mark("idea_kind", { at: "new" });
     } catch (err) { t.disabled = false; return formError(err.message); }
     closeModal();
-    toast(opts.from === "home" && target !== plan.pid ? `Idea added to ${p?.name || "the project"}.` : "Idea added.");
+    // Open: the new idea is one tap away (from Plan it isn't on the screen).
+    toast(opts.from === "home" && target !== plan.pid ? `Idea added to ${p?.name || "the project"}.` : "Idea added.", 3200,
+      { label: "Open", href: `#/idea/${row.id}`, mark: "toast_open" });
     await refresh(true);
   }, false, "sheet");
   function setMode(mode) {
-    for (const b of document.querySelectorAll("[data-qa-mode]")) {
-      b.classList.toggle("on", b.dataset.qaMode === mode);
-      b.setAttribute("aria-pressed", String(b.dataset.qaMode === mode));
-    }
     $("#qa-one").hidden = $("#qa-one-btns").hidden = mode !== "one";
     $("#qa-many").hidden = $("#qa-many-btns").hidden = mode !== "many";
     formError("");

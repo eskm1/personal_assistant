@@ -29,7 +29,7 @@ studio/cloud_sync.py          the laptop side (Python, runs inside worker.py)
 
 | Data | Written by | Notes |
 |---|---|---|
-| projects, arcs, ideas, shots, votes, comments | team in the planner (RLS: members) | ideas.decision/status/production: owner or service role only (trigger) |
+| projects, arcs, ideas, shots, votes, comments | team in the planner (RLS: members) | ideas.status/production: owner or service role only (trigger); ideas.decision (proposed / go / parked): any member on a `new` idea that isn't made (since 20261027000000_team_go_park; before it, owner only) |
 | ideas + shots from Claude | Edge Functions (service role) | |
 | clips | laptop (service role) | summary of each library clip + `thumb_path` |
 | takes | laptop (`source='auto'`, matched while tagging) and team (`source='manual'`, attach in the planner) | team may delete any take; laptop uploads `thumb_path` for every take |
@@ -515,7 +515,7 @@ on ideas (`decision`, `status`, `production`): a linked question becomes `used` 
 
 **Planner.** On Plan's home under **Needs your call**: the open suggestions (`suggestion` not null,
 `status 'new'`, `decision 'proposed'`, newest 12) as rows (kind, Carousel / Reel from footage / Reel, title,
-`suggestion.why`), Go / Not now (= Park) / Dismiss inline for the owner (plain updates; the team sees "Bryan decides"), tapping
+`suggestion.why`), Go / Not now (= Park) inline for anyone, Dismiss for the owner (plain updates), tapping
 a card opens `#/idea/<id>` (which shows "Studio suggested this" with the why and the source); **Suggest topics**
 (queues the job; the line under the cards follows it), **Client questions** with the open count, and "Last
 suggested <date>" from `laptop_status.info.topics`, and for the owner "Clear N dismissed suggestions" (deletes
@@ -751,3 +751,22 @@ wording.write_ts()"`. The Studio machine pushes `voice` and `wording` with brand
 the update is online. Text written online gets the safe fixes (`wording.tidy`) when Studio uses it (`make`,
 carousel slides, drawn scenes).
 
+## The team's Go / Park (migration 20261027000000_team_go_park.sql)
+
+Bryan, 2026-10-20: "Michelle can Go/Park and send back."
+
+**Schema.** `guard_idea_owner_fields()` (the `ideas_guard` trigger) is redefined: a member who isn't the owner may
+change `ideas.decision` between `proposed`, `go` and `parked` on an idea whose `status` is `new` and `production` is
+null. `status` (dismiss, made) and `production` stay the owner's or the service role's; an insert by a member is still
+forced to `proposed` / `new`. Refusals raise `42501`.
+
+**Planner.** Go / Park on an idea and Go / Not now on Plan's suggestions for everyone (`setCall()` in `js/core.js`).
+Until the migration is applied the database refuses a member's call with `42501`; the planner says so in a toast
+("Go and Park for the team need a one-time Studio update that isn't in yet. Until then Bryan makes the call"),
+never silently.
+
+**Studio machine.** Nothing to sync differently (decisions already come down with the ideas). Review's
+`POST /api/production/<id>/decision` takes `changes` (Send back) from any signed-in member when the draft has at
+least one open note (the owner may also send back on Studio's read alone); approve, reject, reopen, redo and retry
+stay owner-only. The laptop-only planning board (`POST /api/plan-idea/<id>/decision`) takes Go / Park / undecided
+from anyone, Dismiss from the owner.

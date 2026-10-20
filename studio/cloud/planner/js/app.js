@@ -11,11 +11,32 @@ import { home, homeOpen, loadHome, renderHome, onHomeRefresh } from "./home.js";
 import { view, openIdea, hideViewer, closeIdea, loadIdea, viewerOpen, step, updateArrows, restoreBoardScroll, forgetBoardScroll } from "./idea.js";
 import { check, openChecklist, hideChecklist, loadChecklist, checklistOpen } from "./checklist.js";
 import { showTeam, hideTeam } from "./team.js";
-import { refsRoute, showRefs, hideRefs, resetRefs, refsOpen, loadRefs } from "./refs.js";
 import { shoot, onShootRefresh } from "./shoot.js";
 import { month, monthRoute, showMonth, hideMonth, monthOpen, loadMonthPage } from "./month.js";
 import { onUploadRow, renderTray, studioBase, studioApi } from "./upload.js";
 import { postingRoute, showPosting, hidePosting, postingOpen, loadPostingPage } from "./posting.js";
+
+// References, the style guide, the library and the taste report (refs.js, library.js, refimport.js: a
+// third of the planner's code) load the first time one of their pages opens, not with Plan.
+let refsMod = null;
+const refsLoad = () => (refsMod ||= import("./refs.js"));
+const refsOpen = () => !$("#refs").hidden;
+// #/references, #/references/<id>, #/style, #/style/<brand>, #/taste (as refs.js reads them), or null.
+function refsRoute(hash) {
+  let m;
+  if (hash === "#/references") return { page: "list" };
+  if ((m = hash.match(/^#\/references\/(\d+)$/))) return { page: "detail", id: Number(m[1]) };
+  if ((m = hash.match(/^#\/style(?:\/(urban_makers|personal))?$/))) return { page: "style", brand: m[1] || null };
+  if (hash === "#/taste") return { page: "taste" };
+  return null;
+}
+const hideRefs = () => refsMod?.then((m) => m.hideRefs());
+const resetRefs = () => refsMod?.then((m) => m.resetRefs());
+const showRefs = async (route) => {
+  const m = await refsLoad();
+  if (refsRoute(location.hash)) await m.showRefs(route);   // not if the page was left while it loaded
+};
+const loadRefs = async () => (refsMod ? (await refsMod).loadRefs() : undefined);
 
 const SET_PASSWORD = "studio.setPassword";
 const session = { started: false, channel: null };
@@ -62,8 +83,11 @@ async function boot() {
 // session. 401: not signed in to the dashboard (go there); 403: not a planner member.
 async function dashboardSession() {
   let res;
+  // config.js (made by Studio) asked already, as the page started: take that answer once.
+  const early = window.STUDIO_EARLY_SESSION;
+  window.STUDIO_EARLY_SESSION = null;
   try {
-    res = await fetch("/api/planner-session", { credentials: "same-origin", headers: { Accept: "application/json" } });
+    res = (early && await early) || await fetch("/api/planner-session", { credentials: "same-origin", headers: { Accept: "application/json" } });
   } catch { return null; }
   if (res.status === 401) { location.href = "/login?next=/plan/"; return "redirected"; }
   const j = await res.json().catch(() => ({}));
@@ -76,6 +100,7 @@ let signingOut = false;
 // Under /plan/ signing out of the planner signs out of the dashboard too.
 async function signOutEverywhere() {
   signingOut = true;
+  store("studio.meName", "");
   await sb.auth.signOut().catch(() => {});
   stop();
   if (underPlan) {
@@ -214,7 +239,8 @@ function setHelpHost() {
     page: pageNow, api: helpApi, role: () => state.me?.role || "team",
     version: () => machine.me?.version?.commit || state.laptop?.info?.version || "",
     usage: underPlan ? (machine.me?.usage === false ? null : { url: "/api/usage" })
-      : base ? { url: `${base}/api/usage`, token: async () => (await sb.auth.getSession()).data.session?.access_token || null } : {},
+      // Only an https Studio address: the planner's own policy (netlify.toml) lets it reach no other.
+      : /^https:\/\//.test(base || "") ? { url: `${base}/api/usage`, token: async () => (await sb.auth.getSession()).data.session?.access_token || null } : {},
   });
 }
 
@@ -246,6 +272,7 @@ function renderAccount() {
   const me = state.me;
   $("#account-btn").innerHTML = `<span class="avatar" aria-hidden="true">${esc((me.name || "?").slice(0, 1).toUpperCase())}</span><span class="account-name">${esc(me.name)}</span>`;
   $("#account-btn").setAttribute("aria-label", `Account: ${me.name}`);
+  store("studio.meName", me.name || "");   // the bar draws it at once next time (shell.js)
   $("#account-menu").innerHTML = `<div class="menu-head"><strong>${esc(me.name)}</strong>
       <span class="muted small">${esc(me.email)} · ${isOwner() ? "Owner" : "Team"}</span></div>
     ${isOwner() ? `<button role="menuitem" data-account="team">Team…</button>` : ""}

@@ -49,18 +49,30 @@ FEATURES = [
      "events": [("click", r"^#voice-(open|switch|write|save)$")]},
     {"key": "note_remove", "name": "Note × (take a note back)", "shipped": "2026-10-20",
      "events": [("click", r"^\[data-note-delete")]},
+    {"key": "one_note_box", "name": "One note box: Add a note at a moment, Undo", "shipped": "2026-10-21",
+     "events": [("click", r"^#note-jump$"), ("click", r"^\[data-quick-undo"), ("action", r"^note_undone$")]},
+    {"key": "team_calls", "name": "The team's Go / Park and Send back", "shipped": "2026-10-21",
+     "events": [("action", r"^(idea_decided|sent_back)$", "team=true")]},
+    {"key": "toast_open", "name": "Open on a toast (after Go, after Add)", "shipped": "2026-10-21",
+     "events": [("action", r"^toast_open$")]},
+    {"key": "month_gap_add", "name": "+ Add on a month's gap", "shipped": "2026-10-21",
+     "events": [("action", r"^month_gap_add$"), ("click", r"^\[data-add-kind")]},
+    {"key": "team_jobs", "name": "The team's Plan: Your jobs", "shipped": "2026-10-21",
+     "events": [("action", r"^home_film$"), ("click", r"^\.hm-bryan")]},
+    {"key": "stage_menu", "name": "Review's More stages (phone)", "shipped": "2026-10-21",
+     "events": [("action", r"^stage_menu$"), ("click", r"^#tabs-more$")]},
 ]
 
 # The golden paths. Each step: alternatives (kind, regex on the target, or on the page for views[, detail k=v]).
 # A tab "starts" a path at its first step and completes it when it reaches every required step in order.
 FUNNELS = [
-    {"key": "G1", "name": "Review a draft", "who": "owner", "steps": [
+    {"key": "G1", "name": "Review a draft", "who": "", "steps": [
         {"name": "Opened a draft waiting for review", "match": [("view", r"^(draft|carousel)$", "waiting=true")]},
         {"name": "Played it", "optional": True, "match": [("action", r"^video_played$")]},
         {"name": "Left a note", "optional": True, "match": [("action", r"^note_added$")]},
         {"name": "Approved, sent back or rejected", "match": [("action", r"^(approved|sent_back|rejected)$")]},
     ]},
-    {"key": "G2", "name": "Decide on ideas", "who": "owner", "steps": [
+    {"key": "G2", "name": "Decide on ideas", "who": "", "steps": [
         {"name": "Saw ideas waiting for a call", "match": [("view", r"^(home|ideas|idea)$", "calls=true")]},
         {"name": "Go, Park or Dismiss", "match": [("action", r"^idea_decided$")]},
         {"name": "Make this", "optional": True, "match": [("action", r"^make_this$")]},
@@ -71,7 +83,7 @@ FUNNELS = [
         {"name": "The upload finished", "match": [("action", r"^upload_done$")]},
     ]},
     {"key": "G4", "name": "Plan the month", "who": "", "steps": [
-        {"name": "Pressed + New idea", "match": [("click", r"^#(home-new-idea|plan-add-one)$")]},
+        {"name": "Pressed + New idea", "match": [("click", r"^#(home-new-idea|plan-add-one)$"), ("click", r"^\[data-add-kind")]},
         {"name": "Saved the idea", "match": [("action", r"^idea_created$")]},
         {"name": "Gave it a kind", "match": [("action", r"^idea_kind$")]},
         {"name": "Go", "optional": True, "match": [("action", r"^idea_decided$", "decision=go")]},

@@ -371,12 +371,16 @@ def plan_for(conn, production_id: int) -> dict:
     n = per_week()
     nxt = suggest(conn, n=n, exclude=post["id"] if post else None)
     import carousel
+    import previews
     return {"production": {"id": prod["id"], "title": prod["title"], "format": prod["format"], "kind": _kind(prod),
                            "status": prod["status"], "version": prod["version"], "duration": prod["duration"],
                            "caption": prod["caption"] or "",
                            "slides": len(carousel.files(prod)) if prod["format"] == "carousel" else None,
                            "thumb": f"/media/production/{prod['id']}/thumb?v={prod['version']}" if prod["thumb_path"] else None,
-                           "video": f"/media/production/{prod['id']}/video?v={prod['version']}" if prod["video_path"] else None},
+                           # The light copy, by the same address Review plays it from (the browser may have it already).
+                           "video": (f"/media/production/{prod['id']}/video?v={prod['version']}"
+                                     + ("&light=1" if previews.light_for(prod["video_path"]).is_file() else ""))
+                           if prod["video_path"] else None},
             "why_not": can_post(conn, prod), "post": view(post) if post else None,
             "suggested": _iso(nxt), "suggested_text": when_text(nxt), "per_week": n,
             "taken": sorted(_iso(t) for t in taken(conn, post["id"] if post else None) if t > _now() - timedelta(days=14)),

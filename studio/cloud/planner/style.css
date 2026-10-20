@@ -897,6 +897,13 @@ body.has-tray .toast { bottom: auto; top: 76px; }
 .cs-concept { position: absolute; top: 8px; left: 8px; z-index: 2; font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--slide-amber); background: var(--slide-shade); padding: 3px 6px; border-radius: var(--um-radius-sm); }
 .slide-concept { display: flex; flex-direction: column; gap: 4px; background: var(--um-card); border: 1px solid var(--um-line-soft); border-radius: var(--um-radius-sm); padding: 8px; }
 .slide-concept input { width: 100%; }
+/* New idea: the essentials, then More (Reel or carousel, link, series, several at once). */
+.qa-more { border-top: 1px solid var(--um-line-soft); padding-top: 4px; }
+.qa-more > summary { cursor: pointer; min-height: var(--um-h); display: flex; align-items: center; font-size: var(--um-fs-ui); font-weight: 500; color: var(--um-link); }
+.qa-more > summary:hover { text-decoration: underline; text-underline-offset: 2px; }
+.qa-more > .form { margin-top: 8px; }
+.qa-switch { align-self: flex-start; }
+.qa-kind-why { margin: -6px 0 0; }
 .qa-format { border: 1px solid var(--um-line); border-radius: var(--um-radius); padding: 8px 12px; margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .qa-format legend { font-size: var(--um-fs-meta); font-weight: 500; color: var(--ink-soft); padding: 0 4px; }
 .qa-format .radio { display: flex; align-items: center; gap: 8px; flex-direction: row; }
@@ -1101,6 +1108,20 @@ a.hm-name:hover { text-decoration: underline; text-underline-offset: 2px; }
 .hm-slot.offer.posted { background: var(--k-offer); border-color: var(--k-offer); }
 .hm-slot.posted::after { content: ""; position: absolute; left: 50%; top: 45%; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: translate(-50%, -50%) rotate(45deg); }
 .hm-still { margin: 0; font-size: var(--um-fs-meta); color: var(--ink-soft); line-height: 1.5; }
+/* Still to plan: each gap with + Add (New idea with that kind chosen). */
+.hm-gaps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.hm-gaps li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.hm-gaps a { display: inline-flex; align-items: center; gap: 7px; font-size: var(--um-fs-ui); color: var(--um-ink); text-decoration: none; }
+.hm-gaps a:hover { text-decoration: underline; text-underline-offset: 2px; }
+.hm-gaps .kdot { width: 8px; height: 8px; }
+/* The month in one line under the title: a phone has the month card far down. */
+.hm-month-line { display: none; font-size: var(--um-fs-meta); color: var(--ink-soft); text-decoration: underline; text-decoration-color: var(--um-line); text-underline-offset: 3px; }
+@media (max-width: 860px) { .hm-month-line { display: inline; } }
+/* The team's Plan: Bryan's list folded under their own jobs. */
+.hm-bryan { border-top: 1px solid var(--um-line); }
+.hm-bryan > summary { cursor: pointer; padding: 12px 18px; min-height: var(--um-h); font-size: var(--um-fs-ui); font-weight: 500; color: var(--ink-soft); }
+.hm-bryan > summary:hover { color: var(--um-ink); }
+.hm-bryan[open] > summary { border-bottom: 1px solid var(--um-line-soft); }
 .hm-month-foot { display: flex; align-items: center; gap: 4px 16px; flex-wrap: wrap; font-size: var(--um-fs-ui); }
 .hm-month p.hm-sub { margin: 0; }
 /* Projects and Client questions */
@@ -1273,6 +1294,7 @@ a.hm-name:hover { text-decoration: underline; text-underline-offset: 2px; }
 .menu-sub .spin { width: 10px; height: 10px; }
 .plan-add { flex: none; }
 .plan-banner { margin: 0 0 12px; }
+.plan-loading { margin: 8px 0 12px; }
 .organise-status { display: flex; align-items: center; gap: 6px; padding: 10px 12px; border-radius: var(--um-radius); background: var(--um-paper-mid); color: var(--um-ink); line-height: 1.4; }
 .mode-head { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; }
 .mode-head h2 { margin: 0; font-size: var(--um-fs-h2); }
@@ -1355,6 +1377,10 @@ details.grp[open] > summary { margin-bottom: 8px; }
 .decision-seg button.on.go { background: var(--um-success); color: #fff; }
 .decision-seg button.on.parked { background: var(--ink-soft); color: #fff; }
 .call-now { font-weight: 500; }
+/* "Go. Tap Go again to undo.": a few seconds beside the buttons (no tooltips on a phone). */
+.call-hint { font-size: var(--um-fs-meta); color: var(--ink-soft); animation: call-hint-out .3s ease 5.5s forwards; }
+@keyframes call-hint-out { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .call-hint { animation-duration: .01s; } }
 .call-who { flex: 1 1 100%; }
 .votes { display: inline-flex; align-items: center; gap: 6px; }
 .vote { border: 1px solid var(--um-line); background: var(--um-card); border-radius: var(--um-radius-sm); min-height: var(--um-h); padding: 0 10px; font-size: var(--um-fs-ui); font-weight: 500; }

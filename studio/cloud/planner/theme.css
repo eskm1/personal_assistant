@@ -74,6 +74,8 @@ button { cursor: pointer; }
 a { color: var(--um-link); }
 a:hover { color: var(--um-ink); }
 :focus-visible { outline: 2px solid var(--um-ink); outline-offset: 2px; }
+/* A page's title takes the focus when it opens (for screen readers); it isn't a field, so no box round it. */
+[tabindex="-1"]:focus { outline: none; }
 h1, h2, h3, h4 { font-weight: 600; }
 code { font-family: var(--um-mono); }
 .mono { font-family: var(--um-mono); }
@@ -221,6 +223,13 @@ a.btn.act, a.btn.good { color: #fff; }
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 50; max-width: min(560px, calc(100vw - 32px));
   background: var(--um-ink); color: var(--um-paper); padding: 10px 16px; border-radius: var(--um-radius); font-weight: 500; box-shadow: var(--um-shadow-menu);
 }
+/* A toast's one action ("Open"): underlined, a finger's height on a phone. */
+.toast .toast-act {
+  display: inline-flex; align-items: center; min-height: 32px; margin: -6px -6px -6px 6px; padding: 0 8px; border: 0; border-radius: var(--um-radius-sm);
+  background: none; color: var(--um-paper); font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
+}
+.toast .toast-act:hover { background: rgba(251, 250, 247, .14); }
+@media (max-width: 860px) { .toast .toast-act { min-height: var(--um-touch); } }
 
 [hidden] { display: none !important; }
 .muted { color: var(--ink-soft); }

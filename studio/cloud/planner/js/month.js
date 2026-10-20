@@ -163,7 +163,7 @@ function kindPageHTML(k) {
     <section class="kind-sec" aria-labelledby="kind-now"><h2 id="kind-now">Counting this month <span class="count">${esc(here.length)}</span></h2>
       ${here.length ? `<ul class="kind-list">${here.map(rowHTML).join("")}</ul>`
         : `<p class="muted">Nothing yet. A post counts once it's Go (and until it's approved), or when it's approved this month.</p>`}</section>
-    <section class="kind-sec" aria-labelledby="kind-wait"><h2 id="kind-wait">Waiting for ${isOwner() ? "your" : `${esc(ownerName())}'s`} call <span class="count">${esc(waiting.length)}</span></h2>
+    <section class="kind-sec" aria-labelledby="kind-wait"><h2 id="kind-wait">${isOwner() ? "Waiting for your call" : "Waiting for Go or Park"} <span class="count">${esc(waiting.length)}</span></h2>
       ${waiting.length ? `<p class="muted small">${short ? `Go on one of these to fill the gap.` : "Ideas of this kind that aren't Go yet."}</p><ul class="kind-list">${waiting.map(rowHTML).join("")}</ul>`
         : `<p class="muted">No other ${esc(POST_TYPE[k])} ideas on the board.</p>`}</section>
   </div>`;
@@ -241,7 +241,7 @@ function planPageHTML() {
       <button type="button" class="btn primary" data-cp-save ${month.dirty ? "" : "disabled"}>Save</button>
     </div>` : ""}
     <section class="cp-sec" aria-labelledby="cp-topics"><h2 id="cp-topics">Suggested topics</h2>
-      <p class="muted small">Once a week, and when a kind falls behind, Studio suggests posts for the gaps: from what you said on site, the questions clients ask, and what's coming up in the shoot calendar. They wait under This month for ${owner ? "your" : `${esc(ownerName())}'s`} Go, Park or Dismiss.</p>
+      <p class="muted small">Once a week, and when a kind falls behind, Studio suggests posts for the gaps: from what you said on site, the questions clients ask, and what's coming up in the shoot calendar. They wait under This month for ${owner ? "your Go, Park or Dismiss" : `a Go or Park (yours or ${esc(ownerName())}'s)`}.</p>
       <div class="row"><a class="btn" href="#/questions">Client questions</a></div>
     </section>
     <section class="cp-sec" aria-labelledby="cp-kinds"><h2 id="cp-kinds">The five kinds</h2>

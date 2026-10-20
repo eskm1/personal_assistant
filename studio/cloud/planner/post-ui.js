@@ -80,9 +80,11 @@ window.StudioPost = (() => {
   }
   const body = () => frame().querySelector(".sp-body");
   const $ = (sel) => frame().querySelector(sel);
-  function open(html, click, input) {
+  function open(html, click, input, tall = false) {
     const m = frame();
     if (m.hidden) returnTo = document.activeElement;
+    // The Schedule dialog keeps one size from "Loading" to the form (it used to grow, and the page jumped).
+    m.querySelector(".sp-card").classList.toggle("sp-tall", tall);
     body().innerHTML = html;
     onClick = click || null;
     m.oninputHandler = input || null;
@@ -113,8 +115,21 @@ window.StudioPost = (() => {
 
   // ── Schedule ───────────────────────────────────────────────────────────────
   let plan = null;
+  // What the form looks like while the plan is asked for: the same rows, greyed (so nothing moves after).
+  const SKELETON = `<h2 id="sp-title">Schedule on Instagram</h2>
+    <div class="sp-draft"><span class="sp-thumb none" aria-hidden="true"></span><div><strong><span class="spin"></span> Loading…</strong><span class="muted small">&nbsp;</span></div></div>
+    <form class="form sp-form sp-skeleton" aria-busy="true">
+      <fieldset class="sp-when" disabled><legend class="um-label">When (Singapore time)</legend>
+        <div class="sp-when-row"><input type="date" aria-label="Day"><input type="time" aria-label="Time"></div><p class="small sp-when-note">&nbsp;</p></fieldset>
+      <label class="sp-field"><span class="um-label">Caption</span><textarea rows="6" disabled></textarea></label>
+      <p class="small sp-count">&nbsp;</p>
+      <fieldset class="sp-cover" disabled><legend class="um-label">Cover</legend><div class="seg"><button type="button" class="on">First frame</button><button type="button">A moment</button></div></fieldset>
+      <label class="sp-check"><input type="checkbox" disabled checked> Also show it in the grid (feed)</label>
+      <label class="sp-field"><span class="um-label">Collaborators (optional)</span><input type="text" disabled></label>
+      <div class="sp-actions"><span class="sp-gap"></span><button type="button" class="btn" disabled>Post now</button><button type="button" class="btn act" disabled>Schedule</button></div>
+    </form>`;
   async function openSchedule(productionId) {
-    open(`<h2 id="sp-title">Schedule on Instagram</h2><p class="muted"><span class="spin"></span> Loading…</p>`);
+    open(SKELETON, null, null, true);
     try {
       plan = await opts.api("GET", `/api/instagram/plan/${encodeURIComponent(productionId)}`);
     } catch (err) {
@@ -158,7 +173,6 @@ window.StudioPost = (() => {
     const collab = (live?.collaborators || []).map((n) => `@${n}`).join(", ");
     const notConnected = !plan.connected;
     const today = dayOf(new Date().toISOString());
-    const coverVideo = reel && p.video ? opts.media(p.video) : "";
     const html = `<h2 id="sp-title">${title}</h2>
       ${draftLine(p)}
       ${plan.why_not ? `<p class="sp-note bad">${esc(plan.why_not)}</p>` : ""}
@@ -183,7 +197,6 @@ window.StudioPost = (() => {
             <button type="button" data-sp-cover="first" class="${cover ? "" : "on"}" aria-pressed="${cover ? "false" : "true"}">First frame</button>
             <button type="button" data-sp-cover="pick" class="${cover ? "on" : ""}" aria-pressed="${cover ? "true" : "false"}">A moment</button></div>
           <div class="sp-cover-pick" id="sp-cover-pick" ${cover ? "" : "hidden"}>
-            ${coverVideo ? `<video id="sp-cover-video" class="sp-cover-video" src="${esc(coverVideo)}#t=${(cover || 0) / 1000}" muted playsinline preload="metadata"></video>` : ""}
             <label class="sp-range"><span class="sr-only">Cover moment</span><input type="range" id="sp-cover-at" min="0" max="${esc(Math.max(1, Math.floor((p.duration || 1) * 10)))}" step="1" value="${esc(Math.round((cover || 0) / 100))}"></label>
             <span class="small mono" id="sp-cover-text">${esc(mmss((cover || 0) / 1000))}</span>
           </div></fieldset>
@@ -198,9 +211,24 @@ window.StudioPost = (() => {
           <button type="submit" class="btn act" data-sp-save ${offWhy(plan.why_not)}>${live ? (post.state === "failed" ? "Try again at this time" : "Save") : "Schedule"}</button>
         </div>
       </form>`;
-    open(html, scheduleClick, scheduleInput);
+    open(html, scheduleClick, scheduleInput, true);
     updateCount();
     updateWhen();
+    if (cover) coverVideo();
+  }
+
+  // The cover picker's video: fetched only once "A moment" is picked (the light copy), never with the dialog.
+  function coverVideo() {
+    const p = plan?.production, box = $("#sp-cover-pick");
+    if (!p?.video || !box || $("#sp-cover-video")) return;
+    const v = document.createElement("video");
+    v.id = "sp-cover-video";
+    v.className = "sp-cover-video";
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = "metadata";
+    v.src = `${opts.media(p.video)}#t=${Number($("#sp-cover-at")?.value || 0) / 10}`;
+    box.prepend(v);
   }
 
   function updateCount() {
@@ -271,6 +299,7 @@ window.StudioPost = (() => {
       const pick = t.dataset.spCover === "pick";
       for (const b of modal.querySelectorAll("[data-sp-cover]")) { b.classList.toggle("on", b === t); b.setAttribute("aria-pressed", String(b === t)); }
       $("#sp-cover-pick").hidden = !pick;
+      if (pick) coverVideo();
       return;
     }
     if (t.matches("[data-sp-save]")) {

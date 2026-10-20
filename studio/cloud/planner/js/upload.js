@@ -123,6 +123,15 @@ const ups = []; // {key, file, shotId, label, id, offset, chunk, state, error, s
 const ACTIVE = new Set(["queued", "starting", "uploading", "paused"]);
 export const uploadsActive = () => ups.some((u) => ACTIVE.has(u.state));
 export const uploadsFor = (shotId) => ups.filter((u) => u.shotId === Number(shotId));
+// What this page is sending to a shot: "uploading" while it goes, "received" once Studio has the file and
+// is checking it (until it's on the shot, or failed). The idea page shows it on the shot and moves on.
+export function shotUploadState(shotId) {
+  const mine = uploadsFor(shotId).filter((u) => !u.photo && u.state !== "cancelled" && u.state !== "failed");
+  if (mine.some((u) => ACTIVE.has(u.state))) return "uploading";
+  if (mine.some((u) => u.state === "done" && u.row?.state !== "failed" && u.row?.state !== "ingested")) return "received";
+  return "";
+}
+const changed = () => document.dispatchEvent(new CustomEvent("studio:uploads"));
 
 function guessType(file) {
   if (file.type) return file.type;
@@ -156,6 +165,7 @@ export function addFiles(shotId, files, label = "") {
   if (!added) return;
   trayOpen = true;
   render();
+  changed();
   pump();
 }
 
@@ -345,6 +355,7 @@ function finish(u, r) {
   u.row = u.row || { state: r.state || "received" };
   mark("upload_done", { mb: Math.round(u.file.size / 1048576) });
   render();
+  changed();
   // The live update on shot_uploads normally arrives; read it once in case it didn't.
   setTimeout(() => refreshRow(u), 1500);
   document.dispatchEvent(new CustomEvent("studio:refresh"));
@@ -375,6 +386,7 @@ export function onUploadRow(row) {
   u.row = row;
   if (u.state !== "done" && row.state !== "uploading") u.state = "done";
   render();
+  changed();
 }
 
 async function cancel(u) {

@@ -62,9 +62,13 @@ export function hideAuth() {
   card().innerHTML = "";
 }
 
-function busy(on) {
+// The press answers at once: "Signing in…" (or "Sending…", "Saving…") until the answer comes.
+function busy(on, label = "") {
   const btn = card().querySelector(".auth-primary");
-  if (btn) { btn.disabled = on; btn.classList.toggle("busy", on); }
+  if (!btn) return;
+  btn.disabled = on;
+  btn.classList.toggle("busy", on);
+  if (on && label) { btn.dataset.label = btn.textContent; btn.textContent = label; } else if (!on && btn.dataset.label) btn.textContent = btn.dataset.label;
 }
 
 function friendly(message) {
@@ -83,7 +87,7 @@ $("#auth").addEventListener("submit", async (e) => {
   if (kind === "signin") {
     const email = $("#a-email").value.trim(), password = $("#a-password").value;
     if (!email || !password) return showAuth("signin", { email, error: "Enter your email and password." });
-    busy(true);
+    busy(true, "Signing in…");
     const { data, error } = await sb.auth.signInWithPassword({ email, password });
     if (error) return showAuth("signin", { email, error: friendly(error.message) });
     onSignedIn?.(data.session);

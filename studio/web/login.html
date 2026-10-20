@@ -26,6 +26,8 @@
     button { width: 100%; min-height: 44px; margin-top: 20px; font-size: var(--um-fs-body); font-weight: 600; color: var(--um-paper); background: var(--um-ink);
              border: 0; border-radius: var(--um-radius-sm); padding: 0 16px; }
     button:hover { opacity: .9; }
+    button[aria-busy="true"] { opacity: .75; cursor: progress; }
+    .forgot { margin: 14px 0 0; font-size: var(--um-fs-meta); text-align: center; }
     .error { color: var(--um-danger); background: var(--um-danger-tint); border: 1px solid var(--um-danger-line); border-radius: var(--um-radius-sm); padding: 10px 12px; margin-bottom: 8px; }
   </style>
 </head>
@@ -33,7 +35,7 @@
 <div class="brand" aria-hidden="true"><span class="wordmark">URBAN MAKERS</span><span class="studio-tag">Studio</span></div>
 <main>
   {% if mode == "login" %}
-    <h1>Studio</h1><p>Sign in to plan, review and comment.{% if planner %} Use your planner email and password.{% endif %}</p>
+    <h1>Studio</h1><p id="login-why">Sign in to plan, review and comment.{% if planner %} Use your work email and your Studio password.{% endif %}</p>
   {% elif mode == "setup" %}
     <h1>Welcome to Studio</h1><p>Make the owner account. You'll use it to sign in here and from your phone, and to invite your team.</p>
   {% elif mode == "invite" %}
@@ -58,8 +60,9 @@
     <input id="password" name="password" type="password" required
            autocomplete="{{ 'current-password' if mode == 'login' else 'new-password' }}" {% if mode != "login" %}minlength="10"{% endif %}>
     {% if mode == "login" %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
-    <button type="submit">{{ "Sign in" if mode == "login" else "Create account" }}</button>
+    <button type="submit" id="login-go">{{ "Sign in" if mode == "login" else "Create account" }}</button>
   </form>
+  {% if mode == "login" %}<p class="forgot">Forgot your password? Ask Bryan.</p>{% endif %}
   {% endif %}
 </main>
 <script src="/static/login.js"></script>

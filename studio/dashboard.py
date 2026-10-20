@@ -1226,7 +1226,8 @@ def decide(production_id: int):
     row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
     if row is None:
         abort(404)
-    if decision != "caption" and not is_owner():
+    # The team may send a draft back with notes (Bryan, 2026-10-20); approving, rejecting and the rest are his.
+    if decision not in ("caption", "changes") and not is_owner():
         return jsonify({"error": "only Bryan can do this"}), 403
     if decision == "reopen":  # undo an approve or reject by mistake
         if row["status"] not in ("approved", "rejected") or not (row["video_path"] or row["slides"]):
@@ -1246,7 +1247,8 @@ def decide(production_id: int):
             "SELECT COUNT(*) FROM feedback WHERE target = 'production' AND target_id = ? AND status = 'open'",
             (production_id,)).fetchone()[0]
         import self_fix
-        if not open_notes and not self_fix.read_notes(row):  # Studio's read alone is enough to send it back
+        # Studio's read alone is enough for Bryan to send it back; the team sends it back with a note.
+        if not open_notes and (not is_owner() or not self_fix.read_notes(row)):
             return jsonify({"error": "add at least one note first"}), 400
         catalog.set_production_status(db(), production_id, "revising", caption)
     elif decision in ("approve", "reject"):

@@ -7,9 +7,9 @@
 // on its own address does without, from ideas.production.
 import {
   $, esc, sb, must, toast, cfg, state, isOwner, ownerName, plural, mmss, todayISO, parseDay, dayLabel, dayOf,
-  POST_TYPES, POST_TYPE, kindDot, missingTable, underPlan, isFilmed, openModal, closeModal, formError, offWhy
+  POST_TYPES, POST_TYPE, kindDot, missingTable, underPlan, isFilmed, openModal, closeModal, formError, offWhy, mark
 } from "./core.js";
-import { plan, loadProjects, fromFootage, openQuickAdd, openNewProject } from "./board.js";
+import { plan, loadProjects, fromFootage, openQuickAdd, openNewProject, setKindHint } from "./board.js";
 import { month, loadMonth } from "./month.js";
 import { topics, suggestClick, jobLine, whenLine } from "./topics.js";
 import { loadPosts, upcoming, failedPosts, openSchedule, canSchedule } from "./posting.js";
@@ -79,6 +79,18 @@ export async function loadHome() {
   home.data = { active, ideas, arcs, days, phases, guides, reports, dismissed, api, posts };
 }
 
+// The kind of post the month is shortest of (most slots still to plan): New idea's kind by default.
+export function shortestKind() {
+  const kinds = month.data?.kinds || {};
+  let best = "", gap = 0;
+  for (const k of POST_TYPES) {
+    const g = (Number(kinds[k]?.target) || 0) - (Number(kinds[k]?.planned) || 0);
+    if (g > gap) { gap = g; best = k; }
+  }
+  return best;
+}
+setKindHint(shortestKind);
+
 // ── What needs a decision, what's coming up ─────────────────────────────────
 
 const projectName = (pid) => plan.projects.find((p) => p.id === pid)?.name || "";
@@ -142,6 +154,35 @@ function needs(d) {
   return out;
 }
 
+// The team's own jobs (Bryan, 2026-10-20: Michelle's Plan leads with what she can do): shots to film,
+// Studio's suggestions and new ideas to Go or Park, drafts to watch and leave notes on. What only Bryan
+// can do (failed edits and posts, the style guide, the taste report) folds under "Waiting for Bryan".
+const BRYAN_ONLY = new Set(["failed", "postfail", "guide", "taste"]);
+function teamJobs(d, list) {
+  const out = [];
+  // Shots to film: the next site days with shots still to film, then Go posts part-filmed elsewhere.
+  const days = comingUp(d).filter((x) => x.type === "day").slice(0, 2);
+  for (const x of days) out.push({ ...x, type: "film", key: `film${x.key}` });
+  const withDay = new Set(days.map((x) => x.pid));
+  const toFilm = new Map();
+  for (const i of d.ideas.filter((x) => x.decision === "go" && isReel(x) && !x.production && x.status !== "made" && !withDay.has(x.project_id))) {
+    const left = (i.shots || []).filter((s) => !isFilmed(s)).length;
+    if (left) toFilm.set(i.project_id, (toFilm.get(i.project_id) || 0) + left);
+  }
+  for (const [pid, n] of [...toFilm].slice(0, 2)) out.push({ type: "film", key: `filmp${pid}`, pid, shots: n });
+  // Ideas to Go or Park: Studio's suggestions and footage ideas (as for Bryan), then others waiting, per project.
+  out.push(...list.filter((x) => x.type === "suggest" || x.type === "footage"));
+  const footagePids = new Set(list.filter((x) => x.type === "footage").map((x) => x.pid));
+  const footageArcs = new Set(d.arcs.filter(fromFootage).map((a) => a.id));
+  const waiting = new Map();
+  for (const i of d.ideas.filter((x) => x.decision === "proposed" && x.status === "new" && !x.production && !x.suggestion
+    && !(footageArcs.has(x.arc_id) && footagePids.has(x.project_id)))) waiting.set(i.project_id, (waiting.get(i.project_id) || 0) + 1);
+  for (const [pid, n] of waiting) out.push({ type: "waiting", key: `w${pid}`, pid, n });
+  // Drafts: watch, leave notes, send back (Bryan approves).
+  out.push(...list.filter((x) => x.type === "draft").map((x) => ({ ...x, team: true })));
+  return out;
+}
+
 // Site days with shots still to film, posts in the edit, posts being filmed.
 function comingUp(d) {
   const today = todayISO();
@@ -177,28 +218,32 @@ export function renderHome(force = false) {
   const el = root();
   const d = home.data;
   if (!d) { el.innerHTML = `<div class="hm-wrap"><p class="muted"><span class="spin"></span> Loading…</p></div>`; return; }
-  const list = needs(d);
-  const next = comingUp(d);
-  const sig = JSON.stringify([list, next, month.data, d.posts, topics.job, topics.openQuestions, d.active.map((p) => [p.id, p.name]),
+  const owner = isOwner();
+  const all = needs(d);
+  // Bryan: everything that needs him. The team: their own jobs first; Bryan's list folded under them.
+  const list = owner ? all : teamJobs(d, all);
+  const his = owner ? [] : all.filter((x) => BRYAN_ONLY.has(x.type));
+  const next = comingUp(d).filter((x) => owner || !list.some((j) => j.key === `film${x.key}`));
+  const sig = JSON.stringify([list, his, next, month.data, d.posts, topics.job, topics.openQuestions, d.active.map((p) => [p.id, p.name]),
     d.ideas.length, d.dismissed, [...topics.busy], state.laptop?.info?.topics?.last_suggested]);
   if (!force && sig === home.sig && el.firstChild) return;
   home.sig = sig;
   const now = new Date();
-  const owner = isOwner();
   const n = list.length;
   const headline = !n ? "Nothing needs you right now"
-    : owner ? `${n} ${n === 1 ? "thing needs" : "things need"} you` : `${n} ${n === 1 ? "thing is" : "things are"} waiting for ${ownerName()}`;
+    : owner ? `${n} ${n === 1 ? "thing needs" : "things need"} you` : `${n} ${n === 1 ? "thing" : "things"} you can do`;
   el.innerHTML = `<div class="hm-wrap">
     <header class="hm-head">
       <div class="hm-title">
         <span class="hm-date">${esc(`${WEEKDAY[now.getDay()]} ${now.getDate()} ${MONTHS[now.getMonth()]}`)}</span>
         <h1 class="page-title" id="hm-title" tabindex="-1">${esc(headline)}</h1>
+        ${monthLineHTML()}
       </div>
       <button type="button" class="btn act lg" id="home-new-idea">+ New idea</button>
     </header>
     <div class="hm-cols">
       <div class="hm-main">
-        ${needsHTML(list, d)}
+        ${owner ? needsHTML(list, d) : jobsHTML(list, his)}
         ${nextHTML(next)}
       </div>
       <aside class="hm-side" aria-label="This month and projects">
@@ -220,14 +265,44 @@ function needsHTML(list, d) {
   </section>`;
 }
 
+function jobsHTML(list, his) {
+  const fold = his.length ? `<details class="hm-bryan">
+      <summary><span>${esc(`${plural(his.length, "thing")} waiting for ${ownerName()}`)}</span></summary>
+      ${his.map(needHTML).join("")}</details>` : "";
+  return `<section class="hm-card hm-needs" aria-labelledby="hm-needs">
+    <h2 class="hm-card-head" id="hm-needs">Your jobs</h2>
+    ${list.length ? list.map(needHTML).join("") : `<p class="hm-empty">Nothing for you right now. + New idea starts the next post.</p>`}
+    ${fold}
+  </section>`;
+}
+
 function needHTML(x) {
+  if (x.type === "film") {
+    const today = x.day === todayISO();
+    const when = !x.day ? "" : today ? "Today" : dayLabel(x.day, { weekday: true }).split(" ").slice(0, 2).join(" ");
+    const href = x.day ? `#/today/${x.pid}` : `#/project/${x.pid}`;
+    return `<article class="hm-row" data-need="${esc(x.key)}">
+      <div class="hm-text"><span class="hm-label${today ? " warn-text" : ""}">${esc(when ? `${when} · site day` : "Shots to film")}</span>
+        <span class="hm-name">${esc(`${projectName(x.pid)}: ${plural(x.shots, "shot")} to film`)}</span>
+        ${x.posts ? `<span class="hm-sub">${esc(`For ${plural(x.posts, "post")}${x.phase ? ` · ${x.phase}` : ""}`)}</span>` : ""}</div>
+      <a class="btn hm-act" href="${esc(href)}" data-mark="home_film">${x.day ? "Shot list" : "Film"}</a>
+    </article>`;
+  }
+  if (x.type === "waiting") {
+    return `<article class="hm-row" data-need="${esc(x.key)}">
+      <div class="hm-text"><span class="hm-label">Ideas to decide</span>
+        <span class="hm-name">${esc(`${plural(x.n, "idea")} waiting for Go or Park`)}</span>
+        <span class="hm-sub">${esc(projectName(x.pid))} · open one, then Go or Park</span></div>
+      <a class="btn hm-act" href="#/project/${esc(x.pid)}">Decide</a>
+    </article>`;
+  }
   if (x.type === "draft") {
     return `<article class="hm-row" data-need="${esc(x.key)}">
       ${x.thumb ? `<img class="hm-thumb" src="${esc(x.thumb)}" alt="" loading="lazy">` : `<span class="hm-thumb none" aria-hidden="true"></span>`}
-      <div class="hm-text"><span class="hm-label good-text">Draft ready to review</span>
+      <div class="hm-text"><span class="hm-label good-text">${x.team ? `Draft for ${esc(ownerName())} to approve` : "Draft ready to review"}</span>
         <span class="hm-name">${esc(x.title)}</span>
-        ${x.meta.length ? `<span class="hm-sub">${esc(x.meta.join(" · "))}</span>` : ""}</div>
-      ${x.href ? `<a class="btn hm-act" href="${esc(x.href)}">Review</a>` : ""}
+        ${x.meta.length ? `<span class="hm-sub">${esc((x.team ? ["Watch it, add notes or send it back", ...x.meta] : x.meta).join(" · "))}</span>` : x.team ? `<span class="hm-sub">Watch it, add notes or send it back</span>` : ""}</div>
+      ${x.href ? `<a class="btn hm-act" href="${esc(x.href)}">${x.team ? "Watch" : "Review"}</a>` : ""}
     </article>`;
   }
   if (x.type === "suggest") {
@@ -239,11 +314,11 @@ function needHTML(x) {
       <div class="hm-text"><span class="hm-label">${kind}${esc(what)}</span>
         <a class="hm-name" href="#/idea/${esc(i.id)}">${esc(i.title)}</a>
         ${i.suggestion?.why ? `<span class="hm-sub">${esc(i.suggestion.why)}</span>` : ""}</div>
-      ${isOwner() ? `<div class="hm-btns">
+      <div class="hm-btns">
         <button type="button" class="btn good" data-sugg-act="go" ${busy} aria-label="Go: ${esc(i.title)}">Go</button>
         <button type="button" class="btn" data-sugg-act="parked" ${busy} aria-label="Not now: ${esc(i.title)}" title="Park it: it stays on the board for later">Not now</button>
-        <button type="button" class="btn ghost" data-sugg-act="dismissed" ${busy} aria-label="Dismiss: ${esc(i.title)}" title="Studio won't suggest it again">Dismiss</button>
-      </div>` : `<span class="hm-wait">${esc(ownerName())} decides</span>`}
+        ${isOwner() ? `<button type="button" class="btn ghost" data-sugg-act="dismissed" ${busy} aria-label="Dismiss: ${esc(i.title)}" title="Studio won't suggest it again">Dismiss</button>` : ""}
+      </div>
     </article>`;
   }
   if (x.type === "footage") {
@@ -334,7 +409,8 @@ function monthHTML() {
     for (let i = 0; i < t; i++) slots += `<span class="hm-slot ${k}${i < out ? " on posted" : i < p ? " on" : ""}" data-kind="${k}" title="${esc(`${POST_TYPE[k]}${i < out ? ": posted" : i < p ? ": planned" : ""}`)}"></span>`;
     total += t;
     filled += Math.min(p, t);
-    if (t > p) left.push(`<a href="#/month/${k}">${esc(`${t - p} ${POST_TYPE[k]}`)}</a>`);
+    if (t > p) left.push(`<li><a href="#/month/${k}">${kindDot(k)}${esc(`${t - p} ${POST_TYPE[k]}`)}</a>
+      <button type="button" class="btn small" data-add-kind="${k}" aria-label="${esc(`Add a ${POST_TYPE[k]} idea`)}">+ Add</button></li>`);
   }
   const untyped = Number(d.untyped) || 0;
   const busy = topics.job && (topics.job.state === "queued" || topics.job.state === "running");
@@ -343,7 +419,8 @@ function monthHTML() {
     <div class="hm-month-head"><h2 id="hm-month">${esc(name)}</h2>
       <span class="hm-sub">${esc(`${d.planned ?? 0} of ${d.target ?? total} posts planned`)}${d.posted ? ` · ${esc(d.posted)} posted` : ""}${d.scheduled ? ` · ${esc(d.scheduled)} scheduled` : ""}${!d.posted && !d.scheduled && d.ready ? ` · ${esc(d.ready)} ready` : ""}</span></div>
     ${total ? `<div class="hm-slots" role="img" aria-label="${esc(`${total} post slots, ${filled} planned`)}">${slots}</div>` : ""}
-    <p class="hm-still">${total ? (left.length ? `Still to plan: ${left.join(", ")}.` : "Every slot this month is planned.") : `No monthly targets yet.`}</p>
+    ${total && left.length ? `<p class="hm-still">Still to plan:</p><ul class="hm-gaps">${left.join("")}</ul>`
+      : `<p class="hm-still">${total ? "Every slot this month is planned." : "No monthly targets yet."}</p>`}
     ${untyped ? `<p class="hm-sub">${esc(plural(untyped, "planned post"))} ${untyped === 1 ? "has" : "have"} no kind yet: Studio sorts ${untyped === 1 ? "it" : "them"} soon.</p>` : ""}
     <div class="hm-month-foot">
       <a href="#/content-plan">Targets and offers</a>
@@ -351,6 +428,19 @@ function monthHTML() {
     </div>
     ${foot ? `<p class="hm-sub" aria-live="polite">${foot}</p>` : ""}
   </section>`;
+}
+
+// "11 of 13 planned · still to plan: 1 On site, 2 Work with us" under the title (on a phone the month is
+// below the jobs); a tap goes to the month card.
+function monthLineHTML() {
+  const d = month.data;
+  if (!d || month.missing) return "";
+  const kinds = d.kinds || {};
+  const left = POST_TYPES.map((k) => [k, (Number(kinds[k]?.target) || 0) - (Number(kinds[k]?.planned) || 0)]).filter(([, n]) => n > 0);
+  const total = Number(d.target) || POST_TYPES.reduce((n, k) => n + (Number(kinds[k]?.target) || 0), 0);
+  if (!total) return "";
+  const text = `${d.planned ?? 0} of ${total} planned${left.length ? ` · still to plan: ${left.map(([k, n]) => `${n} ${POST_TYPE[k]}`).join(", ")}` : " · every slot planned"}`;
+  return `<a class="hm-month-line" href="#hm-month" data-month-line>${esc(text)}</a>`;
 }
 
 function projectsHTML(d) {
@@ -406,10 +496,15 @@ async function clearDismissed() {
 }
 
 root().addEventListener("click", async (e) => {
+  const line = e.target.closest("[data-month-line]");
+  if (line) { e.preventDefault(); $("#hm-month")?.closest(".hm-card")?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+  const go = e.target.closest("a[data-mark]");
+  if (go) mark(go.dataset.mark);
   const t = e.target.closest("button, .hm-slot");
   if (!t) return;
   try {
-    if (t.id === "home-new-idea") openQuickAdd({ from: "home" });
+    if (t.id === "home-new-idea") openQuickAdd({ from: "home" });   // its kind: the month's shortest (setKindHint)
+    else if (t.dataset.addKind) { mark("month_gap_add", { kind: t.dataset.addKind }); openQuickAdd({ from: "home", kind: t.dataset.addKind }); }
     else if (t.id === "home-new-project") openNewProject();
     else if (t.matches("[data-clear-dismissed]")) await clearDismissed();
     else if (t.matches("[data-post-retry]")) openSchedule(Number(t.dataset.postRetry));

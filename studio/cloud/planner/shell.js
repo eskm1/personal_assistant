@@ -19,6 +19,7 @@ window.StudioShell = (() => {
   const root = document.getElementById("shell");
   if (!root) return null;
   const $ = (sel) => root.querySelector(sel);
+  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const $$ = (sel) => [...root.querySelectorAll(sel)];
   const half = root.dataset.half === "review" ? "review" : "plan";
 
@@ -118,6 +119,12 @@ window.StudioShell = (() => {
         <div class="shell-sheet-account" id="shell-sheet-account"></div>
       </div>
     </div>`;
+  // Who was signed in here last time, drawn at once (the page fills it in again when it knows): the bar
+  // used to grow by a name's width after load, and move the page with it.
+  try {
+    const name = localStorage.getItem("studio.meName");
+    if (name) $("#account-btn").innerHTML = `<span class="avatar" aria-hidden="true">${esc(name.slice(0, 1).toUpperCase())}</span><span class="account-name">${esc(name)}</span>`;
+  } catch { /* private mode */ }
 
   let current = "";
   function paintLinks() {
@@ -310,7 +317,7 @@ window.StudioShell = (() => {
   // ── A control that can't act says why ─────────────────────────────────────
   // [aria-disabled=true][data-why]: a tap (or click) shows the reason instead of acting; hover and keyboard focus
   // show it too. One small note under the control, closed by the next tap, Escape or after a while.
-  let why = null, whyFor = null, whyTimer = 0;
+  let why = null, whyFor = null, whyTimer = 0, whyWatch = 0;
   function showWhy(el, sticky) {
     const text = el.dataset.why;
     if (!text) return;
@@ -336,6 +343,12 @@ window.StudioShell = (() => {
     why.style.bottom = below ? "" : `${window.innerHeight - r.top + 8}px`;
     clearTimeout(whyTimer);
     whyTimer = setTimeout(hideWhy, sticky ? 6000 : 4000);
+    // Its control redrawn or gone (a busy button that has finished): the note goes with it.
+    clearInterval(whyWatch);
+    whyWatch = setInterval(() => {
+      if (!whyFor || why.hidden) clearInterval(whyWatch);
+      else if (!whyFor.isConnected || whyFor.getAttribute("aria-disabled") !== "true") { clearInterval(whyWatch); hideWhy(); }
+    }, 200);
   }
   function hideWhy() {
     if (!why || why.hidden) return;

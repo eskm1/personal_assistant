@@ -3,7 +3,7 @@
 // page (#/questions: a fast add box and the list, with the posts they became). The Studio machine
 // writes the suggestions (topics.py); the team keeps the questions.
 import {
-  esc, sb, must, toast, plural, isOwner, ownerName, nameOf, missingTable, shortDate, ago, state, laptopWait, DECISION, mark } from "./core.js";
+  esc, sb, must, toast, plural, isOwner, ownerName, nameOf, missingTable, shortDate, ago, state, laptopWait, DECISION, mark, setCall } from "./core.js";
 
 export const topics = { list: [], job: null, missing: false, questions: null, ideas: new Map(), editing: null, busy: new Set() };
 
@@ -55,7 +55,7 @@ export function jobLine() {
   return "";
 }
 
-// Go / Park / Dismiss on a card (the owner), and "Suggest topics" (anyone).
+// Go / Not now on a card (anyone on the team), Dismiss (the owner), and "Suggest topics" (anyone).
 export async function suggestClick(t, rerender) {
   if (t.matches("[data-suggest-topics]")) {
     t.disabled = true;
@@ -78,13 +78,14 @@ export async function suggestClick(t, rerender) {
   topics.busy.add(id);
   rerender();
   try {
-    const values = act === "dismissed" ? { status: "dismissed" } : { decision: act };
-    const rows = must(await sb.from("ideas").update(values).eq("id", id).select("id"));
-    if (!rows?.length) throw new Error(`only ${ownerName()} can decide`);
+    if (act === "dismissed" && !isOwner()) throw new Error(`only ${ownerName()} can dismiss a suggestion`);
+    await setCall(id, act === "dismissed" ? { status: "dismissed" } : { decision: act });
     topics.list = topics.list.filter((x) => x.id !== id);
-    mark("idea_decided", { decision: act, from: "home" });
+    mark("idea_decided", { decision: act, from: "home", team: !isOwner() });
+    // After Go the idea leaves this list: the toast is the way to it.
+    const open = act === "dismissed" ? null : { label: "Open", href: `#/idea/${id}`, mark: "toast_open" };
     toast(act === "go" ? (i.format === "carousel" ? "Marked Go. Open it to write the slides." : "Marked Go.")
-      : act === "parked" ? "Parked." : "Dismissed. Studio won't suggest it again.");
+      : act === "parked" ? "Parked: it stays on the board for later." : "Dismissed. Studio won't suggest it again.", 3200, open);
   } finally {
     topics.busy.delete(id);
     rerender();

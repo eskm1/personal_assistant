@@ -110,10 +110,23 @@ def planner_file(name: str = "index.html"):
     return _secure(response, response.headers["Cache-Control"])
 
 
+# The files Review loads too (the look, the bar, the posting dialogs, usage capture, the fonts): here they're
+# asked for at Review's addresses, so a browser that has opened Review (a Telegram link, the sign-in page)
+# has them already. The planner on Netlify keeps its own relative addresses.
+_SHARED_REF = re.compile(r'(\s(?:href|src)=")((?:%s)|fonts/[\w.-]+\.woff2)"'
+                         % "|".join(re.escape(n) for n in sorted(webassets.SHARED)))
+# The planner's icons are copies of Review's (studio/web): asked for under Review's names, kept once.
+_SAME_ICONS = {"favicon.ico": "studio.ico", "apple-touch-icon.png": "apple-touch-icon.png", "icon-192.png": "icon-192.png"}
+
+
 def index_html() -> Response:
     """The planner's page, checked on every visit: its files carry ?v= (kept a year), config.js
     its own (it only changes with the Supabase project or its key)."""
-    page = webassets.with_sw(webassets.stamp_html((PLANNER / "index.html").read_text(encoding="utf-8")))
+    page = (PLANNER / "index.html").read_text(encoding="utf-8")
+    page = _SHARED_REF.sub(lambda m: f'{m[1]}/static/{m[2]}"', page)
+    for mine, review in _SAME_ICONS.items():   # the same pictures Review's pages name
+        page = page.replace(f'href="{mine}"', f'href="/static/{review}"')
+    page = webassets.with_sw(webassets.stamp_html(page))
     page = re.sub(r'src="config\.js(\?v=[0-9a-f]+)?"', f'src="config.js?v={_config()[1]}"', page)
     response = Response(page, mimetype="text/html")
     response.add_etag()
@@ -126,8 +139,23 @@ def _config() -> tuple[str, str]:
     config = {"supabaseUrl": settings.SUPABASE_URL, "supabaseAnonKey": key, "studioUrl": ""}
     if not key:
         config["problem"] = cloud_auth.anon_problem() or "The planner's public key isn't known on this machine"
-    body = f"// Made by Studio (planner_site.py).\nwindow.STUDIO_CONFIG = {json.dumps(config, indent=2)};\n"
+    body = f"// Made by Studio (planner_site.py).\nwindow.STUDIO_CONFIG = {json.dumps(config, indent=2)};\n" + _EARLY_SESSION
     return body, hashlib.sha1(body.encode()).hexdigest()[:10]
+
+
+# Asked for the moment the page starts (config.js comes before the planner's scripts): the planner session
+# of whoever is signed in to Studio, when this browser has none yet. app.js takes this answer instead of
+# asking once every module has loaded (a round trip from far away, on a first visit).
+_EARLY_SESSION = """// A first visit: ask Studio for the planner session now (app.js takes window.STUDIO_EARLY_SESSION).
+(function () {
+  try {
+    for (var i = 0; i < localStorage.length; i++) if (/^sb-.*-auth-token$/.test(localStorage.key(i) || "")) return;
+  } catch (e) { return; }
+  if (/[#&](access_token|error)=/.test(location.hash)) return;
+  window.STUDIO_EARLY_SESSION = fetch("/api/planner-session", { credentials: "same-origin", headers: { Accept: "application/json" } })
+    .catch(function () { return null; });
+})();
+"""
 
 
 def config_js() -> Response:

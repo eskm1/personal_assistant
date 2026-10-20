@@ -14,11 +14,18 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <link rel="preload" href="fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <!-- The faces Plan's first screen draws (bold text, the wordmark and title, the date): found now, not after the stylesheet. -->
+  <link rel="preload" href="fonts/ibm-plex-sans-latin-500-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/ibm-plex-sans-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/barlow-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/ibm-plex-mono-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="theme.css">
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="shell.css">
   <link rel="stylesheet" href="post-ui.css">
-  <!-- Every module at once, instead of one level of imports after another (far from the server, each level is a round trip). -->
+  <!-- Every module Plan starts with at once, instead of one level of imports after another (far from the server, each
+       level is a round trip). References, the library and the taste report (refs.js, library.js, refimport.js) load
+       when one of their pages opens. -->
   <link rel="modulepreload" href="js/app.js">
   <link rel="modulepreload" href="js/core.js">
   <link rel="modulepreload" href="js/auth.js">
@@ -27,15 +34,12 @@
   <link rel="modulepreload" href="js/idea.js">
   <link rel="modulepreload" href="js/checklist.js">
   <link rel="modulepreload" href="js/team.js">
-  <link rel="modulepreload" href="js/refs.js">
   <link rel="modulepreload" href="js/shoot.js">
   <link rel="modulepreload" href="js/month.js">
   <link rel="modulepreload" href="js/upload.js">
   <link rel="modulepreload" href="js/posting.js">
   <link rel="modulepreload" href="js/topics.js">
   <link rel="modulepreload" href="js/slides.js">
-  <link rel="modulepreload" href="js/library.js">
-  <link rel="modulepreload" href="js/refimport.js">
 </head>
 <body>
   <noscript><p class="noscript">Studio needs JavaScript.</p></noscript>
@@ -84,8 +88,9 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-  <script src="vendor/supabase.js"></script>
+  <!-- config.js first: served by Studio, it also asks for the planner session straight away (planner_site.py). -->
   <script src="config.js"></script>
+  <script src="vendor/supabase.js"></script>
   <script src="shell.js"></script>
   <script src="post-ui.js"></script>
   <script src="capture.js" async></script>

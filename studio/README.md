@@ -154,7 +154,9 @@ Manager.
 ## 8. The dashboard (where you review)
 
 While the worker runs, it serves a review site at **http://127.0.0.1:8765** on the laptop.
-It's laid out like Reels: a grid of tiles you can filter by account, with tabs for each stage.
+It's laid out like Reels: a grid of tiles you can filter by account, with tabs for each stage. On a phone the row
+shows **To review**, **Done** and **Library**; **Being edited**, **Ingesting** and **In the cloud** are under its
+**More** (the stage you're on always shows).
 
 | Tab | What's in it |
 | --- | --- |
@@ -177,19 +179,23 @@ caption, what the editor did, music, transcript, checks, brief and DaVinci Resol
 remember whether you left them open). The video is a small tile; the decision bar at the bottom
 has **Reject**, **Send back with N fixes** and **Approve**. Raw clips in the Library open the
 same way: the quality verdict with "Next time" tips, the best moments, then folded rows (the tag
-check is under **Tags**).
+check is under **Tags**). Michelle sees the same draft page; her bar has **Add a note**, then **Send back** with her
+notes (Bryan approves or rejects).
 
 Studio's read is one Claude call after each draft renders (a few cents). If it fails, the draft
 is still ready to review and the owner gets a **Get Studio's read** button. When the worker
 starts it writes the read for up to 10 drafts waiting for review that don't have one.
 
-The quickest way: the box right under the video ("Note at 0:12"). Typing pauses the video, Enter adds the note
-pinned to that moment, and the cursor stays for the next one. On a phone, Play grows the video at the top of the page
-(not the system's full screen) and it stays there with that box while you scroll; **Close video** shrinks it back.
-With no notes yet, the bar's **Add a note** puts the cursor there; on a computer **N** does too.
+A draft has one note box, right under the video ("Note at 0:12"). Typing pauses the video, Enter adds the note
+pinned to that moment (it shows in the list at once, marked Saving…, and goes back in the box with why if it
+couldn't be saved; **Undo** under the box takes it back), and the cursor stays for the next one. On a phone, Play
+grows the video at the top of the page (not the system's full screen) and it stays there with that box while you
+scroll; **Close video** shrinks it back. Under your notes, **Add a note at a moment** and the bar's **Add a note**
+put the cursor in that box; on a computer **N** does too. The video isn't downloaded until you press Play.
 
-Pause on a moment, type a note, and it's pinned to that time. Tick **Remember for future edits**
-and the note is also added to `Studio\playbook.md`, the rules the editor follows on every edit.
+Tick **Remember for future edits** (under the box, Bryan only) and the note is also added to `Studio\playbook.md`,
+the rules the editor follows on every edit. A carousel has its note box under its notes, with which slide it's
+about; a raw clip keeps both its box under the video and the one in its Notes fold.
 **×** beside a note takes it back (yours, or anyone's for the owner) until the editor has acted on it. To pick
 the music, paste an Epidemic Sound track link (epidemicsound.com/music/tracks/...) as a note: the next draft
 uses exactly that track, and so do later ones until you paste another.
@@ -438,9 +444,11 @@ others; set `STUDIO_ALLOWED_EMAIL_DOMAINS` to change it). Owner accounts may use
 | | Bryan (owner) | Team |
 | --- | --- | --- |
 | Plan: projects, arcs, ideas, storyboards, organise or refine with Claude, music shortlists, votes, comments, tick shots, attach footage | yes | yes |
-| Mark ideas **Go** / **Park** / **Dismiss** | yes | sees your call |
+| Mark ideas **Go** / **Park** (Bryan, 2026-10-20) | yes | yes |
+| **Dismiss** an idea or a suggestion | yes | no |
 | **Make this** (sends to the editor; costs an edit), Suggest posts | yes | no |
-| Request changes, Approve, Reject, Back to review, Retry edit, Resolve export | yes | no (they can leave notes) |
+| **Send back** a draft with notes (Bryan, 2026-10-20) | yes | yes (with at least one note) |
+| Approve, Reject, Back to review, Retry edit, Schedule, Resolve export | yes | no (they can leave notes) |
 | Notes on clips and drafts, fix tags, edit captions | yes | yes |
 | API costs, invites, removing people | yes | no |
 
@@ -525,26 +533,39 @@ bottom). **More** has References, the style guide, Targets and offers, Client qu
 Library.
 
 **Plan** opens on what needs you, across every project: the date, "N things need you" and one orange **+ New
-idea** (one idea, or several at once to file or organise with Claude). **Needs your call** lists drafts ready
-to review, posts Studio suggests (**Go**, **Not now** (parks it) or **Dismiss**; Michelle sees "Bryan
-decides"), "N post ideas from new footage" (**Look through**) and anything else waiting, such as a style guide
-draft. **Coming up** has the next site days with shots to film (**Shot list** opens Today on site), posts in the
+idea**. **Needs your call** lists drafts ready to review, posts Studio suggests (**Go**, **Not now** (parks it) or
+**Dismiss**; after Go the toast's **Open** opens the idea), "N post ideas from new footage" (**Look through**) and
+anything else waiting, such as a style guide draft. Michelle's Plan opens on **Your jobs** instead: the next site
+days with shots to film (**Shot list**), Go posts with shots still to film, Studio's suggestions (**Go** / **Not
+now**), new ideas to Go or Park per project (**Decide**) and drafts to watch and leave notes on; Bryan's own list
+(failed edits or posts, a style guide or taste report to approve) is folded under it as "N things waiting for
+Bryan". On a phone a line under the date sums up the month ("11 of 13 planned · still to plan: ..."). **Coming up** has the next site days with shots to film (**Shot list** opens Today on site), posts in the
 edit and posts being filmed. On the side: the month as slots, one per post you want (filled for planned, outlined
-for still to plan, coloured by kind), "Still to plan: ...", **Targets and offers**, your projects (each opens
-its board) and Client questions. Archived projects drop out.
+for still to plan, coloured by kind), "Still to plan" with **+ Add** beside each gap (New idea with that kind
+chosen), **Targets and offers**, your projects (each opens its board) and Client questions. Archived projects
+drop out.
 
-**Ideas** is one project at a time: tap the project's name to change project; the line under it says how many
-shots are filmed and the next site day. Ideas are grouped by what to do next: **Ready to make** (every shot
-filmed), **Film these** (Go, shots still to film), **Waiting for your call**, **Parked** and **Made** (both
+**New idea** asks only for the essentials: the project (from Plan), the idea and its kind (from Plan it starts on
+the kind the month is shortest of; "Let Studio decide" is still there). **More** has the rest: Reel or carousel,
+a link (kept as its first comment), its series, and adding several ideas at once (a list or a messy brain-dump,
+added as written or organised by Claude). After **Add** the toast's **Open** opens the new idea.
+
+**Ideas** is one project at a time: tap the project's name to change project (client projects first, Everyday
+posts and Topics last); a device's first visit opens on the project with the next site day, else the one most
+recently worked on. The line under it says how many shots are filmed and the next site day. Ideas are grouped by
+what to do next: **Ready to make** (every shot filmed), **Film these** (Go, shots still to film), **Waiting for
+your call** (Michelle: **Waiting for Go or Park**), **Parked** and **Made** (both
 folded on a phone; columns on a computer). Each card is a title and one status line. The one orange button is
 **+ New idea**. The project's tools are in its **⋯** menu: Shoot plan (phases and site days), Brief and inbox
 folder, Series, Find ideas in new footage, Today on site, New project, Archive.
 
 An idea opens to its title and one line (kind · format · length · series; tap it for **Details**: the title,
-series, account, kind, format, length, Move to another project, Dismiss), **Your call** (Go / Park, the votes),
+series, account, kind, format, length, Move to another project, Dismiss), **Your call** (Go / Park for anyone on
+the team: tap the one that's on to undo, and the line beside it says so for a few seconds; the votes),
 the hook, the shot list (tap a shot for its full editor) and folds for Caption and ask, Music, Comments and
 Change it with Claude. The orange button at the bottom is the next step: **Film shot N** (Upload on a computer),
-then **Make this**.
+then **Make this**. A shot with an upload on its way says "Uploading…", then "Uploaded · Studio is checking it"
+until the clip is on it, and the button moves on to the next shot to film.
 
 - **Project**: a job, say *Kensington*, with a short brief (who the client is, what's being done,
   what to show). Making one also makes an inbox subfolder, `Studio Inbox\Kensington`. Uploads
@@ -675,7 +696,7 @@ waiting for your call, it suggests nothing new. Anyone can ask for some now with
 
 Each suggestion is a row under **Needs your call** on Plan: its kind, Carousel or Reel, the title and a short "why now" ("Fills
 October's Ideas gap", "You explained this on site last Tuesday", "Michelle logged this client question"). Tap it
-to open the idea, or press **Go**, **Not now** (Park) or **Dismiss** right there (you only; Michelle sees "Bryan decides").
+to open the idea, or press **Go**, **Not now** (Park) or **Dismiss** right there (Michelle: Go and Not now; Dismiss is yours).
 Most are carousels with the slide outline written, in the **Topics** project (arc **Studio suggests**): Go, then
 **Write slides** when you want them finished. Where you already explained it on camera it's a Reel in that job's
 project (arc **From your footage**) with your clip already in the storyboard. Studio never suggests something

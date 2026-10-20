@@ -17,6 +17,12 @@
 .tabs button.on { background: var(--um-ink); color: var(--um-paper); }
 .tabs button.on .count:not(.hot) { background: rgba(251, 250, 247, .18); color: var(--um-paper); }
 .tabs button:focus-visible { outline: 2px solid var(--um-ink); outline-offset: 2px; }
+/* More: the stages that are the machine at work (Being edited, Ingesting, In the cloud), on a phone only. */
+.tabs .tab-more { display: none; }
+.tab-more .chev { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.tabs-menu { right: 16px; top: calc(100% + 2px); min-width: 200px; }
+.tabs-menu button { gap: 10px; }
+.tabs-menu .grow { flex: 1; }
 .updated { color: var(--ink-soft); font-size: var(--um-fs-meta); }
 
 /* ── Grid ───────────────────────────────────────────── */
@@ -448,7 +454,10 @@ code { background: var(--um-paper-mid); border-radius: 4px; padding: 1px 5px; fo
 @media (max-width: 720px) {
   .subnav { padding: 4px 0; gap: 8px; }
   .tabs { padding: 0 16px; scroll-padding: 0 16px; }
-  .tabs button { min-height: 44px; }
+  .tabs { gap: 2px; }
+  .tabs button { min-height: 44px; padding: 0 9px; }
+  .tabs button.extra:not(.on) { display: none; }
+  .tabs .tab-more { display: inline-flex; }
   .subnav .seg { margin-right: 16px; }
 }
 
@@ -495,6 +504,10 @@ code { background: var(--um-paper-mid); border-radius: 4px; padding: 1px 5px; fo
 .quick-note label { display: flex; }
 .quick-note input { flex: 1; min-width: 0; }
 .quick-note .btn { flex: none; padding: 0 12px; }
+.quick-remember { display: flex; align-items: center; gap: 6px; }
+.quick-status { min-height: 1.5em; }
+.quick-status .link { display: inline; padding: 0; min-height: 0; }
+.note-jump-row { margin: 4px 0 6px; }
 .tile-links { display: flex; gap: 16px; }
 .watch-close { display: none; }
 
@@ -575,6 +588,7 @@ code { background: var(--um-paper-mid); border-radius: 4px; padding: 1px 5px; fo
 .note-list li { display: flex; gap: 10px; align-items: flex-start; line-height: 1.45; font-size: var(--um-fs-body); }
 .note-list li::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--ink-soft); margin-top: 8px; }
 .note-list li.addressed { opacity: .6; }
+.note-list li.pending .note-meta { font-style: italic; }
 .note-list .time-chip { min-height: var(--um-h-sm); padding: 0 8px; }
 .note-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .note-list .icon-btn { flex: none; margin-top: -4px; }
@@ -652,7 +666,7 @@ code { background: var(--um-paper-mid); border-radius: 4px; padding: 1px 5px; fo
 .bar-btn.good { background: var(--um-success); border-color: var(--um-success); color: #fff; font-weight: 600; padding: 0 22px; }
 .bar-btn.good:hover:not(:disabled) { background: var(--um-success); opacity: .92; }
 .bar-btn:focus-visible { outline: 2px solid var(--um-ink); outline-offset: 2px; }
-.bar-note { margin: 0; color: var(--ink-soft); align-self: center; }
+.bar-note { margin: 0 auto 0 0; color: var(--ink-soft); align-self: center; }
 .bar-note strong { color: var(--um-ink); }
 body:has(.viewer.detail-mode:not([hidden]) .decision-bar:not([hidden])) .toast { bottom: 92px; }
 
@@ -663,7 +677,7 @@ body:has(.viewer.detail-mode:not([hidden]) .decision-bar:not([hidden])) .toast {
   .viewer.detail-mode .head-next { margin-left: 0; min-width: 44px; justify-content: center; font-size: var(--um-fs-h2); }
   /* Thumbnail beside the title; everything else full width under it */
   .viewer.detail-mode .viewer-inner {
-    display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 14px 12px; align-items: center; padding: 14px 16px 24px;
+    display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 14px 12px; align-items: center; align-content: start; padding: 14px 16px 24px;
   }
   .viewer.detail-mode .player-col { grid-column: 1; grid-row: 1; min-width: 0; width: 64px; position: static; }
   .viewer.detail-mode .player-frame { width: 64px; height: 112px; border-radius: var(--um-radius-sm); }
@@ -699,6 +713,7 @@ body:has(.viewer.detail-mode:not([hidden]) .decision-bar:not([hidden])) .toast {
     padding: 10px 16px calc(14px + env(safe-area-inset-bottom)); background: var(--um-card);
   }
   .viewer.detail-mode .bar-note { grid-column: 1 / -1; font-size: var(--um-fs-ui); }
+  .viewer.detail-mode .bar-note ~ .bar-btn:last-child:nth-child(2) { grid-column: 1 / -1; }
   .bar-btn { min-height: 48px; padding: 0 10px; }
   .composer .btn { padding: 0 12px; }
   body:has(.viewer.detail-mode:not([hidden]) .decision-bar:not([hidden])) .toast { bottom: 96px; }

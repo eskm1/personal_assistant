@@ -21,7 +21,7 @@
   })();
   const Q = [];
   // The first batch goes ~15 s after the page opens (or when it's left), like every one after it.
-  let off = false, timer = 0, lastSend = Date.now(), sending = false, inflight = null;
+  let off = false, timer = 0, lastSend = Date.now(), sending = false, inflight = null, failures = 0;
   const host = () => window.StudioShell?.host || null;
 
   function where() {
@@ -38,8 +38,10 @@
     schedule();
   }
   function schedule() {
-    if (Q.length >= 40) { flush(); return; }
-    if (!timer) timer = setTimeout(flush, Math.max(15000 - (Date.now() - lastSend), 2000));
+    // A full queue goes at once, but not straight after a send that failed: then it waits, longer each time
+    // (a send that fails at once, offline or refused, used to retry in a loop that froze the page).
+    if (Q.length >= 40 && !failures) { flush(); return; }
+    if (!timer) timer = setTimeout(flush, failures ? Math.min(2000 * 2 ** failures, 120000) : Math.max(15000 - (Date.now() - lastSend), 2000));
   }
 
   async function flush(leaving = false) {
@@ -49,7 +51,9 @@
     if (off || !h || (!Q.length && !(leaving && inflight))) return;
     if (h.usage === null) { off = true; Q.length = 0; return; }   // capture is off on this Studio
     const url = h.usage?.url;
-    if (!url || (sending && !leaving)) { if (!leaving) schedule(); return; }   // leaving: send now, even mid-send
+    // No address yet, or a send on its way: try again later (not schedule(): with a full queue that came straight
+    // back here). Leaving: send now, even mid-send.
+    if (!url || (sending && !leaving)) { if (!leaving && !timer) timer = setTimeout(flush, sending ? 2000 : 15000); return; }
     const same = url.startsWith("/");
     // A request still on its way as the page goes: its batch goes again by beacon (Studio drops the copy by its id).
     if (leaving && inflight && same && navigator.sendBeacon) navigator.sendBeacon(url, new Blob([inflight], { type: "text/plain" }));
@@ -71,9 +75,11 @@
       });
       const j = await res.json().catch(() => ({}));
       if (j.on === false) { off = true; Q.length = 0; }
-      else if (!res.ok && res.status !== 400 && res.status !== 413) Q.unshift(...batch.slice(0, 200));
+      else if (!res.ok && res.status !== 400 && res.status !== 413) { Q.unshift(...batch.slice(0, 200)); failures += 1; }
+      else failures = 0;
     } catch {
       if (!leaving) Q.unshift(...batch);
+      failures += 1;
     } finally {
       sending = false;
       inflight = null;

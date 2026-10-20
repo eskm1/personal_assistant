@@ -2,6 +2,14 @@
    Tokens and controls come from theme.css. */
 .sp-modal { z-index: 40; }
 .sp-card { max-width: 560px; }
+/* The Schedule dialog opens at its full size (greyed rows while it loads) and grows downwards only. */
+.sp-modal:has(.sp-tall) { align-items: start; }
+.sp-card.sp-tall { margin-top: min(6vh, 48px); }
+.sp-skeleton { opacity: .55; }
+@media (max-width: 860px) {
+  .sp-modal:has(.sp-tall) { align-items: end; }
+  .sp-card.sp-tall { margin-top: 0; height: calc(100vh - 16px); height: calc(100dvh - 16px); }
+}
 .sp-body .sr-only, .sp-connect .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .sp-draft { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; }
 .sp-draft > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
