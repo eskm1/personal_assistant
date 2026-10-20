@@ -1582,8 +1582,10 @@ function renderTile(item, video, original, thumb) {
     ${item.duration ? `<span class="tile-time">${esc(mmss(item.duration))}</span>` : ""}
     ${original ? `<button class="quality${useOriginal ? " on" : ""}" id="quality" title="${esc(QUALITY_TIP)}">${qualityLabel(item, useOriginal)}</button>` : ""}`;
   const v = player();
+  stopWatching(false);
   v.addEventListener("timeupdate", updatePinLabel);
-  v.addEventListener("play", () => { frame.classList.add("playing"); if (!phone()) v.controls = true; });
+  v.addEventListener("seeked", updatePinLabel);
+  v.addEventListener("play", () => { frame.classList.add("playing"); if (!phone() || watching()) v.controls = true; });
   v.addEventListener("ended", () => frame.classList.remove("playing"));
   v.addEventListener("webkitendfullscreen", () => v.pause());  // iPhone: leaving full screen stops it
   v.addEventListener("error", () => {
@@ -1595,13 +1597,45 @@ function renderTile(item, video, original, thumb) {
   $("#quality")?.addEventListener("click", () => setQuality(item, !$("#quality").classList.contains("on")));
 }
 
-// Play from a moment: in the tile on a computer, full screen on a phone.
+// Play from a moment: in the tile on a computer; on a phone the video grows at the top of
+// the page (watching), with the note box under it, so a note is one tap from the moment.
 function playAt(at) {
   const v = player();
   if (!v) return;
   if (at != null && Number.isFinite(at)) v.currentTime = at;
+  if (phone() && detailMode()) startWatching();
   v.play().catch(() => {});
-  if (phone() && detailMode()) playFull(v);
+}
+
+const watching = () => $("#viewer").classList.contains("watching");
+function startWatching() {
+  const v = player();
+  if (!v || !detailMode() || !phone()) return;
+  const viewer = $("#viewer");
+  // Sticks just under the page's top line (itself under the app bar).
+  const head = $("#detail-head");
+  const top = (parseFloat(getComputedStyle(head).top) || 0) + head.offsetHeight;
+  viewer.style.setProperty("--watch-top", `${top}px`);
+  if (!watching()) {
+    viewer.classList.add("watching");
+    v.controls = true;
+    $(".player-col").scrollIntoView?.({ block: "nearest" });
+  }
+}
+function stopWatching(pause = true) {
+  const viewer = $("#viewer");
+  if (!viewer.classList.contains("watching")) return;
+  viewer.classList.remove("watching");
+  const v = player();
+  if (v) { if (pause) v.pause(); if (phone()) v.controls = false; }
+}
+// "Add a note" from anywhere: pause, and put the cursor in the box under the video.
+function noteHere() {
+  const quick = $("#quick-note");
+  if (!quick) { $("#note-body")?.scrollIntoView({ block: "center" }); $("#note-body")?.focus(); return; }
+  if (phone()) startWatching();
+  player()?.pause();
+  quick.focus();
 }
 function playFull(v = player()) {
   if (!v) return;
@@ -1779,7 +1813,7 @@ function renderPanel() {
     panel.innerHTML = isCarousel(d) ? carouselPageHTML(d) : d.kind === "production" ? productionPageHTML(d) : clipPageHTML(d);
   });
   if (isCarousel(d)) renderCarouselTile(d);
-  renderTileMeta(d);
+  keepDrafts(["quick-note"], () => renderTileMeta(d));
   renderHead();
   renderDecisionBar();
   updatePinLabel();
@@ -2479,6 +2513,8 @@ function clipPageHTML(d) {
 function renderTileMeta(d) {
   const el = $("#tile-meta");
   if (!detailMode() || !d) { el.innerHTML = ""; return; }
+  // Not while someone is typing a note in it (a refresh would close the phone's keyboard).
+  if (document.activeElement?.id === "quick-note" && el.contains(document.activeElement)) return;
   let line;
   if (isCarousel(d)) {
     line = [d.version ? `v${d.version}` : "", "Carousel", d.slides?.length ? `${d.slides.length} slides` : ""].filter(Boolean).join(" · ");
@@ -2493,7 +2529,15 @@ function renderTileMeta(d) {
     const when = t ? new Date(t).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "";
     line = [when && `Filmed ${when}`, FORMAT[d.format] || ""].filter(Boolean).join(" · ");
   }
-  el.innerHTML = `${line ? `<p>${esc(line)}</p>` : ""}${d.video ? `<button class="link" id="play-full">Play full screen</button>` : ""}`;
+  const at = mmss(player()?.currentTime || 0);
+  el.innerHTML = `${line ? `<p>${esc(line)}</p>` : ""}
+    ${d.video ? `<div class="quick-note">
+      <label class="grow"><span class="sr-only">Note for the editor, pinned to this moment</span>
+        <input id="quick-note" maxlength="2000" autocomplete="off" enterkeyhint="send" placeholder="Note at ${esc(at)}"></label>
+      <button class="btn" id="quick-add">Add</button>
+    </div>
+    <div class="tile-links"><button class="link" id="play-full">Play full screen</button>
+      <button class="link watch-close" id="watch-close">Close video</button></div>` : ""}`;
 }
 
 // The page's top line: back to the list, where this one is in it, and the next one.
@@ -2525,9 +2569,10 @@ function renderDecisionBar() {
     return;
   }
   const n = d.notes.filter((x) => x.status === "open").length;
-  const send = !n ? "Add a note first" : phone() ? `Send back (${n})` : `Send back with ${plural(n, "fix", "fixes")}`;
+  const send = phone() ? `Send back (${n})` : `Send back with ${plural(n, "fix", "fixes")}`;
   bar.innerHTML = `${phone() ? "" : `<button class="btn bar-btn ghost" id="decide-reject">Reject</button>`}
-    <button class="btn bar-btn" id="decide-changes" ${n ? "" : `disabled title="Add a note first: the editor works from your notes"`}>${esc(send)}</button>
+    ${n ? `<button class="btn bar-btn" id="decide-changes">${esc(send)}</button>`
+      : `<button class="btn bar-btn" id="decide-note" title="Pause where it needs a change and say what. The editor works from your notes.">Add a note</button>`}
     <button class="btn bar-btn good" id="decide-approve">Approve</button>`;
 }
 
@@ -2536,6 +2581,8 @@ function updatePinLabel() {
   const btn = $("#note-add");
   const video = player();
   if (btn) btn.textContent = video ? `Add at ${mmss(video.currentTime)}` : "Add note";
+  const quick = $("#quick-note");
+  if (quick && video) quick.placeholder = `Note at ${mmss(video.currentTime)}`;
 }
 
 function updateArrows() {
@@ -2598,6 +2645,14 @@ $("#panel").addEventListener("click", async (e) => {
   }
   await detailClick(e);
 });
+$("#tile-meta").addEventListener("keydown", (e) => {
+  if (e.target.id === "quick-note" && e.key === "Enter" && !e.isComposing) {
+    e.preventDefault();
+    addNote("quick-note").catch((err) => toast(`Couldn't save: ${err.message}`));
+  }
+});
+// Typing a note stops the video where the note is pinned.
+$("#tile-meta").addEventListener("focusin", (e) => { if (e.target.id === "quick-note") player()?.pause(); });
 for (const id of ["#detail-head", "#tile-meta", "#decision-bar"]) {
   $(id).addEventListener("click", (e) => {
     if (!state.current) return;
@@ -2611,7 +2666,8 @@ $("#player-frame").addEventListener("click", (e) => {
   const v = player();
   if (!v) return;
   if (e.target.closest("#tile-play") || (e.target === v && !v.controls)) {
-    if (phone()) playFull(v); else v.play().catch(() => {});
+    if (phone()) startWatching();
+    v.play().catch(() => {});
   }
 });
 // Folded rows remember whether they're open, per device.
@@ -2708,6 +2764,9 @@ async function detailClick(e) {
       sync();
       toast("Note removed.");
     } else if (id === "note-add") await addNote();
+    else if (id === "quick-add") await addNote("quick-note");
+    else if (id === "watch-close") stopWatching();
+    else if (id === "decide-note") noteHere();
     else if (id === "idea-make") {
       await api(`/api/idea/${d.id}/decision`, { decision: "make", caption: $("#caption").value });
       toast("Sent to the editor. It's in Being edited.");
@@ -2780,20 +2839,23 @@ $("#panel").addEventListener("change", async (e) => {
   if (e.target.id === "adopt-project") fillAdoptArcs().catch(() => {});
 });
 
-async function addNote() {
-  const body = $("#note-body").value.trim();
-  if (!body) { $("#note-body").focus(); return; }
+// The box under the notes, or the quick one under the video (always pinned to the moment).
+async function addNote(box = "note-body") {
+  const input = $(`#${box}`);
+  const body = input.value.trim();
+  if (!body) { input.focus(); return; }
+  const quick = box === "quick-note";
   const video = player();
-  const at = video && ($("#note-pin")?.checked ?? true) ? video.currentTime : null;
-  const slide = $("#note-slide") ? Number($("#note-slide").value) || null : undefined;
+  const at = video && (quick || ($("#note-pin")?.checked ?? true)) ? video.currentTime : null;
+  const slide = !quick && $("#note-slide") ? Number($("#note-slide").value) || null : undefined;
   await api(`/api/${state.current.kind}/${state.current.id}/notes`, {
-    body, at_seconds: at, remember: !!$("#note-remember")?.checked, ...(slide !== undefined ? { slide } : {}),
+    body, at_seconds: at, remember: !quick && !!$("#note-remember")?.checked, ...(slide !== undefined ? { slide } : {}),
   });
-  $("#note-body").value = "";
+  input.value = "";
   await loadDetail();
   sync();
-  toast("Note added.");
-  $("#note-body")?.focus();
+  toast(`Note added at ${mmss(at || 0)}.`);
+  $(`#${box}`)?.focus();
 }
 
 $("#panel").addEventListener("keydown", (e) => {
@@ -3434,6 +3496,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "j" || e.key === "J") step(1);
   else if (e.key === "k" || e.key === "K") step(-1);
   else if (e.key === " " && player()) { e.preventDefault(); player().paused ? player().play() : player().pause(); }
+  else if ((e.key === "n" || e.key === "N") && detailMode() && !e.ctrlKey && !e.metaKey) { e.preventDefault(); noteHere(); }
 });
 
 $("#close").addEventListener("click", () => closeViewer());

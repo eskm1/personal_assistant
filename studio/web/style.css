@@ -490,6 +490,13 @@ code { background: var(--um-paper-mid); border-radius: 4px; padding: 1px 5px; fo
 .link:hover { color: var(--um-ink); text-decoration: underline; }
 .link:focus-visible { outline: 2px solid var(--um-ink); outline-offset: 2px; border-radius: var(--um-radius-sm); }
 .tile-meta .link { align-self: flex-start; }
+/* Pause, type, Enter: a note pinned to the moment, right under the video */
+.quick-note { display: flex; gap: 6px; margin-top: 2px; }
+.quick-note label { display: flex; }
+.quick-note input { flex: 1; min-width: 0; }
+.quick-note .btn { flex: none; padding: 0 12px; }
+.tile-links { display: flex; gap: 16px; }
+.watch-close { display: none; }
 
 /* Top line: back, where you are, next */
 .viewer.detail-mode .detail-head {
@@ -695,6 +702,23 @@ body:has(.viewer.detail-mode:not([hidden]) .decision-bar:not([hidden])) .toast {
   .bar-btn { min-height: 48px; padding: 0 10px; }
   .composer .btn { padding: 0 12px; }
   body:has(.viewer.detail-mode:not([hidden]) .decision-bar:not([hidden])) .toast { bottom: 96px; }
+}
+/* Phone, watching: the video grows at the top of the page and stays there while you scroll, with the
+   note box under it. The page is laid out as one column for it (a grid would keep the video in its row). */
+@media (max-width: 720px) {
+  .viewer.detail-mode.watching .viewer-inner { display: block; padding-top: 0; }
+  .viewer.detail-mode.watching .panel > * { margin-top: 14px; }
+  .viewer.detail-mode.watching .player-col {
+    position: sticky; top: var(--watch-top, 0px); z-index: 2; width: auto; margin: 0 -16px;
+    padding: 10px 16px 10px; background: var(--um-paper); border-bottom: 1px solid var(--um-line);
+  }
+  .viewer.detail-mode.watching .player-frame { width: auto; height: min(46vh, 420px); margin: 0 auto; border-radius: var(--um-radius); }
+  .viewer.detail-mode.watching .player-frame video { object-fit: contain; }
+  .viewer.detail-mode.watching .tile-meta { display: flex; gap: 8px; }
+  .viewer.detail-mode.watching .tile-meta > p { display: none; }
+  .viewer.detail-mode.watching .watch-close { display: inline-flex; margin-left: auto; }
+  .viewer.detail-mode.watching .tile-links .link { min-height: 32px; display: inline-flex; align-items: center; }
+  .quick-note .btn { min-height: 44px; }
 }
 @media (max-width: 720px) {
   .viewer.detail-mode .player-frame > .placeholder { font-size: 0; }
