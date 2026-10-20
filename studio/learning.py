@@ -16,6 +16,9 @@ the same editing note twice.
     Bryan forgets never comes back.
   - The mechanical ones are checked by code on every draft (CODE_CHECKS; editor.sentence_guard,
     clear_of_cards, caption_chunks, mix_final, fix_loudness), so they can't come back.
+  - Bryan's notes asking for fewer or more drawn animations ("too many animations", "more
+    diagrams") move a lean the editor follows: its guidance and how many it may draw per draft
+    (insert_guidance, insert_cap). It shows as one line in Studio's playbook section.
   - Every draft logs how many editing problems Studio caught itself before Bryan saw it
     (self_fix_log in the catalogue), for Review's trend line.
 """
@@ -222,6 +225,83 @@ def rules_text(scope: str) -> str:
             "R numbers for same_rule):\n" + "\n".join(_line(r) for r in rules))
 
 
+# ── How many drawn animations Bryan wants ─────────────────────────────────────
+# Bryan's notes like "too many animations" or "more diagrams" move a lean, -3 (fewer) to +3
+# (more), kept with the rules. The editor's guidance and its limit per draft follow it
+# (insert_guidance, insert_cap); a note the other way moves it back.
+
+LEAN_MIN, LEAN_MAX = -3, 3
+_ANIM = r"(animation|animated|diagram|drawing|drawn|illustration|graphic|insert)s?"
+_FEWER = re.compile(rf"(too many|fewer|less|no more|not so many|without( the)?|drop (the |all )?|lose (the )?)\s*(\w+\s+)?{_ANIM}"
+                    rf"|\b{_ANIM}\b[^.!?]{{0,30}}(too many|too much|distract|unnecessary|overkill|cluttered|busy)", re.I)
+_MORE = re.compile(rf"\b(more|add (an?|some)|could use (an?|some)|needs? (an?|some))\s+(\w+\s+)?{_ANIM}", re.I)
+
+
+def note_lean(text: str) -> str:
+    """"fewer", "more" or "" for a note's words, when Claude didn't say (a fallback)."""
+    text = text or ""
+    if _FEWER.search(text):
+        return "fewer"
+    if _MORE.search(text):
+        return "more"
+    return ""
+
+
+def insert_lean(data: dict | None = None) -> int:
+    lean = (data or _load()).get("inserts", {}).get("lean", 0)
+    return lean if isinstance(lean, int) else 0
+
+
+def insert_feedback(direction: str, note: str = "", when: str | None = None) -> int:
+    """One of Bryan's notes asked for fewer or more drawn animations. Returns the new lean."""
+    if direction not in ("fewer", "more") or not settings.LEARN_RULES:
+        return insert_lean()
+    with _lock:
+        data = _load()
+        pref = data.setdefault("inserts", {"lean": 0, "fewer": 0, "more": 0, "notes": []})
+        pref["lean"] = min(max(pref.get("lean", 0) + (-1 if direction == "fewer" else 1), LEAN_MIN), LEAN_MAX)
+        pref[direction] = pref.get(direction, 0) + 1
+        pref["last"] = when or date.today().isoformat()
+        pref["notes"] = ([re.sub(r"\s+", " ", note).strip()[:120]] + pref.get("notes", []))[:5]
+        _save(data)
+    log.info("Bryan asked for %s drawn animations; the lean is now %+d", direction, pref["lean"])
+    return pref["lean"]
+
+
+def insert_cap(limit: int, data: dict | None = None) -> int:
+    """The most drawn animations a draft gets: the setting's, fewer when Bryan asked for fewer."""
+    lean = insert_lean(data)
+    return min(limit, 1) if lean <= -2 else min(limit, 2) if lean == -1 else limit
+
+
+def insert_guidance(data: dict | None = None) -> str:
+    """A line for the editor's prompt on how freely to draw, from Bryan's notes ("" when he hasn't said)."""
+    lean = insert_lean(data)
+    if lean <= -2:
+        return ("Bryan has asked for fewer drawn animations more than once: draw one only when the footage truly "
+                "can't show what he explains, never to fill time.")
+    if lean == -1:
+        return "Bryan found a draft had too many drawn animations: be sparing, and draw one only where it clearly helps."
+    if lean >= 2:
+        return ("Bryan has asked for more diagrams: wherever he explains something visual the footage doesn't show, "
+                "draw it (within the limit).")
+    if lean == 1:
+        return "Bryan asked for more diagrams: lean towards drawing what he explains when the footage doesn't show it."
+    return ""
+
+
+def _insert_line(data: dict) -> str:
+    pref = data.get("inserts") or {}
+    lean = pref.get("lean", 0)
+    if not lean:
+        return ""
+    ask = "fewer" if lean < 0 else "more"
+    n = pref.get(ask, 0)
+    return (f"- Drawn animations: Bryan asked for {ask} ({'once' if n == 1 else 'twice' if n == 2 else f'{n} times'}"
+            + (f", last {_when(pref['last'])}" if pref.get("last") else "") + ")"
+            + ("; Studio draws at most one per Reel." if lean <= -2 else "."))
+
+
 # ── The playbook section ──────────────────────────────────────────────────────
 
 def section(data: dict | None = None) -> str:
@@ -234,8 +314,9 @@ def section(data: dict | None = None) -> str:
     for scope, label in SCOPES.items():
         rules = sorted((r for r in data["rules"] if r["scope"] == scope and r["status"] == "active"),
                        key=lambda r: (-r["count"], r["id"]))
-        if rules:
-            parts += ["", f"### {label}", *(_line(r) for r in rules)]
+        extra = _insert_line(data) if scope == "reel" else ""
+        if rules or extra:
+            parts += ["", f"### {label}", *(_line(r) for r in rules), *([extra] if extra else [])]
     return "\n".join(parts)
 
 
@@ -262,7 +343,7 @@ def sync_playbook(data: dict | None = None) -> None:
     import playbook
     data = data or _load()
     text = playbook.text()
-    has_rules = any(r["status"] == "active" for r in data["rules"])
+    has_rules = any(r["status"] == "active" for r in data["rules"]) or bool(insert_lean(data))
     if not has_rules and not split(text)[1]:
         return
     new = _place(text, f"{START}\n{section(data)}\n{END}")
@@ -310,6 +391,12 @@ def from_notes(conn, notes: list[dict], addressed: list[dict], scope: str) -> li
                 rule = learned[0]["text"] if learned and learned[0]["status"] == "active" else ""
                 out += learned
             conn.execute("UPDATE feedback SET kind = ?, rule = ? WHERE id = ?", (a["kind"], rule or None, a["note_id"]))
+            # "Too many animations" / "more diagrams": how freely the editor draws from now on.
+            lean = a.get("animations")
+            if lean not in ("fewer", "more", "none"):
+                lean = note_lean(next((n.get("body", "") for n in notes if n["id"] == a["note_id"]), ""))
+            if lean in ("fewer", "more"):
+                insert_feedback(lean, next((n.get("body", "") for n in notes if n["id"] == a["note_id"]), ""))
         conn.commit()
     except Exception as e:
         log.warning("Couldn't sort Bryan's notes into rules: %s: %s", type(e).__name__, e)

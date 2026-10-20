@@ -21,7 +21,8 @@ components and renders it to MP4 with the HyperFrames toolchain the editor alrea
 
 Scene types: headline, steps, layers (a cross-section), measure, before_after, compare, plan,
 icons, stat, timeline, end, freeform. SCENE_TYPES describes each for Claude's prompt.
-Nothing here changes the editor: stage 1 is additive.
+Stage 2(b): the editor lays single scenes over talking-head Reels (editor.place_scenes /
+render_scenes use validate, render_insert, scene_text and library_key).
 """
 import html
 import json
@@ -101,7 +102,8 @@ SCENE_TYPES = {
     "icons": "icon + label list or grid: title, items (2-6: icon from ICONS, label <=28, note <=50), numbered true|false",
     "stat": "a number or a quote: value (<=10) + unit + label (<=70) + source, or quote (<=140) + by",
     "timeline": "renovation phases: title, phases (2-6: label <=26, note <=26 such as Week 1-2)",
-    "end": "the end card with the mark: ask (one of the planner's offers' asks), line (<=60), handle",
+    "end": "the end card with the mark: ask (one of the planner's offers' asks), line (<=60); the account's handle is "
+           "added under the mark",
     "freeform": "a drawing the library lacks: title, caption, paths (1-24 SVG paths in a 1000x1000 box: d, stroke, "
                 "fill, width 1-12, draw true|false), labels (0-8: text <=40, x, y, size s|m|l, anchor)",
 }
@@ -1008,13 +1010,34 @@ def _timeline(s: dict, d: float, ctx: dict) -> str:
     return f'<div class="stage">{_head(s)}<div class="body"><div class="tl">{rail}{"".join(rows)}</div></div></div>'
 
 
+def default_handle() -> str:
+    """The Instagram handle for the end card: the connected account's own name (instagram.py),
+    else settings.INSTAGRAM_HANDLE (urbanmakers_sg); "" when that's set to off."""
+    try:
+        import settings
+        handle = settings.INSTAGRAM_HANDLE
+    except Exception:
+        handle = "urbanmakers_sg"
+    if handle.lower() in ("", "off", "none", "0", "no"):
+        return ""
+    try:
+        import instagram
+        name = (instagram.load() or {}).get("username") or ""
+        if re.fullmatch(r"[A-Za-z0-9._]{2,30}", name):
+            handle = name
+    except Exception:
+        pass
+    return "@" + handle.lstrip("@")
+
+
 def _end(s: dict, d: float, ctx: dict) -> str:
     line = f'<div class="ln t fit"{_a("rise", 0.75)}>{_lines(s["line"])}</div>' if s.get("line") else ""
-    handle = f'<div class="hd t"{_a("fade", 1.4)}>{_e(s["handle"])}</div>' if s.get("handle") else ""
+    name = ("@" + s["handle"].lstrip("@")) if s.get("handle") else default_handle()
+    handle = f'<div class="hd t"{_a("fade", 0.7)}>{_e(name)}</div>' if name else ""  # small, under the mark
     return (f'<div class="end"{_a("wipe-up", 0, 0.75)}><div class="stage">'
             f'<div class="mk" data-box{_a("pop", 0.35, 0.6)}>{mark_svg()}</div>'
-            f'<div class="nm t"{_a("fade", 0.55)}>Urban Makers</div>{line}'
-            f'<div class="cta t"{_a("rise", 1.05)}>{_e(s["ask"])}{_ARROW}</div>{handle}</div></div>')
+            f'<div class="nm t"{_a("fade", 0.55)}>Urban Makers</div>{handle}{line}'
+            f'<div class="cta t"{_a("rise", 1.05)}>{_e(s["ask"])}{_ARROW}</div></div></div>')
 
 
 def _freeform(s: dict, d: float, ctx: dict) -> str:
@@ -1275,6 +1298,48 @@ def render_insert(scene: dict, duration: float, out: Path, style: str = "cutaway
         if result.returncode != 0 or not out.exists():
             raise RuntimeError("the insert render failed: " + ((result.stderr or "") + (result.stdout or "")).strip()[-400:])
     return {"duration": clean["duration"], "fit": report["fit"], "file": probe(out)}
+
+
+_LIBRARY_KEY = None
+
+
+def library_key() -> str:
+    """A fingerprint of the library (this file, motion.css, motion.js, the icons, the fonts' names):
+    a cached insert is drawn again when any of it changes."""
+    global _LIBRARY_KEY
+    if _LIBRARY_KEY is None:
+        import hashlib
+        h = hashlib.sha256()
+        for p in (Path(__file__), HERE / "motion.css", HERE / "motion.js", HERE / "icons.json"):
+            h.update(p.read_bytes())
+        h.update(json.dumps([FONT_FILES, W, H, FPS]).encode())
+        _LIBRARY_KEY = h.hexdigest()[:16]
+    return _LIBRARY_KEY
+
+
+# The words a scene puts on screen (for the editor: a caption repeating them is hidden while it's up).
+_TEXT_KEYS = {"title", "kicker", "text", "sub", "items", "label", "note", "caption", "value", "unit", "left", "right",
+              "quote", "by", "columns", "a", "b", "name", "tag", "layers", "rows", "phases", "rooms", "labels",
+              "before", "after", "highlight"}
+
+
+def scene_text(scene) -> str:
+    """Every word a scene shows, as one string (labels, items, titles...)."""
+    out = []
+
+    def walk(v, key=None):
+        if isinstance(v, str):
+            if key in _TEXT_KEYS:
+                out.append(v)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x, key)
+        elif isinstance(v, dict):
+            for k, x in v.items():
+                if k in _TEXT_KEYS:
+                    walk(x, k)
+    walk(scene if isinstance(scene, dict) else {})
+    return " ".join(out)
 
 
 def overlay_insert(footage: Path, insert: Path, at: float, out: Path) -> None:

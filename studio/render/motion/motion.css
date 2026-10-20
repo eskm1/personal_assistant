@@ -162,7 +162,7 @@ svg { display: block; overflow: visible; }
 .end .cta { display: inline-flex; align-items: center; gap: 22px; margin-top: 64px; padding: 30px 46px; border-radius: 999px;
   background: var(--orange-fill); color: #fff; font: 600 46px/1 var(--text); }
 .end .cta svg { width: 40px; height: 26px; }
-.end .hd { font: 500 26px/1 var(--mono); letter-spacing: .14em; color: var(--sage); margin-top: 48px; }
+.end .hd { font: 500 24px/1 var(--mono); letter-spacing: .1em; color: var(--sage); margin-top: 16px; }
 
 /* An insert over a talking-head Reel: the scene on a paper card above the caption band. */
 .pcard { position: absolute; left: 48px; right: 48px; top: 190px; height: 960px; border-radius: 28px; background: var(--paper);

@@ -6,6 +6,7 @@ by hand in the free DaVinci Resolve, with every layer still editable.
         timeline.fcpxml   the cut, pointing at the ORIGINAL clips (full quality,
                           every cut can be trimmed back out), plus the layers below
         captions.mov      the styled captions on a transparent layer (ProRes 4444)
+        animations.mov    the drawn animations (motion library inserts), same, on their own track
         graphics.mov      the hook and B-roll cards, same
         captions.srt      the caption text, to import as an editable subtitle track
         music.mp3         the Epidemic Sound track (Urban Makers only)
@@ -279,14 +280,21 @@ def build(conn, production_id: int) -> Path:
         exact = sum(c["end"] - c["start"] for c in cuts)
         chunks = editor.caption_chunks(editor.timeline(cuts, clips), exact)
         accent = editor.ACCENT.get(production["brand"], "#ff4d6d")
-        layers = []
-        if edl.get("hook_text", "").strip() or edl.get("graphics"):
+        layers, lane = [], 1
+        # The drawn animations get a track of their own, under the cards and the captions.
+        scenes = [g for g in edl.get("graphics", []) if g.get("style") == "scene" and "start" in g]
+        if scenes and editor.scenes_layer(scenes, exact, work / "animations.mov"):
+            layers.append(("Drawn animations", work / "animations.mov", lane))
+            lane += 1
+        cards = [g for g in edl.get("graphics", []) if g.get("style") != "scene"]
+        if edl.get("hook_text", "").strip() or cards:
             editor.render_overlay([], edl.get("hook_text", ""), exact, work / "graphics.mov",
-                                  edl.get("graphics", []), accent, fmt="mov")
-            layers.append(("Hook and graphics", work / "graphics.mov", 1))
+                                  cards, accent, fmt="mov")
+            layers.append(("Hook and graphics", work / "graphics.mov", lane))
         if chunks:
-            editor.render_overlay(chunks, "", exact, work / "captions.mov", fmt="mov")
-            layers.append(("Captions", work / "captions.mov", 2))
+            paper = [(g["start"], g["start"] + g["duration"]) for g in scenes if g.get("look") == "cutaway"]
+            editor.render_overlay(chunks, "", exact, work / "captions.mov", fmt="mov", paper=paper)
+            layers.append(("Captions", work / "captions.mov", lane + 1))
             (work / "captions.srt").write_text(srt(chunks), encoding="utf-8")
 
         music = None

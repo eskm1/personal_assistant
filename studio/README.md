@@ -307,6 +307,18 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    (`STUDIO_CAPTION_FONT`: `figtree`, the default, `nunito`, `dm_sans` or `outfit`; nothing depends
    on the machine's fonts or the network). Cards stay above the caption line, and a caption that
    repeats a card's words is hidden while the card is up.
+   **Drawn animations** (`STUDIO_EDIT_SCENES`, on by default): where you explain something the footage
+   doesn't show (layers in a floor, a measurement, steps, a comparison, a layout), or a shot is missing
+   or weak, the editor may lay a short animation from the motion library over you (the same paper-and-ink
+   look as the explainers) while your voice and the captions carry on. Each lasts 2.5 to 6 seconds,
+   timed to your words; none in the first 2 seconds (unless the hook itself is a drawing); about one per
+   15 seconds and at most `STUDIO_EDIT_SCENES_MAX` (default 3) per draft. It fills the screen (a
+   cutaway); a card over the top of the picture (a panel) only when it wouldn't cover your face. Never a
+   price, a promotion or a place name (the motion library's own checks), and an animation that doesn't
+   fit the screen is left out. The draft's summary and Studio's read say what was drawn, not filmed.
+   Each is drawn once and kept (`Studio\Renders\inserts`, cleared after 45 days unused), so a fix
+   round or a re-render that keeps it doesn't draw it again. Notes like "too many animations" or "more
+   diagrams" change how freely the editor draws from then on (a line in Studio's playbook section).
 5. Sound: your voice is cleaned up (a gentle high-pass and noise reduction) and brought to a steady
    level first, then the music is set against it: about 9 dB under your voice where nobody talks,
    and `STUDIO_MUSIC_GAP_DB` (default 20) dB under it while you talk, with smooth dips timed to your
@@ -321,6 +333,9 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    captions, words, cut list and checks, and writes the verdict and fix list. Each fix says
    whether the editor can make it itself (trims, the opening, hook text, captions, a card's
    place or words, the music level) or it's yours (new footage, spending, judgement calls).
+   When a shot you didn't film could be drawn instead (a build-up, a dimension, a process), the read
+   adds "Draw it for now: ..." beside the "film next time" fix: Studio's own round draws it in this
+   draft, and the "film next time" fix stays for you, marked as drawn for now.
 8. **Studio fixes its own list** (`self_fix.py`): while the read has fixes the editor can make,
    up to `STUDIO_SELF_FIX_ROUNDS` rounds (default 2; `0` = off), the editor plans the draft again
    with them as its notes, renders it and Studio reads it again. A round that makes the read
@@ -340,7 +355,8 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
 
 The jump cuts, reframing and punch-ins are settings in `.env` (all on by default; `0` turns one off, then press
 **Restart Studio**): `STUDIO_EDIT_JUMP_CUTS`, `STUDIO_EDIT_MAX_PAUSE` (seconds, default 0.35),
-`STUDIO_EDIT_REFRAME`, `STUDIO_EDIT_PUNCH_INS`, `STUDIO_EDIT_PUNCH_ZOOM` (default 1.12). The fix rounds,
+`STUDIO_EDIT_REFRAME`, `STUDIO_EDIT_PUNCH_INS`, `STUDIO_EDIT_PUNCH_ZOOM` (default 1.12), `STUDIO_EDIT_SCENES`,
+`STUDIO_EDIT_SCENES_MAX` (default 3; `0` = none). The fix rounds,
 learning, caption font and music gap are too: `STUDIO_SELF_FIX_ROUNDS`, `STUDIO_LEARN_RULES`,
 `STUDIO_LEARNED_RULES_MAX`, `STUDIO_CAPTION_FONT`, `STUDIO_MUSIC_GAP_DB`. Older drafts keep their look
 until they're revised. A draft
@@ -366,7 +382,8 @@ The folder, `Studio\Renders\production_<id>_v<n>_resolve`, holds:
 - `timeline.fcpxml`: the cut, pointing at your **original** clips (full quality, and you can
   drag any cut's edge to get back footage the draft trimmed)
 - `graphics.mov` and `captions.mov`: the hook, B-roll cards and captions as transparent
-  layers on V2 and V3 (ProRes 4444)
+  layers on V2 and V3 (ProRes 4444); a draft with drawn animations has them on a track of their
+  own, `animations.mov` on V2, and the cards and captions move up to V3 and V4
 - `captions.srt`: the caption text, if you'd rather retype captions as a subtitle track
 - `music.mp3`: the Epidemic Sound track on A2 (Urban Makers only)
 - `HOW TO OPEN.txt`: the steps below and what to do about black bars or offline media

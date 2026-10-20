@@ -122,6 +122,14 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   or `STUDIO_SUPABASE_ANON_KEY` in `/home/studio/personal_assistant/studio/.env`.
 - Not yet proven live: the `place` job and tagging with real Claude after this update; iPhone "Film"
   upload quality from Safari.
+- Drawn inserts built 2026-10-20 (animated explainers stage 2(b); not yet proven with real Claude or footage): the
+  editor's plan may lay motion-library scenes over the footage (`editor.place_scenes` / `render_scenes`, graphics
+  style `scene`; cutaway by default, panel only clear of the face; cached in `Renders/inserts` by spec hash;
+  composited under the captions in `mix_final`'s one encode; Resolve gets `animations.mov` on its own track); Studio's
+  read adds "Draw it for now" beside a next-shoot fix (`illustrate`) so a fix round draws it; Bryan's "too many
+  animations" / "more diagrams" notes move `learning.insert_lean`. `STUDIO_EDIT_SCENES`, `STUDIO_EDIT_SCENES_MAX` (3).
+  The explainers' end card carries the handle under the mark (`STUDIO_INSTAGRAM_HANDLE`, default urbanmakers_sg, or
+  the connected account's). Stage 2(a) (explainer ideas in the planner) and 2(c) (topics) not built yet.
 - Editor upgrades built (not yet proven on real footage): jump cuts (`editor.tighten`), face-tracked
   reframing of horizontal footage and punch-ins (`framing.py`, OpenCV), each a `STUDIO_EDIT_*` setting.
   Still offered: numbered chapter labels, screenshots floating above the speaker.

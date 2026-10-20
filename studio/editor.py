@@ -17,6 +17,11 @@ The editor (phase 5): turns a planned production into a draft Reel.
   5. HyperFrames renders the captions (1-3 words in sentence case, timed to each word,
      in a bundled font: STUDIO_CAPTION_FONT) and the hook as a transparent layer; cards
      stay above the caption line and captions repeating a card's words are hidden.
+     Drawn inserts (STUDIO_EDIT_SCENES): where Bryan explains something the footage doesn't
+     show, or a shot is missing, Claude may place a scene from the motion library (motion.py);
+     Studio checks it (place_scenes: the library's rules, timing to his words, how many, a
+     panel only clear of his face), renders it once (cached by its spec) and lays it over the
+     footage under the captions in the final encode, while his voice carries on.
   6. Sound (mix_final): the voice is cleaned and levelled first, the music set well under
      it (dipped while Bryan talks), the gap measured and guarded, then -14 LUFS. Urban
      Makers posts get an Epidemic Sound track; other accounts get a note on what to add.
@@ -40,6 +45,7 @@ import anthropic
 import catalog
 import extract
 import framing
+import motion
 import music
 import playbook
 import render
@@ -101,11 +107,15 @@ EDL_SCHEMA = {
                     "clip_id": {"type": "integer"},
                     "at": {"type": "number"},
                     "duration": {"type": "number"},
-                    "style": {"type": "string", "enum": ["card", "callout"]},
+                    "style": {"type": "string", "enum": ["card", "callout", "scene"]},
                     "title": {"type": "string"},
                     "lines": {"type": "array", "items": {"type": "string"}},
+                    "scene": {"type": "string"},
+                    "look": {"type": "string", "enum": ["cutaway", "panel"]},
+                    "role": {"type": "string", "enum": ["explain", "gap", "hook"]},
+                    "why": {"type": "string"},
                 },
-                "required": ["clip_id", "at", "duration", "style", "title", "lines"],
+                "required": ["clip_id", "at", "duration", "style", "title", "lines", "scene", "look", "role", "why"],
                 "additionalProperties": False,
             },
         },
@@ -124,8 +134,9 @@ EDL_SCHEMA = {
                 "type": "object",
                 "properties": {"note_id": {"type": "integer"}, "how": {"type": "string"},
                                "kind": {"type": "string", "enum": ["editing", "taste"]},
-                               "rule": {"type": "string"}, "same_rule": {"type": "integer"}},
-                "required": ["note_id", "how", "kind", "rule", "same_rule"],
+                               "rule": {"type": "string"}, "same_rule": {"type": "integer"},
+                               "animations": {"type": "string", "enum": ["fewer", "more", "none"]}},
+                "required": ["note_id", "how", "kind", "rule", "same_rule", "animations"],
                 "additionalProperties": False,
             },
         },
@@ -162,8 +173,9 @@ and "at" in that clip's own seconds (it must fall inside one of your cuts), plus
 lists or the key takeaway); style "callout" is a panel over the top third of the footage for one \
 number, price, duration or key term (title is the big text, lines one short label). Use Bryan's \
 own words and facts; never invent numbers. Title at most 5 words, each line at most 4 words. \
-Leave the first 2.5 seconds clear for the hook. Use none if nothing in the speech suits a graphic.
-- missing_shots: footage you wished you had while cutting this post, specific enough to film \
+Leave the first 2.5 seconds clear for the hook. Use none if nothing in the speech suits a graphic. \
+For a card or callout, scene and why are "", look "cutaway" and role "explain".
+{scene_rule}- missing_shots: footage you wished you had while cutting this post, specific enough to film \
 (what, framing, roughly how long), each with why it would make the post better. Empty if none.
 - summary: two sentences on what you did, for Bryan.
 - On a revision, address every note and say how in notes_addressed. Notes are pinned to times \
@@ -176,9 +188,71 @@ editing note from Bryan, rule is the general rule it teaches, as an instruction 
 words ("End on the last full sentence, never on a word that starts the next"), and same_rule is \
 the number of the learned rule it repeats (R3 = 3) or 0. Otherwise rule is "" and same_rule 0. \
 Studio's own fixes (a round of Studio's fixes, not Bryan's notes) are kind "editing", rule "" and \
-same_rule 0.
+same_rule 0. animations: "fewer" when a note of Bryan's asks for fewer drawn animations or diagrams in \
+general ("too many animations"), "more" when it asks for more of them in general ("more diagrams"), \
+otherwise "none" (also "none" for a note about one particular animation, and for Studio's own fixes).
 - The playbook's "Editing rules Studio learned" are problems caught in earlier drafts: never \
 repeat them."""
+
+
+# Drawn inserts (style "scene"): a scene from the motion library (motion.py) over the footage.
+_SCENE_RULE = """- Drawn animations (style "scene"): a short animation from Studio's motion library laid over \
+the footage while Bryan keeps talking. Use one only where it helps the viewer understand: (1) Bryan \
+explains something visual the footage doesn't show: a build-up of layers, a dimension, a process in \
+steps, a comparison, a layout; or (2) to cover a gap: a moment that is weak or flagged for a retake, a \
+jump that needs bridging, or a shot that was never filmed (a fix that says "Draw it for now"). Never as \
+decoration, and never just to repeat his words as text (that is a card).
+  - Limits: at most {cap} per Reel and about one per 15 seconds of the Reel, none in the first 2 \
+seconds (the hook stays on Bryan; only when the hook itself is best shown as a drawing use role "hook" \
+and hook_text ""), each 2.5 to 6 seconds, not overlapping a card or callout. Anchor it like a card \
+(clip_id, "at" when he starts the words it shows, duration to when he finishes them); Studio snaps \
+it to his words.
+  - scene: the scene as JSON text: one object with "type" and that type's fields. Types:
+{types}
+    No "end" type, no pictures, no prices, discounts or promotions, no place names. Use his own \
+words and facts; never invent numbers or measurements he didn't say. Keep the text short: it is \
+glanced at while he talks. freeform only when no other type fits. Icons: {icons}.
+  - look: "cutaway" (the default: the drawing fills the screen, his voice and the captions carry \
+on) or "panel" (a card over the top of the picture that keeps him in view; only when he is framed \
+low in the shot: Studio makes it a cutaway if it would cover his face).
+  - role: "explain" (shows what he says), "gap" (stands in for a missing or weak shot) or "hook". \
+title: the scene's title or main words, for Bryan's list. lines: []. why: a few plain words on why \
+it is drawn, for Bryan ("the screed isn't filmed", "shows the step he describes").
+  - Examples. He says "an overlay goes on top of your old tiles: adhesive, then the new tiles":
+    {{"type": "layers", "title": "An overlay builds on top", "layers": [{{"label": "New tiles", "size": \
+"medium", "tone": "tile", "tag": "New"}}, {{"label": "Adhesive", "size": "thin", "tone": "adhesive", "tag": \
+"New"}}, {{"label": "Existing tiles", "note": "Stay in place", "size": "medium", "tone": "tile"}}, {{"label": \
+"Screed", "size": "thick", "tone": "screed"}}]}}
+    He says "the kitchen sits about 15 mm higher than the living room":
+    {{"type": "measure", "title": "The step at the doorway", "value": "15 mm", "label": "The kitchen \
+floor sits higher", "kind": "step", "left": "Kitchen", "right": "Living room"}}
+    He says "first we hack the old tiles, then we pour a screed, then we tile":
+    {{"type": "steps", "title": "Levelling the floor", "items": ["Hack off the old tiles", "Pour a \
+level screed", "Lay the new tiles"], "style": "numbered"}}
+  - Re-planning a draft: keep an animation that works exactly as it was (the same scene JSON), so \
+it isn't drawn again.{lean}
+"""
+
+
+def _scene_rule() -> str:
+    """The prompt's part on drawn inserts, or "" when they're off."""
+    import learning
+    cap = learning.insert_cap(settings.EDIT_SCENES_MAX)
+    if not settings.EDIT_SCENES or cap <= 0:
+        return ""
+    types = "\n".join(f"    - {k}: {v}" for k, v in motion.SCENE_TYPES.items() if k != "end")
+    lean = learning.insert_guidance()
+    return _SCENE_RULE.format(cap=cap, types=types, icons=", ".join(sorted(motion.ICONS)),
+                              lean=f"\n  - {lean}" if lean else "")
+
+
+def _schema() -> dict:
+    """The edit plan's schema; without the scene style when drawn inserts are off."""
+    if _scene_rule():
+        return EDL_SCHEMA
+    schema = json.loads(json.dumps(EDL_SCHEMA))
+    schema["properties"]["graphics"]["items"]["properties"]["style"]["enum"] = ["card", "callout"]
+    return schema
 
 
 # ── Context for Claude ────────────────────────────────────────────────────────
@@ -195,6 +269,12 @@ def _clip_block(clip: dict, plan_segments: list[dict]) -> str:
     lines = [f"Clip {clip['id']}: {clip['title']} ({clip['duration']:.1f}s, {clip['orientation']}, "
              f"{'has audio' if clip['has_audio'] else 'no audio'})",
              f"  summary: {clip['summary']}"]
+    try:
+        q = json.loads(clip.get("quality") or "{}")
+    except (TypeError, ValueError):
+        q = {}
+    if q.get("verdict") in ("check", "retake") and q.get("flags"):
+        lines.append(f"  quality: {q['verdict']} ({'; '.join(f.get('text', '') for f in q['flags'][:4])})")
     wanted = [s for s in plan_segments if s["clip_id"] == clip["id"]]
     lines.append("  planned segments: " + "; ".join(f"{s['start']:.1f}-{s['end']:.1f}s ({s['purpose']})"
                                                   for s in wanted))
@@ -221,10 +301,16 @@ def _revision_block(conn, production: dict, fixes: list[dict] | None = None) -> 
                           a["end"] < b["start"] - 0.001 for a, b in zip(group, group[1:])) else ""))
         offset += length
     graphics = previous.get("graphics") or []
+    cards = [g for g in graphics if "start" in g and g.get("style") != "scene"]
     shown = ("\nPrevious graphics: " + "; ".join(
         f"{g['start']:.1f}-{g['start'] + g['duration']:.1f}s {g['style']} \"{g['title']}\""
-        + (f" ({' / '.join(g['lines'])})" if g.get("lines") else "") for g in graphics if "start" in g)
-        if graphics else "")
+        + (f" ({' / '.join(g['lines'])})" if g.get("lines") else "") for g in cards) if cards else "")
+    scenes = [g for g in graphics if g.get("style") == "scene" and "start" in g]
+    if scenes:
+        shown += "\nPrevious drawn animations (clip, at, duration, look, role, why, scene JSON):\n" + "\n".join(
+            f"  {g['start']:.1f}-{g['start'] + g['duration']:.1f}s in the draft: clip {g['clip_id']} at {g['at']:.2f}s, "
+            f"{g['duration']:.1f}s, {g.get('look', 'cutaway')}, {g.get('role', 'explain')}, why: {g.get('why') or '-'}, "
+            f"scene: {json.dumps(g['scene'], ensure_ascii=False)}" for g in scenes)
     head = ("\n\nThis is a revision of draft v{v}. Previous cut list:\n".format(v=production["version"])
             + "\n".join(placed)
             + f"\nPrevious hook text: {previous.get('hook_text') or '(none)'}" + shown
@@ -241,6 +327,9 @@ def _revision_block(conn, production: dict, fixes: list[dict] | None = None) -> 
                              "a round of Studio's own fixes on the draft below, before Bryan sees it")
                 + "\n\nStudio's read of that draft found these problems you can fix from the footage. "
                   "Fix every one, and keep everything else as it is:\n" + "\n".join(lines)
+                + ("\nA fix that starts \"Draw it for now\" stands in for a shot nobody filmed: make it with a drawn "
+                   "animation (style \"scene\", role \"gap\") at that moment, drawing what it says."
+                   if any(f["body"].startswith("Draw it for now") for f in fixes) else "")
                 + ("\n\nBryan's notes on the version before, already done in this draft (keep them done):\n"
                    + "\n".join(f"  - {r['body']}" for r in done) if done else ""))
     notes = conn.execute(
@@ -296,9 +385,9 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes
     response = llm.final_message(
         client, model=CLAUDE_MODEL, max_tokens=32000,
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
-        output_config={"effort": "high", "format": {"type": "json_schema", "schema": EDL_SCHEMA}},
+        output_config={"effort": "high", "format": {"type": "json_schema", "schema": _schema()}},
         system=_SYSTEM.replace("{playbook}", playbook.text()).replace("{music_rule}", music_rule)
-        .replace("{pause_rule}", pause_rule),
+        .replace("{pause_rule}", pause_rule).replace("{scene_rule}", _scene_rule()),
         messages=[{"role": "user", "content": user}],
     )
     import usage
@@ -473,7 +562,7 @@ def place_graphics(graphics: list[dict], cuts: list[dict], total: float) -> list
     for c in cuts:
         offset_of.append(offset)
         offset += c["end"] - c["start"]
-    for g in graphics:
+    for g in (g for g in graphics if g.get("style") != "scene"):  # drawn inserts: place_scenes
         start = next((offset_of[i] + g["at"] - c["start"] for i, c in enumerate(cuts)
                       if c["clip_id"] == g["clip_id"] and c["start"] <= g["at"] < c["end"]), None)
         if start is None:
@@ -545,21 +634,279 @@ def _plain(text: str) -> set[str]:
 
 
 def clear_of_cards(chunks: list[dict], graphics: list[dict]) -> tuple[list[dict], int]:
-    """While a full-screen card is up, its words are on screen already: a caption saying the
-    same words is dropped, so the card is never doubled up by the caption line. Returns the
-    captions and how many were dropped."""
-    cards = [g for g in graphics if g.get("style") == "card" and "start" in g]
+    """While a full-screen card (or a drawn insert) is up, its words are on screen already: a
+    caption saying the same words is dropped, so the card is never doubled up by the caption
+    line. Returns the captions and how many were dropped."""
+    cards = [g for g in graphics if g.get("style") in ("card", "scene") and "start" in g]
     if not cards:
         return chunks, 0
     out, dropped = [], 0
     for c in chunks:
         card = next((g for g in cards if c["start"] < g["start"] + g["duration"] and c["end"] > g["start"]), None)
         words = _plain(c["text"])
-        if card and words and words <= _plain(" ".join([card["title"], *card.get("lines", [])])):
+        shown = (motion.scene_text(card.get("scene")) if card and card.get("style") == "scene"
+                 else " ".join([card["title"], *card.get("lines", [])]) if card else "")
+        if card and words and words <= _plain(shown):
             dropped += 1
             continue
         out.append(c)
     return out, dropped
+
+
+# ── Drawn inserts (motion library scenes over the footage) ────────────────────
+# The opening stays on Bryan (SCENE_CLEAR, or the hook text's time when there is one); each
+# insert lasts SCENE_MIN to SCENE_LONGEST seconds, timed to his words; about one per SCENE_EVERY
+# seconds of draft, at most settings.EDIT_SCENES_MAX (fewer when Bryan asked for fewer), with at
+# least SCENE_GAP seconds of footage between two of them and clear of the cards and callouts.
+SCENE_MIN, SCENE_LONGEST = 2.5, 6.0
+SCENE_CLEAR, HOOK_SECONDS = 2.0, 2.6
+SCENE_EVERY, SCENE_GAP = 15.0, 4.0
+# A panel (motion.css .pcard) covers y 190-1150 of the frame: it may go over the footage only
+# when no face is in that band.
+PANEL_TOP, PANEL_BOTTOM = 190, 1150
+INSERTS = RENDERS / "inserts"     # rendered inserts, by their spec's hash (scene_key)
+INSERT_KEEP_DAYS = 45
+
+
+def scene_cap(total: float) -> int:
+    """How many drawn inserts a draft of this length may have."""
+    import learning
+    if not settings.EDIT_SCENES:
+        return 0
+    cap = learning.insert_cap(settings.EDIT_SCENES_MAX)
+    return min(cap, max(1, int(total // SCENE_EVERY))) if cap > 0 else 0
+
+
+def _no_pictures(scene: dict) -> dict:
+    """Inserts carry no pictures (the footage is already there): a scene's image is dropped."""
+    scene = {k: v for k, v in scene.items() if k not in ("image", "duration")}
+    for side in ("before", "after"):
+        if isinstance(scene.get(side), dict):
+            scene[side] = {k: v for k, v in scene[side].items() if k != "image"}
+    return scene
+
+
+def _snap_start(t: float, words: list[dict]) -> float:
+    """An insert starts just before the word nearest its anchor (within 0.6 s)."""
+    near = [w for w in words if abs(w["start"] - t) <= 0.6]
+    if not near:
+        return t
+    return max(0.0, min(near, key=lambda w: abs(w["start"] - t))["start"] - 0.1)
+
+
+def _snap_end(start: float, want: float, words: list[dict]) -> float:
+    """An insert ends just after a word, as close to start + want as its limits allow (never much
+    shorter than asked: a drawing needs its time to build); the end of a phrase (a comma or full
+    stop) is preferred when it's within 0.8 s."""
+    lo, hi = start + SCENE_MIN - TAIL_PAD, start + SCENE_LONGEST - TAIL_PAD
+    fits = [w for w in words if lo <= w["end"] <= hi]
+    if not fits:
+        return min(max(start + want, start + SCENE_MIN), start + SCENE_LONGEST)
+    target = start + want - TAIL_PAD
+    best = min([w for w in fits if w["end"] >= target - 0.2] or fits, key=lambda w: abs(w["end"] - target))
+    phrase = [w for w in fits if re.search(r"[.,!?;:。，！？]$", w["word"].strip()) and abs(w["end"] - target) <= 0.8]
+    if phrase:
+        best = min(phrase, key=lambda w: abs(w["end"] - target))
+    return best["end"] + TAIL_PAD
+
+
+def face_boxes(cuts: list[dict], clips: dict[int, dict], start: float, end: float) -> list[tuple[float, float, float]]:
+    """Where a face is on screen between start and end (draft seconds), as framed in the draft:
+    (centre x, centre y, width) in the Reel's pixels, from framing.py's face finder (its
+    faces.json, so footage already looked at isn't looked at again)."""
+    out, offset = [], 0.0
+    for c in cuts:
+        length = c["end"] - c["start"]
+        a, b = max(start, offset), min(end, offset + length)
+        if b > a:
+            clip = clips[c["clip_id"]]
+            sw, sh = framing._dims(clip)
+            seen = framing.faces(clip, c["start"] + a - offset, c["start"] + b - offset, every=2)
+            w, h, x, y = framing.exact_window(c, sw, sh)
+            for f in seen.values():
+                if f:
+                    cx, cy, size = (f[0] * sw - x) / w * W, (f[1] * sh - y) / h * H, f[2] * sw / w * W
+                    if -size < cx < W + size and -size < cy < H + size:
+                        out.append((round(cx), round(cy), round(size)))
+        offset += length
+    return out
+
+
+def choose_look(asked: str, cuts: list[dict], clips: dict[int, dict], start: float, end: float) -> tuple[str, str]:
+    """cutaway (the default) or panel: a panel only when it covers no face (a face's box runs
+    from about 0.75 of its width above its centre to 1.1 below). Returns (look, why changed)."""
+    if asked != "panel":
+        return "cutaway", ""
+    try:
+        faces = face_boxes(cuts, clips, start, end)
+    except Exception as e:  # no OpenCV, an unreadable clip: the safe choice
+        log.warning("Couldn't find the face for a panel: %s", e)
+        return "cutaway", "Studio couldn't tell where your face was"
+    covered = [f for f in faces if f[1] - 0.75 * f[2] < PANEL_BOTTOM + 20 and f[1] + 1.1 * f[2] > PANEL_TOP - 20]
+    if covered:
+        return "cutaway", "a panel would have covered your face"
+    return "panel", ""
+
+
+def place_scenes(graphics: list[dict], cuts: list[dict], clips: dict[int, dict], total: float, words: list[dict],
+                 hook_text: str, others: list[dict] = ()) -> tuple[list[dict], list[str]]:
+    """Claude's drawn inserts on the draft's clock, checked: its scene must pass the motion
+    library's checks (motion.validate: lengths, no prices, an insert is one scene and not an end
+    card), and the limits above hold (timing, how many, clear of the hook and of `others`, the
+    cards and callouts already placed). Returns the placed inserts (in time order) and, in plain
+    words, why any was left out."""
+    wanted = [g for g in graphics if g.get("style") == "scene"]
+    if not wanted:
+        return [], []
+    cap = scene_cap(total)
+    if cap <= 0:
+        return [], [f"left out {len(wanted)} drawn animation{'s' if len(wanted) != 1 else ''} (they're turned off)"]
+    offset_of, offset = [], 0.0
+    for c in cuts:
+        offset_of.append(offset)
+        offset += c["end"] - c["start"]
+    hook = bool((hook_text or "").strip())
+    placed, notes = [], []
+    for g in wanted:
+        name = (g.get("title") or "an animation").strip()
+
+        def drop(why):
+            notes.append(f"left out the animation \"{name}\": {why}")
+        raw = g.get("scene")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except ValueError:
+                drop("its drawing couldn't be read")
+                continue
+        if not isinstance(raw, dict) or not raw.get("type"):
+            drop("it had no drawing")
+            continue
+        raw = _no_pictures(raw)
+        start = next((offset_of[i] + g["at"] - c["start"] for i, c in enumerate(cuts)
+                      if c["clip_id"] == g.get("clip_id") and c["start"] <= g.get("at", -1) < c["end"]), None)
+        if start is None:  # its moment fell in a pause that was cut: start it as the talking resumes
+            start = next((offset_of[i] for i, c in enumerate(cuts)
+                          if c["clip_id"] == g.get("clip_id") and g.get("at", -9) <= c["start"] <= g.get("at", -9) + 1.5), None)
+        if start is None:
+            drop("the moment it was for was cut")
+            continue
+        role = g.get("role") if g.get("role") in ("explain", "gap", "hook") else "explain"
+        earliest = 0.0 if role == "hook" and not hook else HOOK_SECONDS if hook else SCENE_CLEAR
+        start = round(max(_snap_start(start, words), earliest), 3)
+        want = min(max(float(g.get("duration") or SCENE_MIN), SCENE_MIN), SCENE_LONGEST)
+        end = round(min(_snap_end(start, want, words), total - 0.2), 3)
+        if end - start < SCENE_MIN:
+            drop("there wasn't room for it before the end")
+            continue
+        if len(placed) >= cap:
+            drop(f"Studio keeps to {cap} drawn animation{'s' if cap != 1 else ''} in a Reel this long")
+            continue
+        if any(start < o["start"] + o["duration"] + 0.3 and end > o["start"] - 0.3 for o in others):
+            drop("it would have clashed with a card")
+            continue
+        if any(start < p["start"] + p["duration"] + SCENE_GAP and end > p["start"] - SCENE_GAP for p in placed):
+            drop("it came too soon after another animation")
+            continue
+        try:
+            spec = motion.validate({"scenes": [{**raw, "duration": round(end - start, 2)}]}, insert=True)
+        except motion.SpecError as e:
+            drop("; ".join(e.problems[:2]))
+            continue
+        look, changed = choose_look(g.get("look", "cutaway"), cuts, clips, start, end)
+        scene = spec["scenes"][0]
+        placed.append({"clip_id": g.get("clip_id"), "at": g.get("at"), "style": "scene", "start": start,
+                       "duration": round(end - start, 3), "title": (scene.get("title") or scene.get("text") or
+                                                                   scene.get("value") or name).replace("\n", " ")[:80],
+                       "lines": [], "type": scene["type"], "scene": raw, "look": look, "role": role,
+                       "why": (g.get("why") or "").strip()[:120], **({"look_changed": changed} if changed else {})})
+        if changed:
+            notes.append(f"showed \"{name}\" full screen instead of as a panel ({changed})")
+    return sorted(placed, key=lambda p: p["start"]), notes
+
+
+def scene_key(g: dict) -> str:
+    """The cache key of a drawn insert: its scene, look and length, the Reel's size and the library."""
+    import hashlib
+    blob = json.dumps({"scene": g["scene"], "look": g["look"], "duration": round(g["duration"], 3),
+                       "frame": [W, H, FPS], "library": motion.library_key()}, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:24]
+
+
+def render_scenes(scenes: list[dict]) -> tuple[list[dict], list[str], dict]:
+    """Each insert as a transparent WebM at the Reel's size and frame rate (motion.render_insert:
+    checked for fonts, the safe area, overlaps and cut-off text first), cached in INSERTS by
+    scene_key, so a fix round or re-render that keeps an insert doesn't draw it again. Returns the
+    inserts that rendered (each with its "file"), why any didn't, and {drawn, reused}."""
+    INSERTS.mkdir(parents=True, exist_ok=True)
+    done, notes, tally = [], [], {"drawn": 0, "reused": 0}
+    for g in scenes:
+        key = scene_key(g)
+        out = INSERTS / f"{key}.webm"
+        if out.exists() and out.stat().st_size > 0:
+            out.touch()
+            tally["reused"] += 1
+        else:
+            part = INSERTS / f"{key}.part.webm"
+            try:
+                motion.render_insert(g["scene"], g["duration"], part, style=g["look"])
+                part.replace(out)
+                tally["drawn"] += 1
+            except Exception as e:  # a draft without the insert beats no draft
+                part.unlink(missing_ok=True)
+                log.warning("Insert \"%s\" didn't render: %s: %s", g.get("title"), type(e).__name__, e)
+                why = str(e)
+                why = ("it didn't fit the screen" if "check" in why else "it didn't render")
+                notes.append(f"left out the animation \"{g.get('title')}\": {why}")
+                continue
+        done.append({**g, "file": key})
+    cutoff = __import__("time").time() - INSERT_KEEP_DAYS * 86400
+    for old in INSERTS.glob("*.webm"):  # inserts no draft has used for a while
+        try:
+            if old.stat().st_mtime < cutoff:
+                old.unlink()
+        except OSError:
+            pass
+    return done, notes, tally
+
+
+def insert_file(g: dict) -> Path:
+    return INSERTS / f"{g.get('file') or scene_key(g)}.webm"
+
+
+def scenes_layer(scenes: list[dict], total: float, out: Path) -> int:
+    """The drawn inserts as one transparent ProRes 4444 layer the length of the draft, for the
+    DaVinci Resolve project (an insert no longer in the cache is drawn again). Returns how many
+    it holds."""
+    missing = [g for g in scenes if not insert_file(g).exists()]
+    if missing:
+        render_scenes(missing)
+    ready = [g for g in scenes if insert_file(g).exists()]
+    if not ready:
+        return 0
+    args = [settings.FFMPEG, "-y", "-v", "error", "-f", "lavfi",
+            "-i", f"color=c=black@0.0:s={W}x{H}:r={FPS}:d={total:.3f},format=yuva444p"]
+    graph, below = [], "[0:v]"
+    for k, g in enumerate(ready):
+        args += ["-c:v", "libvpx-vp9", "-i", str(insert_file(g))]
+        graph.append(f"[{k + 1}:v]setpts=PTS-STARTPTS+{g['start']:.3f}/TB[s{k}];"
+                     f"{below}[s{k}]overlay=0:0:format=auto:eof_action=pass[b{k}]")
+        below = f"[b{k}]"
+    graph.append(f"{below}format=yuva444p10le[v]")
+    extract._run(args + ["-filter_complex", ";".join(graph), "-map", "[v]", "-c:v", "prores_ks", "-profile:v", "4444",
+                         "-pix_fmt", "yuva444p10le", "-r", str(FPS), "-t", f"{total:.3f}", str(out)])
+    return len(ready)
+
+
+def scene_summary(scenes: list[dict]) -> str:
+    """One sentence for Bryan on what was drawn rather than filmed."""
+    if not scenes:
+        return ""
+    parts = [f"{g['start']:.0f}-{g['start'] + g['duration']:.0f} s: {g['title']}"
+             + (f" ({g['why']})" if g.get("why") else "") for g in scenes]
+    n = len(scenes)
+    return (f"Studio drew {'an animation' if n == 1 else f'{n} animations'} over the footage, not filmed "
+            f"({'; '.join(parts)}).")
 
 
 # ── Rendering ─────────────────────────────────────────────────────────────────
@@ -710,6 +1057,7 @@ html,body{margin:0;width:1080px;height:1920px;overflow:hidden;background:transpa
   white-space:normal;text-wrap:balance;z-index:3}
 .cap{top:%(cap_top)dpx;padding:10px 26px 13px;font-size:56px;font-weight:700;line-height:1.2;max-width:900px;
   background:rgba(var(--deep-rgb),.52);border-radius:22px;text-shadow:0 2px 10px rgba(0,0,0,.35)}
+.cap.solid{background:rgba(var(--deep-rgb),.9);text-shadow:none}
 .hook{top:250px;padding:20px 34px 22px;font-size:56px;font-weight:800;line-height:1.16;max-width:900px;
   letter-spacing:-.005em;background:rgba(var(--deep-rgb),.84);border-radius:26px}
 .card{position:absolute;inset:0;z-index:1;overflow:hidden;color:var(--ink)}
@@ -776,10 +1124,14 @@ def _graphic_html(i: int, g: dict) -> tuple[str, str]:
 
 
 def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
-                   graphics: list[dict] = (), accent: str = "#f5a524", fmt: str = "webm", font: str | None = None) -> None:
+                   graphics: list[dict] = (), accent: str = "#f5a524", fmt: str = "webm", font: str | None = None,
+                   paper: list[tuple[float, float]] = ()) -> None:
     """Captions, hook and B-roll graphics as a transparent video (HyperFrames, headless Chrome):
     VP9 WebM for the draft, ProRes 4444 MOV (fmt="mov") for DaVinci Resolve. The font is one
-    of the bundled ones (caption_font), copied next to the page."""
+    of the bundled ones (caption_font), copied next to the page. Drawn inserts (style "scene")
+    are their own layer (render_scenes), under this one; a caption over a full-screen one (paper:
+    its (start, end) times) gets a solid background, so it reads as well on the light paper."""
+    graphics = [g for g in graphics if g.get("style") in ("card", "callout")]
     with tempfile.TemporaryDirectory(prefix="studio-overlay-") as tmp:
         project = Path(tmp) / "overlay"
         project.mkdir()
@@ -790,7 +1142,8 @@ def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
             clips.append(f'<div id="hook" class="hook clip" data-start="0" data-duration="{min(2.6, total):.3f}" '
                          f'data-track-index="1">{html.escape(hook.strip())}</div>')
         for i, c in enumerate(chunks):
-            clips.append(f'<div id="c{i}" class="cap clip" data-start="{c["start"]:.3f}" '
+            solid = " solid" if any(c["start"] < b and c["end"] > a for a, b in paper) else ""
+            clips.append(f'<div id="c{i}" class="cap{solid} clip" data-start="{c["start"]:.3f}" '
                          f'data-duration="{c["end"] - c["start"]:.3f}" data-track-index="0">{html.escape(c["text"])}</div>')
         animations = []
         for i, g in enumerate(graphics):
@@ -929,9 +1282,11 @@ def _measure_loudnorm(args: list[str]) -> dict:
 
 
 def mix_final(cut: Path, overlay: Path | None, music_file: Path | None, volume_db: float, total: float,
-              out: Path, words: list[dict] = ()) -> dict:
-    """The final draft: footage, the caption layer, and the sound (the voice levelled, the
-    music set under it, see VOICE_LUFS). Returns what it measured and did."""
+              out: Path, words: list[dict] = (), inserts: list[tuple[Path, float]] = ()) -> dict:
+    """The final draft: footage, the drawn inserts (transparent WebMs, each laid over the footage
+    from its start: (file, seconds)), the caption layer on top of them, and the sound (the voice
+    levelled, the music set under it, see VOICE_LUFS), all in the one encode. Returns what it
+    measured and did."""
     raw = ["-f", "f32le", "-ar", str(RATE), "-ac", "2"]
     with tempfile.TemporaryDirectory(prefix="studio-mix-") as tmp:
         work = Path(tmp)
@@ -999,13 +1354,20 @@ def mix_final(cut: Path, overlay: Path | None, music_file: Path | None, volume_d
         report["mix_lufs_before"] = float(measure["input_i"])
 
         args = [settings.FFMPEG, "-y", "-v", "error", "-i", str(cut)]
-        graph, video = [], "0:v"
+        graph, video, n, below = [], "0:v", 0, "[0:v]"
+        for k, (path, at) in enumerate(inserts):  # each drawn insert from its moment, then the footage again
+            n += 1
+            args += ["-c:v", "libvpx-vp9", "-i", str(path)]  # libvpx keeps the alpha channel
+            graph.append(f"[{n}:v]setpts=PTS-STARTPTS+{at:.3f}/TB[s{k}];"
+                         f"{below}[s{k}]overlay=0:0:format=auto:eof_action=pass[b{k}]")
+            below = video = f"[b{k}]"
         if overlay:
-            args += ["-c:v", "libvpx-vp9", "-i", str(overlay)]  # libvpx keeps the alpha channel
-            graph.append("[0:v][1:v]overlay=0:0:format=auto:shortest=1[v]")
+            n += 1
+            args += ["-c:v", "libvpx-vp9", "-i", str(overlay)]
+            graph.append(f"{below}[{n}:v]overlay=0:0:format=auto:shortest=1[v]")
             video = "[v]"
         args += ["-i", str(mixed)]
-        graph.append(f"[{2 if overlay else 1}:a]{_loudnorm_args(measure)},aresample={RATE}[a]")
+        graph.append(f"[{n + 1}:a]{_loudnorm_args(measure)},aresample={RATE}[a]")
         args += ["-filter_complex", ";".join(graph), "-map", video, "-map", "[a]",
                  "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p",
                  "-r", str(FPS), "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart",
@@ -1213,16 +1575,37 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         words = timeline(cuts, clips)
         chunks = caption_chunks(words, total)
         overlay = None
-        graphics = edl.get("graphics", []) if placed else place_graphics(edl.get("graphics", []), cuts, total)
+        if placed:  # a re-render: the graphics are where the draft had them
+            cards = [g for g in edl.get("graphics", []) if g.get("style") != "scene"]
+            scenes = [g for g in edl.get("graphics", []) if g.get("style") == "scene"]
+            scene_notes = []
+            if scenes and scene_cap(total) <= 0:
+                scene_notes = [f"left out {len(scenes)} drawn animation{'s' if len(scenes) != 1 else ''} "
+                               "(they're turned off)"]
+                scenes = []
+        else:
+            cards = place_graphics(edl.get("graphics", []), cuts, total)
+            scenes, scene_notes = place_scenes(edl.get("graphics", []), cuts, clips, total, words,
+                                               edl.get("hook_text", ""), cards)
+        tally = {"drawn": 0, "reused": 0}
+        if scenes:
+            scenes, more, tally = render_scenes(scenes)
+            scene_notes += more
+        graphics = sorted(cards + scenes, key=lambda g: g["start"])
         edl["graphics"] = graphics
+        edl["inserts"] = {**tally, "placed": len(scenes), "left_out": scene_notes}
+        checks += [{"did": n, "counted": False} for n in scene_notes]
+        if scenes and not placed:
+            edl["summary"] = (edl.get("summary", "").rstrip() + " " + scene_summary(scenes)).strip()
         chunks, doubled = clear_of_cards(chunks, graphics)
         if doubled:
             checks.append({"did": f"hid {doubled} caption{'s' if doubled != 1 else ''} repeating a card's own words",
                            "counted": True})
-        if chunks or edl["hook_text"].strip() or graphics:
+        if chunks or edl["hook_text"].strip() or cards:
             overlay = work / "overlay.webm"
-            render_overlay(chunks, edl["hook_text"], total, overlay, graphics,
-                           ACCENT.get(production["brand"], ACCENT["urban_makers"]))
+            paper = [(g["start"], g["start"] + g["duration"]) for g in scenes if g.get("look") == "cutaway"]
+            render_overlay(chunks, edl["hook_text"], total, overlay, cards,
+                           ACCENT.get(production["brand"], ACCENT["urban_makers"]), **({"paper": paper} if paper else {}))
 
         music_info, music_file = {"mood": edl["music"]["mood"], "tempo_bpm": edl["music"]["tempo_bpm"]}, None
         chosen = (plan.get("music_plan") or {}).get("chosen")
@@ -1246,7 +1629,9 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
                               note=f"Add music in the Instagram app: {edl['music']['mood']}, around "
                                    f"{edl['music']['tempo_bpm']:.0f} BPM, kept low under your voice.")
 
-        sound = mix_final(work / "cut.mp4", overlay, music_file, edl["music"]["volume_db"], total, final, words)
+        layers = {"inserts": [(insert_file(g), g["start"]) for g in scenes]} if scenes else {}
+        sound = mix_final(work / "cut.mp4", overlay, music_file, edl["music"]["volume_db"], total, final, words,
+                          **layers)
         if sound.get("music_gain_db") is not None:
             music_info["gain_db"] = sound["music_gain_db"]  # the track's level in the mix (for Resolve)
         if sound.get("voice_gain_db", 0) >= 6:

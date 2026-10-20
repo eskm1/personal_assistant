@@ -114,6 +114,12 @@ EDIT_REFRAME = _flag("STUDIO_EDIT_REFRAME", True)
 # closer framing (EDIT_PUNCH_ZOOM, 1.12 = 112%), so a long shot never sits still.
 EDIT_PUNCH_INS = _flag("STUDIO_EDIT_PUNCH_INS", True)
 EDIT_PUNCH_ZOOM = float(_env("STUDIO_EDIT_PUNCH_ZOOM", "1.12"))
+# Drawn inserts: the editor may lay a short animation from the motion library (motion.py) over
+# the footage where Bryan explains something the footage doesn't show, or to cover a missing
+# shot, while his voice and the captions carry on. At most EDIT_SCENES_MAX per draft (and about
+# one per 15 seconds). Off (or a max of 0) = no inserts.
+EDIT_SCENES = _flag("STUDIO_EDIT_SCENES", True)
+EDIT_SCENES_MAX = min(max(int(_env("STUDIO_EDIT_SCENES_MAX", "3") or 3), 0), 6)
 # Studio fixes its own list (self_fix.py): after a draft renders and Studio's read runs, the
 # fixes the editor can make itself go back to the editor, up to this many rounds, before Bryan
 # sees the draft. Each round is one edit plan and one read (a few tens of cents). 0 = off.
@@ -260,6 +266,9 @@ POSTS_PER_WEEK = min(max(int(_env("STUDIO_POSTS_PER_WEEK", "0")), 0), 21)
 POST_TIME = _env("STUDIO_POST_TIME", "19:30")
 # Most slides Instagram takes in one carousel.
 INSTAGRAM_CAROUSEL_MAX = min(max(int(_env("STUDIO_INSTAGRAM_CAROUSEL_MAX", "10")), 2), 20)
+# The handle on the animated explainers' end card (motion.py), small under the mark. The connected
+# Instagram account's own name wins when there is one; "off" = no handle.
+INSTAGRAM_HANDLE = _env("STUDIO_INSTAGRAM_HANDLE", "urbanmakers_sg").strip().lstrip("@")
 # The files of a post on its way to Instagram (the checked video, the slides as JPEGs).
 POSTING_DIR = ROOT / "Posting"
 # Results: every post of the last 90 days is read once a day at this hour (Singapore), and each

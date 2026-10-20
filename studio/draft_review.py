@@ -60,9 +60,10 @@ SCHEMA = {
                     "editor_can_fix": {"type": "boolean"},
                     "rule": {"type": "string"},
                     "same_rule": {"type": "integer"},
+                    "illustrate": {"type": "string"},
                 },
                 "required": ["what", "why", "start", "end", "area", "when", "kind", "editor_can_fix", "rule",
-                             "same_rule"],
+                             "same_rule", "illustrate"],
                 "additionalProperties": False,
             },
         },
@@ -98,6 +99,7 @@ what it's about.
 is "next_shoot", and its "what" says what to film. kind is the kind of shot to film for a \
 next_shoot fix (talking, broll, detail, before_after, reaction, screen), otherwise "none".
 {fixable}
+{illustrate}
 - works: 2 to 4 short points on what already works, so it's kept in the next version.
 - Place names stay internal: if an estate, condo, street or building name, an address or a \
 client's name appears in the on-screen text, captions or hook, that is always a this_draft fix \
@@ -120,7 +122,21 @@ for any future post in at most 14 words ("End on the last full sentence, never o
 starts the next"); same_rule is the number of the rule in "Editing rules Studio learned" it repeats \
 (R3 = 3), else 0. For other fixes rule is "" and same_rule 0."""
 _REEL_FIXABLE = ("trims and cuts, the order of the opening, the hook text, pace, caption words and timing, a "
-                 "graphic's wording, placement or timing, the music level")
+                 "graphic's or drawn animation's wording, placement or timing (or removing it), the music level")
+# Drawn inserts (editor.place_scenes): what the read says about them, and "Draw it for now".
+_ILLUSTRATE = """\
+- Drawn animations: the material lists any animation Studio drew over the footage (drawn, not \
+filmed). Judge them like graphics: do they show what Bryan says while he says it, are they quick to \
+read, do they cover his face or the captions, are there too many? Removing or retiming one is an \
+editor_can_fix fix.
+- illustrate: only on a next_shoot fix for a missing shot that a simple drawing could stand in for \
+until it's filmed (a build-up of layers, a dimension, a layout, a process, a comparison): what to \
+draw, in at most 12 words ("a cross-section: old tiles, adhesive, new tiles on top"). Studio then \
+draws it for now in this draft and your next_shoot fix stays so Bryan still films it. Never for a \
+person, a client's home, a finished result or real workmanship: those must be filmed. Otherwise "", \
+and "" on every other fix."""
+_NO_ILLUSTRATE = '- illustrate: always "".'
+ILLUSTRATE_PREFIX = "Draw it for now: "
 _CAROUSEL_FIXABLE = ("slide wording, spelling, length, order, the cover's words, the ask's wording (within the listed "
                      "offers), removing a place name, the caption, swapping a slide to text only")
 
@@ -341,12 +357,13 @@ def draft_words(conn, production: dict) -> list[dict]:
     return editor.timeline(cuts, clips) if cuts else []
 
 
-def _stills(video: Path, total: float, work: Path) -> list[tuple[float, Path]]:
-    """About six small stills across the final draft, 512 px wide."""
+def _stills(video: Path, total: float, work: Path, extra: list[float] = ()) -> list[tuple[float, Path]]:
+    """About six small stills across the final draft, 512 px wide, plus one at each of `extra`
+    (the middle of each drawn animation no still lands in)."""
     import extract
     out = []
-    for i in range(STILLS):
-        t = total * (i + 0.5) / STILLS
+    times = sorted([total * (i + 0.5) / STILLS for i in range(STILLS)] + list(extra))
+    for i, t in enumerate(times):
         jpg = work / f"still_{i}.jpg"
         try:
             extract._run([settings.FFMPEG, "-y", "-v", "error", "-ss", f"{t:.2f}", "-i", str(video),
@@ -396,10 +413,17 @@ def _context(conn, production: dict) -> str:
         offset += length
     lines.append("Cut list (draft time: source clip and its seconds):\n" + ("\n".join(placed) or "  (none)"))
     lines.append(f"Hook text on screen for the first ~2.5s: {edl.get('hook_text') or '(none)'}")
-    graphics = edl.get("graphics", [])
+    graphics = [g for g in edl.get("graphics", []) if g.get("style") != "scene"]
     lines.append("Graphics: " + ("; ".join(
         f"{g['start']:.1f}-{g['start'] + g['duration']:.1f}s {g['style']} \"{g['title']}\""
         + (f" ({' / '.join(g['lines'])})" if g.get("lines") else "") for g in graphics) or "none"))
+    drawn = inserts(edl)
+    if drawn:
+        import motion
+        lines.append("Drawn animations over the footage (drawn by Studio, not filmed; Bryan keeps talking under them):\n"
+                     + "\n".join(f"  {d['start']:.1f}-{d['end']:.1f}s {d['look']} {d['type']} \"{d['title']}\""
+                                 + (f" ({d['why']})" if d.get("why") else "")
+                                 + f": shows \"{motion.scene_text(d['scene'])[:200]}\"" for d in drawn))
     lines.append("Captions on screen (start-end seconds: text):\n"
                  + ("\n".join(f"  {c['start']:.2f}-{c['end']:.2f}: {c['text']}" for c in chunks) or "  (none)"))
     lines.append("Words spoken in the draft (start seconds, word):\n"
@@ -455,21 +479,59 @@ def _context(conn, production: dict) -> str:
     return "\n\n".join(lines)
 
 
-def _clean(result: dict, total: float) -> dict:
-    """Keep the answer inside the limits the schema can't enforce."""
+def inserts(edl: dict) -> list[dict]:
+    """The draft's drawn animations (editor.place_scenes), for the read and for Review: what was
+    drawn, not filmed, and when."""
+    return [{"start": g["start"], "end": round(g["start"] + g["duration"], 2), "title": g.get("title", ""),
+             "type": g.get("type") or (g.get("scene") or {}).get("type", ""), "look": g.get("look", "cutaway"),
+             "role": g.get("role", "explain"), "why": g.get("why", ""), "scene": g.get("scene") or {}}
+            for g in (edl or {}).get("graphics", []) if g.get("style") == "scene" and "start" in g]
+
+
+def _overlaps(f: dict, d: dict) -> bool:
+    if f.get("start") is None:
+        return False
+    end = f["end"] if f.get("end") is not None else f["start"] + 2.0
+    return f["start"] < d["end"] + 0.5 and end > d["start"] - 0.5
+
+
+def _clean(result: dict, total: float, edl: dict | None = None) -> dict:
+    """Keep the answer inside the limits the schema can't enforce. A next_shoot fix with something
+    to illustrate gets a companion the editor can make ("Draw it for now: ..."), so Studio's own
+    fix rounds draw it while the next_shoot fix stays for Bryan; a next_shoot fix a drawn
+    animation already stands in for is marked drawn. The drawn animations are listed (inserts)."""
     def secs(v):
         return None if v is None else round(min(max(float(v), 0.0), total), 2)
-    fixes = []
+    import editor
+    drawn = inserts(edl or {})
+    room = editor.scene_cap(total) - len(drawn)  # how many more the editor may draw in this draft
+    fixes, added = [], 0
     for f in result.get("fixes", [])[:MAX_FIXES]:
         f = {**f, "start": secs(f.get("start")), "end": secs(f.get("end"))}
         if f["start"] is not None and f["end"] is not None and f["end"] < f["start"]:
             f["end"] = None
         if f.get("kind") == "none" or f.get("when") != "next_shoot":
             f["kind"] = None
-        fixes.append({**f, **_learnable(f)})
+        draw = re.sub(r"\s+", " ", str(f.pop("illustrate", "") or "")).strip().rstrip(".")[:120]
+        f = {**f, **_learnable(f)}
+        if f.get("when") == "next_shoot":
+            covered = next((d for d in drawn if d["role"] == "gap" and _overlaps(f, d)), None)
+            if covered:
+                f["drawn"] = {"start": covered["start"], "end": covered["end"], "title": covered["title"]}
+        fixes.append(f)
+        if draw and added < room and f.get("when") == "next_shoot" and not f.get("drawn"):
+            added += 1
+            fixes.append({"what": ILLUSTRATE_PREFIX + draw, "why": "Until it's filmed, a drawing can show it.",
+                          "start": f["start"], "end": f["end"], "area": "picture", "when": "this_draft", "kind": None,
+                          "editor_can_fix": True, "rule": "", "same_rule": 0, "illustrates": f["what"]})
     works = [w.strip() for w in result.get("works", []) if w.strip()][:MAX_WORKS]
-    return {"verdict": result.get("verdict", "").strip(), "scores": result.get("scores", {}),
-            "fixes": fixes, "works": works}
+    verdict = result.get("verdict", "").strip()
+    if added and re.match(r"(?i)\s*(ready to post|nearly ready)", verdict):
+        k = sum(1 for f in fixes if f.get("when") == "this_draft")
+        verdict = f"Nearly ready: {k} thing{'s' if k != 1 else ''} to fix"
+    return {"verdict": verdict, "scores": result.get("scores", {}),
+            "fixes": fixes, "works": works,
+            "inserts": [{k: v for k, v in d.items() if k != "scene"} for d in drawn]}
 
 
 # ── Running it ────────────────────────────────────────────────────────────────
@@ -499,9 +561,13 @@ def run(conn, production_id: int, client=None, ref: str | None = None) -> dict:
         raise RuntimeError("the draft's video file is missing")
     total = production["duration"] or 0
     text = _context(conn, production)
+    edl = json.loads(production["edl"])
+    grid = [total * (i + 0.5) / STILLS for i in range(STILLS)]
+    extra = [round((d["start"] + d["end"]) / 2, 2) for d in inserts(edl)
+             if not any(d["start"] <= t <= d["end"] for t in grid)]
     with tempfile.TemporaryDirectory(prefix="studio-review-") as tmp:
         content = []
-        for t, jpg in _stills(video, total, Path(tmp)):
+        for t, jpg in _stills(video, total, Path(tmp), extra):
             content.append({"type": "text", "text": f"Still at {t:.1f}s"})
             content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                         "data": base64.standard_b64encode(jpg.read_bytes()).decode()}})
@@ -512,13 +578,14 @@ def run(conn, production_id: int, client=None, ref: str | None = None) -> dict:
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
         output_config={"effort": "low", "format": {"type": "json_schema", "schema": SCHEMA}},
         system=_SYSTEM.replace("{playbook}", playbook.text())
-        .replace("{fixable}", _FIXABLE.replace("{examples}", _REEL_FIXABLE)),
+        .replace("{fixable}", _FIXABLE.replace("{examples}", _REEL_FIXABLE))
+        .replace("{illustrate}", _ILLUSTRATE if settings.EDIT_SCENES and settings.EDIT_SCENES_MAX > 0 else _NO_ILLUSTRATE),
         messages=[{"role": "user", "content": content}],
     )
     usage.record("review", ref or f"production:{production_id}", response)
     if response.stop_reason in ("refusal", "max_tokens"):
         raise RuntimeError(f"Claude couldn't review this draft ({response.stop_reason})")
-    review = _clean(json.loads(next(b.text for b in response.content if b.type == "text")), total)
+    review = _clean(json.loads(next(b.text for b in response.content if b.type == "text")), total, edl)
     review["at"] = catalog.now()
     conn.execute("UPDATE productions SET review = ?, review_version = ? WHERE id = ?",
                  (json.dumps(review, ensure_ascii=False), production["version"], production_id))
