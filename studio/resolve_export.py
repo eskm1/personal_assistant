@@ -280,6 +280,9 @@ def build(conn, production_id: int) -> Path:
         exact = sum(c["end"] - c["start"] for c in cuts)
         chunks = editor.caption_chunks(editor.timeline(cuts, clips), exact)
         accent = editor.ACCENT.get(production["brand"], "#ff4d6d")
+        look = editor.draft_look(edl)  # the draft's own titles and caption font
+        if look["titles"] == "gallery":
+            chunks = editor.lit_captions(editor.key_word_captions(chunks, edl.get("key_words") or []), edl.get("bright"))
         layers, lane = [], 1
         # The drawn animations get a track of their own, under the cards and the captions.
         scenes = [g for g in edl.get("graphics", []) if g.get("style") == "scene" and "start" in g]
@@ -289,11 +292,13 @@ def build(conn, production_id: int) -> Path:
         cards = [g for g in edl.get("graphics", []) if g.get("style") != "scene"]
         if edl.get("hook_text", "").strip() or cards:
             editor.render_overlay([], edl.get("hook_text", ""), exact, work / "graphics.mov",
-                                  cards, accent, fmt="mov")
+                                  cards, accent, fmt="mov", font=look["caption_font"], style=look["titles"],
+                                  hook_italic=edl.get("hook_italic"))
             layers.append(("Hook and graphics", work / "graphics.mov", lane))
         if chunks:
             paper = [(g["start"], g["start"] + g["duration"]) for g in scenes if g.get("look") == "cutaway"]
-            editor.render_overlay(chunks, "", exact, work / "captions.mov", fmt="mov", paper=paper)
+            editor.render_overlay(chunks, "", exact, work / "captions.mov", accent=accent, fmt="mov", paper=paper,
+                                  font=look["caption_font"], style=look["titles"])
             layers.append(("Captions", work / "captions.mov", lane + 1))
             (work / "captions.srt").write_text(srt(chunks), encoding="utf-8")
 

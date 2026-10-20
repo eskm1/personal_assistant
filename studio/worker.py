@@ -380,6 +380,11 @@ def run_editor(stop_after_one: bool = False) -> None:
                     AND json_extract(self_fix, '$.pending') = 1 AND json_extract(self_fix, '$.version') = version""")
     conn.execute("UPDATE productions SET status = 'planned' WHERE status = 'producing'")
     conn.commit()
+    import restyle
+    try:  # a new look: the drafts waiting for review are made again in it, once
+        restyle.run_once(conn)
+    except Exception:
+        log.exception("Couldn't queue the drafts for the new look")
     log.info("Editor ready")
     while True:
         production_id = editor.next_job(conn)
@@ -403,6 +408,8 @@ def run_editor(stop_after_one: bool = False) -> None:
                          (f"{type(e).__name__}: {e}"[:2000], catalog.now(), production_id))
             conn.commit()
             notify.digest.add("edit_failed")
+        conn.execute("UPDATE productions SET restyle = NULL WHERE id = ? AND restyle IS NOT NULL", (production_id,))
+        conn.commit()
         if stop_after_one:
             return
 

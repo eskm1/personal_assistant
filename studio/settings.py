@@ -128,9 +128,13 @@ SELF_FIX_ROUNDS = min(max(int(_env("STUDIO_SELF_FIX_ROUNDS", "2")), 0), 4)
 # kept in their own section of the playbook (learning.py); at most this many per kind of post.
 LEARN_RULES = _flag("STUDIO_LEARN_RULES", True)
 LEARNED_RULES_MAX = min(max(int(_env("STUDIO_LEARNED_RULES_MAX", "20")), 3), 60)
-# Captions, hook and graphics font, from the fonts bundled in studio/render (editor.CAPTION_FONTS):
-# figtree, nunito, dm_sans or outfit.
-CAPTION_FONT = _env("STUDIO_CAPTION_FONT", "figtree").lower().replace("-", "_").replace(" ", "_")
+# Captions font (and the small text under titles), from the fonts bundled in studio/render
+# (editor.CAPTION_FONTS): inter, figtree, nunito, dm_sans or outfit.
+CAPTION_FONT = _env("STUDIO_CAPTION_FONT", "inter").lower().replace("-", "_").replace(" ", "_")
+# The look of the hook, callouts and cards (editor.TITLE_STYLES): gallery (a serif title with one
+# italic word, a hairline, no box; captions glow, and a key word in serif italic) or classic (the
+# first look: boxed titles with the amber bar, captions on a rounded box).
+TITLE_STYLE = _env("STUDIO_TITLE_STYLE", "gallery").lower().strip()
 # How far the music sits under the voice while Bryan talks (dB); between phrases it rises a
 # little, and with no talking it plays at a comfortable bed level.
 MUSIC_GAP_DB = min(max(float(_env("STUDIO_MUSIC_GAP_DB", "20")), 12.0), 30.0)

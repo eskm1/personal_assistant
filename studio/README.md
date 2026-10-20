@@ -183,6 +183,11 @@ Studio's read is one Claude call after each draft renders (a few cents). If it f
 is still ready to review and the owner gets a **Get Studio's read** button. When the worker
 starts it writes the read for up to 10 drafts waiting for review that don't have one.
 
+The quickest way: the box right under the video ("Note at 0:12"). Typing pauses the video, Enter adds the note
+pinned to that moment, and the cursor stays for the next one. On a phone, Play grows the video at the top of the page
+(not the system's full screen) and it stays there with that box while you scroll; **Close video** shrinks it back.
+With no notes yet, the bar's **Add a note** puts the cursor there; on a computer **N** does too.
+
 Pause on a moment, type a note, and it's pinned to that time. Tick **Remember for future edits**
 and the note is also added to `Studio\playbook.md`, the rules the editor follows on every edit.
 **×** beside a note takes it back (yours, or anyone's for the owner) until the editor has acted on it. To pick
@@ -191,6 +196,12 @@ uses exactly that track, and so do later ones until you paste another.
 After a decision the next draft opens straight away while the editor revises the last one in the
 background. You also write or approve the post caption here. Keyboard: J / K for next and
 previous, Space to play, Esc to go back, Enter to add a note.
+
+**Edit it again** (on a draft waiting for review, you only): the same idea made again in today's look, as its next
+version: a Reel gets a fresh edit (titles, captions, music taste), a carousel's slides are rewritten in the current
+style guide and laid out again. **Edit all N waiting again** does every draft in To review. Notes and earlier versions
+stay. When Studio's look changes (`restyle.RELEASE`), it does this by itself once, on its first start after the
+update, and says so on Telegram.
 
 **Ideas** (this tab is for when planning isn't online; with the online planner, ideas live only
 there and come from new footage by themselves, section 12): on the Ideas tab, press **Suggest posts** (optionally with a focus such as "kitchen
@@ -303,10 +314,25 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    starts a new sentence (an "and" after the last full stop), never opens on the tail of a
    sentence, and trims dead air before the first word and after the last.
 4. HyperFrames renders the captions (1 to 3 words in sentence case, timed to each word) and the
-   hook as a transparent layer over the footage, in a font bundled in `studio/render`
-   (`STUDIO_CAPTION_FONT`: `figtree`, the default, `nunito`, `dm_sans` or `outfit`; nothing depends
-   on the machine's fonts or the network). Cards stay above the caption line, and a caption that
+   hook as a transparent layer over the footage, in fonts bundled in `studio/render/captions/fonts`
+   (`STUDIO_CAPTION_FONT`: `inter`, the default, `figtree`, `nunito`, `dm_sans` or `outfit`; nothing
+   depends on the machine's fonts or the network). Cards stay above the caption line, and a caption that
    repeats a card's words is hidden while the card is up.
+   **The look** (`STUDIO_TITLE_STYLE`, your pick of 2026-10-20: "A with C's italic key word in captions"):
+   `gallery`, the default: the hook, callouts and cards are a large serif title (Instrument Serif) in
+   sentence case with one word in italic ("Floors *stripped*"), a short hairline and a quiet line under
+   it; no box, no side bar, no orange. A soft shade comes down from the top while a title is up; the
+   words rise into place one after another, the hairline draws, the line under it fades up. Captions
+   are Inter with a soft glow instead of a box, over a soft shade at the bottom; over bright footage
+   (a white wall, sunlit rubble: Studio measures it) the glow is stronger and a soft shade hugs the
+   words; over a drawn cutaway's paper they turn ink on paper. Now and then a key word in a caption is in the
+   serif italic ("down to the *screed*"): only real key words (the material, the thing being
+   explained, a number), at most one per caption and about one every 4 seconds or fewer, never in
+   Chinese captions. The editor picks the title's italic word and the caption key words when it plans
+   the cut (a title with nothing marked: its last word when it's two or three words long). `classic`
+   is the first look (boxed titles with the amber bar, captions on a rounded box). A draft keeps the
+   look it was made in: a re-render or its Resolve project doesn't change it, and drafts from before
+   this stay classic until they're revised.
    **Drawn animations** (`STUDIO_EDIT_SCENES`, on by default): where you explain something the footage
    doesn't show (layers in a floor, a measurement, steps, a comparison, a layout), or a shot is missing
    or weak, the editor may lay a short animation from the motion library over you (the same paper-and-ink
@@ -358,8 +384,8 @@ The jump cuts, reframing and punch-ins are settings in `.env` (all on by default
 `STUDIO_EDIT_REFRAME`, `STUDIO_EDIT_PUNCH_INS`, `STUDIO_EDIT_PUNCH_ZOOM` (default 1.12), `STUDIO_EDIT_SCENES`,
 `STUDIO_EDIT_SCENES_MAX` (default 3; `0` = none). The fix rounds,
 learning, caption font and music gap are too: `STUDIO_SELF_FIX_ROUNDS`, `STUDIO_LEARN_RULES`,
-`STUDIO_LEARNED_RULES_MAX`, `STUDIO_CAPTION_FONT`, `STUDIO_MUSIC_GAP_DB`. Older drafts keep their look
-until they're revised. A draft
+`STUDIO_LEARNED_RULES_MAX`, `STUDIO_CAPTION_FONT`, `STUDIO_TITLE_STYLE` (`gallery` or `classic`),
+`STUDIO_MUSIC_GAP_DB`. Older drafts keep their look until they're revised. A draft
 remembers its pieces and framing, so a re-render (after a subtitle fix, say) and the Resolve
 project match it.
 

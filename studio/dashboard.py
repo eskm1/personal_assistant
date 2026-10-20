@@ -1192,6 +1192,11 @@ def decide(production_id: int):
                                       "approved" if decision == "approve" else "rejected", caption)
     elif decision == "caption":
         catalog.set_production_status(db(), production_id, row["status"], caption)
+    elif decision == "redo":  # made again in today's look (restyle.py); nothing lost
+        if row["status"] != "ready":
+            return jsonify({"error": "only a draft waiting for review can be made again"}), 400
+        import restyle
+        restyle.mark(db(), [production_id])
     elif decision == "retry":
         if row["status"] != "failed":
             return jsonify({"error": "only a failed edit can be retried"}), 400
@@ -1200,6 +1205,16 @@ def decide(production_id: int):
         return jsonify({"error": "unknown decision"}), 400
     log.info("Production %s: %s", production_id, decision)
     return jsonify({"ok": True})
+
+
+@app.post("/api/productions/redo")
+@owner_only
+def redo_all():
+    """Every draft waiting for review, made again in today's look (the editor takes them one at a time)."""
+    import restyle
+    n = restyle.mark(db(), restyle.waiting(db()))
+    log.info("Edit again: %s drafts", n)
+    return jsonify({"ok": True, "count": n})
 
 
 @app.post("/api/clip/<int:clip_id>/review")

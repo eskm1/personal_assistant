@@ -342,6 +342,9 @@ _ADDED_COLUMNS = {
         "archived_at": "TEXT",
         "removed_at": "TEXT",
         "removed_bytes": "INTEGER",
+        # 1 = made again because Studio's look changed (restyle.py): a carousel's slides are rewritten
+        # in the current style guide even without notes. Cleared once the editor has taken it.
+        "restyle": "INTEGER",
     },
     "ideas": {
         "wishlist": "TEXT",     # JSON: shots Bryan could film to make the idea stronger

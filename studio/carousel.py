@@ -512,6 +512,10 @@ def run(conn, production_id: int, client=None) -> Path:
     if notes and (was == "revising" or (row["version"] >= 1 and not redraws)):
         revision = revise(conn, dict(row), slides, notes, client)
         slides = revision["slides"]
+    elif was == "revising" and row["restyle"]:  # Studio's look changed (restyle.py): rewrite in today's style
+        import restyle
+        revision = revise(conn, dict(row), slides, [restyle.CAROUSEL_NOTE], client)
+        slides = revision["slides"]
     for n, change in redraws.items():
         k = int(n)
         if 1 <= k <= len(slides) and slides[k - 1]["image"].get("source") == "concept":

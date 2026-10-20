@@ -139,7 +139,21 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   notes sorted editing/taste; Review's "Rules Studio taught itself", playbook editor, trend), code checks
   (`editor.sentence_guard`, `clear_of_cards`, caption timing, the voice/music gap guard, loudness), a new mix
   (voice cleaned and levelled, music `STUDIO_MUSIC_GAP_DB` under it) and bundled caption fonts
-  (`render/captions/fonts`, `STUDIO_CAPTION_FONT`; Bryan picks the final one after studying his reference reels).
+  (`render/captions/fonts`, `STUDIO_CAPTION_FONT`).
+- Titles and captions, Bryan's pick 2026-10-20 ("A with C's italic key word in captions"), built 2026-10-20, not yet
+  seen on a real draft: `STUDIO_TITLE_STYLE=gallery` (default; `classic` = the first look) in `editor.py`
+  (`_GALLERY_CSS`, `_gallery_title`): Instrument Serif titles with one italic word (Claude marks it `*word*`;
+  `tidy_plan` strips every asterisk and keeps the word as `hook_italic` / a graphic's `italic`), hairline, top shade;
+  captions Inter (now the `STUDIO_CAPTION_FONT` default) with a glow, a stronger glow + hugging shade over bright
+  footage (`bright_spans`, kept as `edl["bright"]`), ink on paper over a cutaway, and the plan's `key_words` in serif
+  italic (`key_word_captions`, at most one per caption and per ~4 s, none in Chinese). A draft keeps its look
+  (`edl["look"]`, `draft_look`; drafts from before stay classic/Figtree until revised); Resolve uses the same. The
+  caption font is now settled (Inter); the taste report may still suggest changes.
+- Restyle (Bryan, 2026-10-20: "as soon as the style guide is re-released, just refresh all of the work in progress
+  posts"): `restyle.py` runs once per `RELEASE` on the editor's start (Studio/style_release.txt): every draft in To
+  review goes back to `revising` with `restyle = 1` (a Reel gets a fresh edit; a carousel is rewritten from
+  `CAROUSEL_NOTE`, not learned as a rule), Telegram says so. Review's **Edit it again** (one / all waiting) does the
+  same. Bump `RELEASE` when the look changes enough to redo what's waiting.
 - Reference library and taste report built 2026-10-19 (not yet proven against Instagram or real Claude):
   Import many (paste or CSV, dedupe by shortcode, `import_references()`), held until Bryan presses Analyse
   (all, or a stratified sample of 150), paced downloads with backoff and pauses (`ref_library.py`), carousels and

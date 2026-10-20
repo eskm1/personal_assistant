@@ -312,7 +312,7 @@ def _ask(client, system: str, payload: dict, schema: dict, ref: str, effort: str
 
 
 def current_settings() -> dict:
-    names = ("CAPTION_FONT", "MUSIC_GAP_DB", "EDIT_JUMP_CUTS", "EDIT_MAX_PAUSE", "EDIT_REFRAME", "EDIT_PUNCH_INS",
+    names = ("CAPTION_FONT", "TITLE_STYLE", "MUSIC_GAP_DB", "EDIT_JUMP_CUTS", "EDIT_MAX_PAUSE", "EDIT_REFRAME", "EDIT_PUNCH_INS",
              "EDIT_PUNCH_ZOOM")
     return {f"STUDIO_{n}": getattr(settings, n) for n in names if hasattr(settings, n)}
 

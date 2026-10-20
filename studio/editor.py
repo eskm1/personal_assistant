@@ -16,7 +16,10 @@ The editor (phase 5): turns a planned production into a draft Reel.
      lips stay in sync) and frames it 1080x1920.
   5. HyperFrames renders the captions (1-3 words in sentence case, timed to each word,
      in a bundled font: STUDIO_CAPTION_FONT) and the hook as a transparent layer; cards
-     stay above the caption line and captions repeating a card's words are hidden.
+     stay above the caption line and captions repeating a card's words are hidden. The look
+     (STUDIO_TITLE_STYLE): gallery, Bryan's pick (a serif title with one italic word, a
+     hairline, no box; captions glow, a key word now and then in the serif italic), or the
+     classic first look. A draft keeps the look it was made in (edl["look"]).
      Drawn inserts (STUDIO_EDIT_SCENES): where Bryan explains something the footage doesn't
      show, or a shot is missing, Claude may place a scene from the motion library (motion.py);
      Studio checks it (place_scenes: the library's rules, timing to his words, how many, a
@@ -87,6 +90,7 @@ EDL_SCHEMA = {
             },
         },
         "hook_text": {"type": "string"},
+        "key_words": {"type": "array", "items": {"type": "string"}},
         "music": {
             "type": "object",
             "properties": {
@@ -141,7 +145,7 @@ EDL_SCHEMA = {
             },
         },
     },
-    "required": ["cuts", "hook_text", "music", "graphics", "missing_shots", "summary", "notes_addressed"],
+    "required": ["cuts", "hook_text", "key_words", "music", "graphics", "missing_shots", "summary", "notes_addressed"],
     "additionalProperties": False,
 }
 
@@ -160,7 +164,15 @@ when the story needs it. Use only the clips listed.
 words, never in the middle of one. Keep the payoff and anything that qualifies a claim.
 {pause_rule}- Cuts play in the order you list them. Each is clip_id plus start and end seconds within that clip.
 - hook_text: at most 6 words shown on screen for the first ~2.5 seconds, or "" for none. It \
-should add to the spoken hook, not repeat it word for word.
+should add to the spoken hook, not repeat it word for word. Sentence case, never all capitals.
+- Titles (hook_text, and a card's or callout's title) are set in a serif with at most one word in \
+italic: mark that word with *asterisks*, e.g. "Floors *stripped*", "The *screed* goes first". Only a \
+real key word (the material, the thing being explained, the result), never filler; leave a title \
+unmarked when no word stands out. Never mark anything else (lines, why, summary, a scene's JSON).
+- key_words: the few words of Bryan's speech the captions set in italic for emphasis, as he says \
+them in the transcript, one word each (e.g. "screed", "overlay", "fifteen"): the material, the thing \
+being explained, the number of something; never filler. Use them sparingly: at most one per 4 \
+seconds of the Reel and usually fewer; [] when nothing stands out, and always [] for Chinese speech.
 - music: describe the bed for this post (mood, a short catalogue search phrase, tempo). \
 volume_db is the music's level: -16 is the usual bed (Studio levels Bryan's voice and keeps the \
 music well under it while he talks, a little higher between phrases); go lower (-18 to -22) for a \
@@ -303,7 +315,7 @@ def _revision_block(conn, production: dict, fixes: list[dict] | None = None) -> 
     graphics = previous.get("graphics") or []
     cards = [g for g in graphics if "start" in g and g.get("style") != "scene"]
     shown = ("\nPrevious graphics: " + "; ".join(
-        f"{g['start']:.1f}-{g['start'] + g['duration']:.1f}s {g['style']} \"{g['title']}\""
+        f"{g['start']:.1f}-{g['start'] + g['duration']:.1f}s {g['style']} \"{_with_mark(g['title'], g.get('italic', ''))}\""
         + (f" ({' / '.join(g['lines'])})" if g.get("lines") else "") for g in cards) if cards else "")
     scenes = [g for g in graphics if g.get("style") == "scene" and "start" in g]
     if scenes:
@@ -313,7 +325,9 @@ def _revision_block(conn, production: dict, fixes: list[dict] | None = None) -> 
             f"scene: {json.dumps(g['scene'], ensure_ascii=False)}" for g in scenes)
     head = ("\n\nThis is a revision of draft v{v}. Previous cut list:\n".format(v=production["version"])
             + "\n".join(placed)
-            + f"\nPrevious hook text: {previous.get('hook_text') or '(none)'}" + shown
+            + f"\nPrevious hook text: {_with_mark(previous.get('hook_text') or '', previous.get('hook_italic', '')) or '(none)'}"
+            + (f"\nPrevious key words (in italic in the captions): {', '.join(previous['key_words'])}"
+               if previous.get("key_words") else "") + shown
             + f"\nPrevious music volume: {previous.get('music', {}).get('volume_db', 'n/a')} dB")
     if fixes is not None:
         # Studio's own round: Bryan hasn't seen this draft. Keep what his notes on the last
@@ -396,7 +410,7 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes
         raise RuntimeError("Claude declined to plan this edit")
     if response.stop_reason == "max_tokens":
         raise RuntimeError("Claude's edit plan was cut off (max_tokens)")
-    return json.loads(next(b.text for b in response.content if b.type == "text"))
+    return tidy_plan(json.loads(next(b.text for b in response.content if b.type == "text")))
 
 
 # ── Cut points ────────────────────────────────────────────────────────────────
@@ -1023,34 +1037,235 @@ def render_cut(cuts: list[dict], clips: dict[int, dict], out: Path) -> float:
     return sum(c["end"] - c["start"] for c in cuts)
 
 
-# The caption fonts are bundled (OFL, latin, variable weight) and loaded from local files, so a
-# render never depends on the machine's fonts or the network. STUDIO_CAPTION_FONT picks one.
+# The fonts are bundled (OFL, latin) and loaded from local files, so a render never depends on the
+# machine's fonts or the network. STUDIO_CAPTION_FONT picks the captions' font: family and its faces
+# (a woff2 file and the weights it covers).
 FONTS = render.RENDER_DIR / "captions" / "fonts"
 CAPTION_FONTS = {
-    "figtree": ("Figtree", render.RENDER_DIR / "carousel" / "fonts" / "Figtree-latin.woff2"),
-    "nunito": ("Nunito", FONTS / "Nunito-latin.woff2"),
-    "dm_sans": ("DM Sans", FONTS / "DMSans-latin.woff2"),
-    "outfit": ("Outfit", FONTS / "Outfit-latin.woff2"),
+    "inter": ("Inter", ((FONTS / "Inter-latin-500.woff2", "500"), (FONTS / "Inter-latin-600.woff2", "600"))),
+    "figtree": ("Figtree", ((render.RENDER_DIR / "carousel" / "fonts" / "Figtree-latin.woff2", "100 1000"),)),
+    "nunito": ("Nunito", ((FONTS / "Nunito-latin.woff2", "100 1000"),)),
+    "dm_sans": ("DM Sans", ((FONTS / "DMSans-latin.woff2", "100 1000"),)),
+    "outfit": ("Outfit", ((FONTS / "Outfit-latin.woff2", "100 1000"),)),
 }
+# The serif of the gallery titles and of the captions' key word: (family, regular, italic).
+TITLE_FONTS = {
+    "instrument_serif": ("Instrument Serif", FONTS / "InstrumentSerif-latin-400.woff2",
+                         FONTS / "InstrumentSerif-latin-400-italic.woff2"),
+}
+# How the hook, callouts, cards and captions look (STUDIO_TITLE_STYLE). gallery: a serif title with
+# one italic word, a hairline, no box, a soft shade from the top while it's up; captions glow, with
+# a key word in the serif italic. classic: the first look (boxed titles, the amber bar, captions on
+# a rounded box).
+TITLE_STYLES = {"gallery": {"serif": "instrument_serif"}, "classic": {}}
 
 
-def caption_font(name: str | None = None) -> tuple[str, Path]:
-    """(family, woff2 file) of the caption font: the setting's, or Figtree."""
-    key = (name or settings.CAPTION_FONT or "figtree").lower().replace("-", "_").replace(" ", "_")
-    if key not in CAPTION_FONTS:
-        log.warning("Unknown caption font %r; using Figtree (choose from %s)", key, ", ".join(CAPTION_FONTS))
-        key = "figtree"
+def caption_font(name: str | None = None) -> tuple[str, tuple]:
+    """(family, faces) of the caption font: the setting's, or Inter."""
+    key = _font_key(name)
     return CAPTION_FONTS[key]
 
 
-# Captions sit in the band from CAPTION_TOP down; a card's words stay above CARD_BOTTOM, so the
-# two never overlap.
-CAPTION_TOP, CARD_BOTTOM = 1240, 1150
+def _font_key(name: str | None = None) -> str:
+    key = (name or settings.CAPTION_FONT or "inter").lower().replace("-", "_").replace(" ", "_")
+    if key not in CAPTION_FONTS:
+        log.warning("Unknown caption font %r; using Inter (choose from %s)", key, ", ".join(CAPTION_FONTS))
+        key = "inter"
+    return key
 
-_OVERLAY_CSS = """
-@font-face{font-family:"Studio Caption";src:url("caption.woff2") format("woff2");font-weight:100 1000;font-display:block}
+
+def title_style(name: str | None = None) -> str:
+    """The title style: the setting's, or gallery."""
+    key = (name or settings.TITLE_STYLE or "gallery").lower().strip()
+    if key not in TITLE_STYLES:
+        log.warning("Unknown title style %r; using gallery (choose from %s)", key, ", ".join(TITLE_STYLES))
+        key = "gallery"
+    return key
+
+
+def look_now() -> dict:
+    """The look a new draft is made in, kept in its edit plan (edl["look"])."""
+    return {"titles": title_style(), "caption_font": _font_key()}
+
+
+def draft_look(edl: dict) -> dict:
+    """The look a draft was made in, so a re-render or its Resolve project doesn't change it. Drafts
+    from before the look was kept were classic, in the caption font of the day (Figtree, the old
+    default, unless another was set)."""
+    look = edl.get("look") or {}
+    if look.get("titles"):
+        return {"titles": title_style(look["titles"]), "caption_font": _font_key(look.get("caption_font"))}
+    old = settings.CAPTION_FONT if settings.CAPTION_FONT in CAPTION_FONTS and settings.CAPTION_FONT != "inter" else "figtree"
+    return {"titles": "classic", "caption_font": old}
+
+
+# ── The italic word ───────────────────────────────────────────────────────────
+# In a title (the hook, a callout, a card) Claude marks the one word to set in italic with
+# *asterisks*. The plan keeps the plain text (so summaries, Review, the read and Resolve never see an
+# asterisk) and the word apart: edl["hook_italic"], a graphic's "italic". In captions, the plan's
+# key_words: the first caption saying one gets it in the serif italic (key_word_captions).
+_MARK = re.compile(r"\*+([^*]+?)\*+")
+_CJK = re.compile(r"[　-〿㐀-鿿豈-﫿＀-￯]")
+_EDGES = re.compile(r"^(\W*)(.*?)(\W*)$", re.S)
+
+
+def unmark(text) -> str:
+    """Text without the italic marks."""
+    return re.sub(r"\s{2,}", " ", str(text or "").replace("*", "")).strip()
+
+
+def _core(word: str) -> str:
+    """A word without the punctuation around it."""
+    return _EDGES.match(word).group(2)
+
+
+def title_parts(text: str) -> tuple[str, str]:
+    """A title's plain text and its italic word: the one marked with *asterisks*, else (a title of
+    two or three words) its last word when it's a word of at least three letters (not "mm" or "15"),
+    else none. Never in Chinese (no serif Chinese font is bundled)."""
+    text = str(text or "")
+    plain = unmark(text)
+    if _CJK.search(plain):
+        return plain, ""
+    marked = _MARK.search(text)
+    if marked:
+        inside = marked.group(1).split()
+        return plain, _core(inside[-1]) if inside else ""
+    words = plain.split()
+    last = _core(words[-1]) if words else ""
+    if 2 <= len(words) <= 3 and last.isalpha() and len(last) >= 3:
+        return plain, last
+    return plain, ""
+
+
+def _with_mark(text: str, word: str) -> str:
+    """The title as Claude wrote it (its italic word between asterisks), for a re-plan."""
+    if not word:
+        return text
+    tokens = text.split(" ")
+    for i, t in enumerate(tokens):
+        pre, core, post = _EDGES.match(t).groups()
+        if core.lower() == word.lower():
+            tokens[i] = f"{pre}*{core}*{post}"
+            break
+    return " ".join(tokens)
+
+
+def tidy_plan(edl: dict) -> dict:
+    """Claude's edit plan with its italic marks taken out of the text and kept apart, and its key
+    words cleaned (one word each). Asterisks anywhere else (a summary, a line, a drawing) go too."""
+    edl["hook_text"], edl["hook_italic"] = title_parts(edl.get("hook_text", ""))
+    for g in edl.get("graphics") or []:
+        if g.get("style") == "scene":
+            g["title"] = unmark(g.get("title"))
+            if isinstance(g.get("scene"), str):
+                g["scene"] = g["scene"].replace("*", "")
+            elif isinstance(g.get("scene"), dict):
+                g["scene"] = json.loads(json.dumps(g["scene"], ensure_ascii=False).replace("*", ""))
+        else:
+            g["title"], g["italic"] = title_parts(g.get("title", ""))
+        g["lines"] = [unmark(x) for x in g.get("lines") or []]
+        if "why" in g:
+            g["why"] = unmark(g["why"])
+    edl["summary"] = unmark(edl.get("summary", ""))
+    for m in edl.get("missing_shots") or []:
+        m.update({k: unmark(m.get(k)) for k in ("shot", "why")})
+    for n in edl.get("notes_addressed") or []:
+        n.update({k: unmark(n.get(k)) for k in ("how", "rule")})
+    keys = []
+    for k in edl.get("key_words") or []:
+        parts = unmark(k).split()
+        word = _core(parts[-1]) if parts else ""
+        if word and not _CJK.search(word) and word.lower() not in (x.lower() for x in keys):
+            keys.append(word)
+    edl["key_words"] = keys
+    return edl
+
+
+# At most one caption key word per KEY_EVERY seconds of speech, and two italic captions at least
+# KEY_GAP seconds apart.
+KEY_EVERY, KEY_GAP = 4.0, 2.0
+
+
+def key_word_captions(chunks: list[dict], key_words: list[str]) -> list[dict]:
+    """Marks the captions' key words (the gallery look sets them in the serif italic): the first
+    caption that says one of the plan's key words gets it, on that word (its "key": the word's
+    place in the caption). At most one per caption, each key word once, none in Chinese captions;
+    nothing else is ever italic."""
+    out = [{k: v for k, v in c.items() if k != "key"} for c in chunks]
+    if not out or not key_words:
+        return out
+    speech = max(out[-1]["end"] - out[0]["start"], 0.0)
+    want = [k.lower() for k in key_words][:max(1, int(speech // KEY_EVERY))]
+    used, last = set(), -1e9
+    for c in out:
+        if _CJK.search(c["text"]) or c["start"] - last < KEY_GAP:
+            continue
+        for i, t in enumerate(c["text"].split(" ")):
+            word = _core(t).lower()
+            if word in want and word not in used:
+                c["key"], last = i, c["start"]
+                used.add(word)
+                break
+    return out
+
+
+# Bright footage behind the captions (a white wall, sunlit rubble): the gallery look's glow alone
+# isn't enough there, so a caption over it gets a stronger glow and a soft shade that hugs its words
+# (class "lit"). The caption band is measured on the cut before the captions go on (LIT_FPS frames a
+# second, small and grey); brighter than LIT_LUMA (0-255) is bright.
+LIT_LUMA, LIT_FPS = 150, 5
+
+
+def bright_spans(video: Path) -> list[list[float]]:
+    """When the footage behind the caption band is bright: [[start, end], ...] in the video's seconds.
+    [] when it can't be measured (a draft with the plain glow beats no draft)."""
+    import subprocess
+    w, h = 54, 10
+    try:
+        raw = subprocess.run([settings.FFMPEG, "-v", "error", "-i", str(video), "-an", "-vf",
+                              f"fps={LIT_FPS},crop={W}:220:0:{CAPTION_TOP - 20},scale={w}:{h}:flags=area,format=gray",
+                              "-f", "rawvideo", "-"], capture_output=True, timeout=600, check=True).stdout
+    except Exception as e:
+        log.warning("Couldn't measure the footage under the captions: %s", e)
+        return []
+    spans, step = [], 1 / LIT_FPS
+    for i in range(len(raw) // (w * h)):
+        frame = raw[i * w * h:(i + 1) * w * h]
+        if sum(frame) / len(frame) > LIT_LUMA:
+            t = i * step
+            if spans and t - spans[-1][1] < step / 2:
+                spans[-1][1] = round(t + step, 3)
+            else:
+                spans.append([round(t, 3), round(t + step, 3)])
+    return spans
+
+
+def lit_captions(chunks: list[dict], spans: list) -> list[dict]:
+    """Marks the captions shown mostly over bright footage ("lit")."""
+    out = []
+    for c in chunks:
+        c = {k: v for k, v in c.items() if k != "lit"}
+        over = sum(max(0.0, min(c["end"], b) - max(c["start"], a)) for a, b in spans or [])
+        if over >= 0.4 * max(c["end"] - c["start"], 0.01):
+            c["lit"] = True
+        out.append(c)
+    return out
+
+
+# Captions sit in the band from CAPTION_TOP down; a card's words stay above CARD_BOTTOM, so the
+# two never overlap. Instagram's own buttons and text cover the top ~220 px and the bottom ~380 px
+# (and a column on the right): titles start at 318, captions end above 1540.
+CAPTION_TOP, CARD_BOTTOM = 1240, 1150
+HOOK_SECONDS_SHOWN = 2.6
+
+_OVERLAY_BASE = """
 html,body{margin:0;width:1080px;height:1920px;overflow:hidden;background:transparent}
 #overlay{position:relative;width:1080px;height:1920px;background:transparent}
+"""
+
+# classic: the first look.
+_OVERLAY_CSS = """
 .cap,.hook,.card,.callout{font-family:"Studio Caption","Noto Sans CJK SC","Noto Sans SC","Microsoft YaHei",sans-serif;
   -webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
 .cap,.hook{position:absolute;left:0;right:0;margin:0 auto;width:fit-content;text-align:center;color:var(--ink);
@@ -1075,84 +1290,260 @@ html,body{margin:0;width:1080px;height:1920px;overflow:hidden;background:transpa
 .callout .label{font-size:48px;font-weight:600;margin-top:14px;opacity:.92}
 """ % {"cap_top": CAPTION_TOP, "card_gap": H - CARD_BOTTOM}
 
-# Each account's look for captions and graphics: Urban Makers' green, warm white and amber
-# (as on its carousels).
+# gallery (Bryan's pick, 2026-10-20: "A with C's italic key word in captions"): no box and no
+# accent colour; the shade colour (--shade-rgb) darkens the footage under the words.
+_GALLERY_CSS = """
+.cap,.t,.card{font-family:"Studio Caption","Noto Sans CJK SC","Noto Sans SC","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;text-rendering:geometricPrecision;font-kerning:normal}
+.t h1,.card .title,.cap em{font-family:"Studio Serif","Noto Serif CJK SC","Noto Sans CJK SC","Noto Sans SC",serif}
+.mask{display:inline-block;overflow:hidden;vertical-align:top;padding-bottom:.12em;margin-bottom:-.12em}
+.mask>span{display:inline-block}
+.scrim,.capscrim{position:absolute;left:0;right:0;pointer-events:none}
+.scrim{top:0;height:980px;
+  background:linear-gradient(180deg,rgba(var(--shade-rgb),.64) 0%%,rgba(var(--shade-rgb),.52) 56%%,rgba(var(--shade-rgb),0) 100%%)}
+.capscrim{bottom:0;height:1000px;z-index:0;
+  background:linear-gradient(0deg,rgba(var(--shade-rgb),.5) 0%%,rgba(var(--shade-rgb),.34) 50%%,rgba(var(--shade-rgb),0) 100%%)}
+.title-clip{position:absolute;inset:0;z-index:2}
+.t{position:absolute;left:92px;right:140px;top:318px;color:var(--ink)}
+.t h1{margin:0;font-weight:400;line-height:.96;letter-spacing:-.012em;text-wrap:balance;
+  text-shadow:0 0 40px rgba(var(--shade-rgb),.3)}
+.t h1 em,.card .title em{font-style:italic;letter-spacing:-.005em}
+.rule{width:104px;height:2px;background:var(--ink);opacity:.85;margin:40px 0 26px;transform-origin:left center}
+.t p{margin:0;font-size:38px;font-weight:500;line-height:1.3;letter-spacing:.004em;color:var(--ink);opacity:.95;
+  text-shadow:0 0 22px rgba(var(--shade-rgb),.55)}
+.cap{position:absolute;left:96px;right:150px;top:%(cap_top)dpx;margin:0;text-align:center;text-wrap:balance;z-index:3;
+  color:var(--ink);font-size:54px;font-weight:500;line-height:1.2;letter-spacing:-.006em;
+  text-shadow:0 1px 2px rgba(var(--shade-rgb),.45),0 0 32px rgba(var(--shade-rgb),.5)}
+.cap.lit{text-shadow:0 1px 3px rgba(var(--shade-rgb),.6),0 0 12px rgba(var(--shade-rgb),.45),0 0 36px rgba(var(--shade-rgb),.6)}
+.cap>span{display:inline}
+.cap.lit>span{display:inline-block;position:relative}
+.cap.lit>span::before{content:"";position:absolute;left:-90px;right:-90px;top:-60px;bottom:-60px;z-index:-1;
+  background:radial-gradient(closest-side,rgba(var(--shade-rgb),.55),rgba(var(--shade-rgb),.38) 50%%,rgba(var(--shade-rgb),0))}
+.cap em{font-style:italic;font-weight:400;font-size:1.15em;line-height:1;letter-spacing:-.005em}
+.cap.solid>span{color:var(--paper-ink);background:rgba(var(--paper-rgb),.94);padding:2px 18px 8px;border-radius:10px;
+  -webkit-box-decoration-break:clone;box-decoration-break:clone;text-shadow:none}
+.card{position:absolute;inset:0;z-index:1;overflow:hidden;color:var(--ink)}
+.card .bg{position:absolute;inset:-60px;background:radial-gradient(circle at 30%% 20%%,var(--card-hi),var(--card-lo) 72%%)}
+.card .inner{position:absolute;left:92px;right:140px;top:330px;bottom:%(card_gap)dpx;display:flex;flex-direction:column;
+  justify-content:center;overflow:hidden}
+.card .title{font-weight:400;line-height:.98;letter-spacing:-.012em;text-wrap:balance}
+.card .rule{flex:none;margin:40px 0 0}
+.card ul{list-style:none;margin:44px 0 0;padding:0}
+.card li{font-weight:500;margin:0 0 26px;display:flex;align-items:baseline;gap:24px;line-height:1.2}
+.card li::before{content:"";flex:0 0 28px;height:2px;background:var(--ink);opacity:.6;transform:translateY(-.32em)}
+""" % {"cap_top": CAPTION_TOP, "card_gap": H - CARD_BOTTOM}
+
+# Each account's look for captions and graphics: Urban Makers' green, warm white and amber (as on its
+# carousels; the amber only in the classic look). shade-rgb: the gallery look's shade under the words;
+# paper: the drawn inserts' paper and ink (motion.css), for a caption over a cutaway.
 THEME = {
     "urban_makers": {"accent": "#f5a524", "ink": "#f6f4ee", "deep-rgb": "24,35,31", "card-hi": "#2f4540",
-                     "card-lo": "#18231f"},
+                     "card-lo": "#18231f", "shade-rgb": "14,18,20"},
     "personal": {"accent": "#7c9cff", "ink": "#ffffff", "deep-rgb": "11,11,13", "card-hi": "#2a2a33",
-                 "card-lo": "#0b0b0d"},
+                 "card-lo": "#0b0b0d", "shade-rgb": "11,11,13"},
 }
+PAPER = {"paper-rgb": "251,250,247", "paper-ink": "#1E2A32"}
 ACCENT = {k: v["accent"] for k, v in THEME.items()}
 
 
 def _theme_css(accent: str) -> str:
     theme = next((t for t in THEME.values() if t["accent"] == accent), THEME["urban_makers"])
-    return ":root{" + ";".join(f"--{k}:{v}" for k, v in {**theme, "accent": accent}.items()) + "}"
+    return ":root{" + ";".join(f"--{k}:{v}" for k, v in {**theme, **PAPER, "accent": accent}.items()) + "}"
 
 
-def _card_sizes(title: str, lines: list[str]) -> tuple[int, int]:
+def _card_sizes(title: str, lines: list[str], style: str = "classic") -> tuple[int, int]:
     """Headline and point sizes for a card, by how much text it has, so it stays clear of the
-    caption band (the box also hides any overflow)."""
+    caption band (the box also hides any overflow). The serif (gallery) is set about 1.15x larger:
+    it is lighter and narrower."""
     line = max((len(x) for x in lines), default=0)
-    title_px = 100 if len(title) <= 14 else 92 if len(title) <= 20 else 80
+    if style == "gallery":
+        title_px = 116 if len(title) <= 14 else 106 if len(title) <= 20 else 92
+    else:
+        title_px = 100 if len(title) <= 14 else 92 if len(title) <= 20 else 80
     return title_px, 62 if line <= 16 else 56 if line <= 24 else 48
 
 
-def _graphic_html(i: int, g: dict) -> tuple[str, str]:
+def _title_px(text: str) -> int:
+    """A gallery title's size (hook and callout): 128 px for a short one, smaller as it grows."""
+    n = len(text)
+    return 128 if n <= 16 else 112 if n <= 24 else 96
+
+
+def _italic_html(text: str, word: str, masks: bool = False) -> str:
+    """The title's words (each in a mask for the rise, when masks), its italic word in <em>."""
+    out, done = [], False
+    for t in text.split(" "):
+        pre, core, post = _EDGES.match(t).groups()
+        if word and not done and core.lower() == word.lower():
+            piece = f"{html.escape(pre)}<em>{html.escape(core)}</em>{html.escape(post)}"
+            done = True
+        else:
+            piece = html.escape(t)
+        out.append(f'<span class="mask"><span>{piece}</span></span>' if masks else piece)
+    return " ".join(out)
+
+
+def _caption_html(c: dict, style: str) -> str:
+    """A caption's words; in the gallery look its key word in <em>."""
+    if style != "gallery":
+        return html.escape(c["text"])
+    tokens = [html.escape(t) for t in c["text"].split(" ")]
+    k = c.get("key")
+    if isinstance(k, int) and 0 <= k < len(tokens):
+        pre, core, post = _EDGES.match(c["text"].split(" ")[k]).groups()
+        tokens[k] = f"{html.escape(pre)}<em>{html.escape(core)}</em>{html.escape(post)}"
+    return "<span>" + " ".join(tokens) + "</span>"
+
+
+def _graphic_html(i: int, g: dict, style: str = "classic") -> tuple[str, str]:
     """Markup and GSAP animation for one B-roll graphic. Everything moves, gently."""
     s, d, gid = g["start"], g["duration"], f"g{i}"
     attrs = f'id="{gid}" data-start="{s:.3f}" data-duration="{d:.3f}" data-track-index="{2 + i}"'
+    title, italic = (unmark(g["title"]), g["italic"]) if "italic" in g else title_parts(g["title"])
+    lines = [unmark(x) for x in g["lines"]]
+    if style == "gallery":
+        return _gallery_graphic(gid, attrs, s, d, g["style"], title, italic, lines)
     if g["style"] == "card":
-        title_px, line_px = _card_sizes(g["title"], g["lines"])
-        lines = "".join(f'<li style="font-size:{line_px}px">{html.escape(line)}</li>' for line in g["lines"])
+        title_px, line_px = _card_sizes(title, lines)
+        items = "".join(f'<li style="font-size:{line_px}px">{html.escape(line)}</li>' for line in lines)
         markup = (f'<div {attrs} class="card clip"><div class="bg"></div><div class="inner"><div class="bar"></div>'
-                  f'<div class="title" style="font-size:{title_px}px">{html.escape(g["title"])}</div>'
-                  f'<ul>{lines}</ul></div></div>')
+                  f'<div class="title" style="font-size:{title_px}px">{html.escape(title)}</div>'
+                  f'<ul>{items}</ul></div></div>')
         anim = (f"tl.from('#{gid}',{{opacity:0,duration:.25}},{s:.3f});"
                 f"tl.fromTo('#{gid} .bg',{{scale:1.12}},{{scale:1,duration:{d:.3f},ease:'none'}},{s:.3f});"
                 f"tl.from('#{gid} .bar',{{scaleX:0,transformOrigin:'left',duration:.4,ease:'power3.out'}},{s + .05:.3f});"
                 f"tl.from('#{gid} .title',{{y:50,opacity:0,duration:.45,ease:'power3.out'}},{s + .1:.3f});"
                 f"tl.from('#{gid} li',{{x:-50,opacity:0,duration:.35,stagger:.22,ease:'power2.out'}},{s + .35:.3f});")
     else:
-        label = html.escape(g["lines"][0]) if g["lines"] else ""
-        markup = (f'<div {attrs} class="callout clip"><div class="big">{html.escape(g["title"])}</div>'
+        label = html.escape(lines[0]) if lines else ""
+        markup = (f'<div {attrs} class="callout clip"><div class="big">{html.escape(title)}</div>'
                   + (f'<div class="label">{label}</div>' if label else "") + "</div>")
         anim = (f"tl.from('#{gid}',{{y:-40,opacity:0,duration:.35,ease:'power2.out'}},{s:.3f});"
                 f"tl.from('#{gid} .big',{{scale:.7,duration:.45,ease:'back.out(2)'}},{s + .05:.3f});")
     return markup, anim
 
 
+def _gallery_title(gid: str, attrs: str, s: float, d: float, title: str, italic: str, sub: str = "") -> tuple[str, str]:
+    """A gallery title over the footage (the hook, a callout): the shade from the top, the serif
+    title (its words rise out of a mask one after another), the hairline drawn, the line under it
+    fading up; it fades out at its end."""
+    markup = (f'<div {attrs} class="title-clip clip"><div class="scrim"></div><div class="t">'
+              f'<h1 style="font-size:{_title_px(title)}px">{_italic_html(title, italic, masks=True)}</h1>'
+              '<div class="rule"></div>' + (f"<p>{html.escape(sub)}</p>" if sub else "") + "</div></div>")
+    anim = (f"tl.from('#{gid} .scrim',{{opacity:0,duration:.5,ease:'none'}},{s:.3f});"
+            f"tl.from('#{gid} h1 .mask>span',{{yPercent:105,duration:.85,ease:'power3.out',stagger:.09}},{s + .08:.3f});"
+            f"tl.from('#{gid} .rule',{{scaleX:0,duration:.7,ease:'power2.inOut'}},{s + .3:.3f});"
+            + (f"tl.from('#{gid} p',{{opacity:0,y:10,duration:.5,ease:'power2.out'}},{s + .5:.3f});" if sub else "")
+            + (f"tl.to('#{gid}',{{opacity:0,duration:.3,ease:'power1.in'}},{s + d - .3:.3f});" if d > 1.2 else ""))
+    return markup, anim
+
+
+def _gallery_graphic(gid, attrs, s, d, kind, title, italic, lines) -> tuple[str, str]:
+    if kind != "card":
+        return _gallery_title(gid, attrs, s, d, title, italic, lines[0] if lines else "")
+    title_px, line_px = _card_sizes(title, lines, "gallery")
+    items = "".join(f'<li style="font-size:{line_px}px">{html.escape(line)}</li>' for line in lines)
+    markup = (f'<div {attrs} class="card clip"><div class="bg"></div><div class="inner">'
+              f'<div class="title" style="font-size:{title_px}px">{_italic_html(title, italic, masks=True)}</div>'
+              f'<div class="rule"></div><ul>{items}</ul></div></div>')
+    anim = (f"tl.from('#{gid}',{{opacity:0,duration:.3}},{s:.3f});"
+            f"tl.fromTo('#{gid} .bg',{{scale:1.08}},{{scale:1,duration:{d:.3f},ease:'none'}},{s:.3f});"
+            f"tl.from('#{gid} .title .mask>span',{{yPercent:105,duration:.8,ease:'power3.out',stagger:.09}},{s + .1:.3f});"
+            f"tl.from('#{gid} .rule',{{scaleX:0,duration:.6,ease:'power2.inOut'}},{s + .35:.3f});"
+            f"tl.from('#{gid} li',{{opacity:0,y:12,duration:.45,stagger:.2,ease:'power2.out'}},{s + .5:.3f});"
+            + (f"tl.to('#{gid}',{{opacity:0,duration:.25,ease:'power1.in'}},{s + d - .25:.3f});" if d > 1.2 else ""))
+    return markup, anim
+
+
+def caption_shade(chunks: list[dict], paper: list[tuple[float, float]] = (), join: float = 1.2) -> list[tuple[float, float]]:
+    """When the gallery look's soft shade sits behind the captions: while captions are up (gaps
+    shorter than join seconds bridged), never over a cutaway's paper."""
+    runs = []
+    for c in sorted(chunks, key=lambda c: c["start"]):
+        if runs and c["start"] - runs[-1][1] < join:
+            runs[-1][1] = max(runs[-1][1], c["end"])
+        else:
+            runs.append([c["start"], c["end"]])
+    for a, b in sorted(paper):
+        cut = []
+        for s, e in runs:
+            if e <= a or s >= b:
+                cut.append([s, e])
+                continue
+            if s < a:
+                cut.append([s, a])
+            if e > b:
+                cut.append([b, e])
+        runs = cut
+    return [(round(s, 3), round(e, 3)) for s, e in runs if e - s >= 0.3]
+
+
 def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
                    graphics: list[dict] = (), accent: str = "#f5a524", fmt: str = "webm", font: str | None = None,
-                   paper: list[tuple[float, float]] = ()) -> None:
+                   paper: list[tuple[float, float]] = (), style: str | None = None, hook_italic: str | None = None) -> None:
     """Captions, hook and B-roll graphics as a transparent video (HyperFrames, headless Chrome):
-    VP9 WebM for the draft, ProRes 4444 MOV (fmt="mov") for DaVinci Resolve. The font is one
-    of the bundled ones (caption_font), copied next to the page. Drawn inserts (style "scene")
-    are their own layer (render_scenes), under this one; a caption over a full-screen one (paper:
-    its (start, end) times) gets a solid background, so it reads as well on the light paper."""
+    VP9 WebM for the draft, ProRes 4444 MOV (fmt="mov") for DaVinci Resolve. style: the title style
+    (title_style; the draft's own look, draft_look). The fonts are bundled ones (caption_font, and the
+    serif of the gallery look), copied next to the page. Drawn inserts (style "scene") are their own
+    layer (render_scenes), under this one; a caption over a full-screen one (paper: its (start, end)
+    times) is set for the paper: on a box (classic) or in ink on a paper-coloured label (gallery).
+    hook_italic: the hook's italic word (None: from the hook's text, title_parts)."""
+    style = title_style(style)
     graphics = [g for g in graphics if g.get("style") in ("card", "callout")]
+    family, faces = caption_font(font)
+    hook_plain, auto_italic = title_parts(hook)
+    hook_italic = auto_italic if hook_italic is None else hook_italic
     with tempfile.TemporaryDirectory(prefix="studio-overlay-") as tmp:
         project = Path(tmp) / "overlay"
         project.mkdir()
         shutil.copy(render.RENDER_DIR / "node_modules" / "gsap" / "dist" / "gsap.min.js", project)
-        shutil.copy(caption_font(font)[1], project / "caption.woff2")
-        clips = []
-        if hook.strip():
-            clips.append(f'<div id="hook" class="hook clip" data-start="0" data-duration="{min(2.6, total):.3f}" '
-                         f'data-track-index="1">{html.escape(hook.strip())}</div>')
+        css = []
+        for n, (path, weight) in enumerate(faces):
+            name = "caption.woff2" if n == 0 else f"caption-{n + 1}.woff2"
+            shutil.copy(path, project / name)
+            css.append(f'@font-face{{font-family:"Studio Caption";src:url("{name}") format("woff2");'
+                       f'font-weight:{weight};font-display:block}}')
+        if style == "gallery":
+            _, regular, italic = TITLE_FONTS[TITLE_STYLES[style]["serif"]]
+            shutil.copy(regular, project / "serif.woff2")
+            shutil.copy(italic, project / "serif-italic.woff2")
+            css.append('@font-face{font-family:"Studio Serif";src:url("serif.woff2") format("woff2");font-weight:400;'
+                       'font-style:normal;font-display:block}'
+                       '@font-face{font-family:"Studio Serif";src:url("serif-italic.woff2") format("woff2");'
+                       'font-weight:400;font-style:italic;font-display:block}')
+        clips, animations = [], []
+        if hook_plain:
+            # The hook gives way to the first card or callout.
+            shown = min(HOOK_SECONDS_SHOWN, total, *[g["start"] for g in graphics if g["start"] > 0.8])
+            attrs = f'id="hook" data-start="0" data-duration="{shown:.3f}" data-track-index="1"'
+            if style == "gallery":
+                markup, anim = _gallery_title("hook", attrs, 0.0, shown, hook_plain, hook_italic)
+                clips.append(markup)
+                animations.append(anim)
+            else:
+                clips.append(f'<div {attrs} class="hook clip">{html.escape(hook_plain)}</div>')
         for i, c in enumerate(chunks):
-            solid = " solid" if any(c["start"] < b and c["end"] > a for a, b in paper) else ""
+            solid = " solid" if any(c["start"] < b and c["end"] > a for a, b in paper) else (
+                " lit" if c.get("lit") and style == "gallery" else "")
             clips.append(f'<div id="c{i}" class="cap{solid} clip" data-start="{c["start"]:.3f}" '
-                         f'data-duration="{c["end"] - c["start"]:.3f}" data-track-index="0">{html.escape(c["text"])}</div>')
-        animations = []
+                         f'data-duration="{c["end"] - c["start"]:.3f}" data-track-index="0">{_caption_html(c, style)}</div>')
+            if style == "gallery":
+                animations.append(f"tl.from('#c{i}',{{opacity:0,y:6,duration:.14,ease:'power1.out'}},{c['start']:.3f});")
+        if style == "gallery":
+            for k, (a, b) in enumerate(caption_shade(chunks, paper)):
+                clips.append(f'<div id="cs{k}" class="capscrim clip" data-start="{a:.3f}" data-duration="{b - a:.3f}" '
+                             'data-track-index="20"></div>')
+                fade = min(.35, (b - a) / 3)
+                animations.append(f"tl.from('#cs{k}',{{opacity:0,duration:{fade:.2f},ease:'none'}},{a:.3f});"
+                                  f"tl.to('#cs{k}',{{opacity:0,duration:{fade:.2f},ease:'none'}},{b - fade:.3f});")
         for i, g in enumerate(graphics):
-            markup, anim = _graphic_html(i, g)
+            markup, anim = _graphic_html(i, g, style)
             clips.append(markup)
             animations.append(anim)
         (project / "index.html").write_text(
             '<!doctype html><html><head><meta charset="utf-8"><script src="gsap.min.js"></script>'
-            f"<style>{_theme_css(accent)}{_OVERLAY_CSS}</style></head><body>"
+            f"<style>{''.join(css)}{_theme_css(accent)}{_OVERLAY_BASE}"
+            f"{_GALLERY_CSS if style == 'gallery' else _OVERLAY_CSS}</style></head><body>"
             f'<div id="overlay" data-composition-id="overlay" data-start="0" data-duration="{total:.3f}" '
             f'data-width="{W}" data-height="{H}">' + "".join(clips) + "</div>"
             "<script>const tl=gsap.timeline({paused:true});" + "".join(animations) +
@@ -1553,6 +1944,8 @@ def self_revise(conn, production_id: int, fixes: list[dict], round_no: int, clie
         raise RuntimeError("none of the draft's clips are in the library any more")
     edl = plan_edit(conn, production, clips, client, fixes=fixes, ref=self_fix.ref(production_id))
     edl["cuts"] = _cut(edl, clips)
+    if previous.get("look"):
+        edl["look"] = previous["look"]
     find_track, plan = _same_music(production, plan, find_track)
     return _render(conn, production, clips, edl, plan, production["version"], find_track,
                    suffix=f"_fix{round_no}", address_notes=False)
@@ -1601,11 +1994,19 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         if doubled:
             checks.append({"did": f"hid {doubled} caption{'s' if doubled != 1 else ''} repeating a card's own words",
                            "counted": True})
+        # The look: a new plan takes today's settings; a re-render keeps the draft's own (draft_look).
+        look = edl["look"] = draft_look(edl) if placed or edl.get("look") else look_now()
+        if look["titles"] == "gallery":
+            chunks = key_word_captions(chunks, edl.get("key_words") or [])
+            edl["bright"] = bright_spans(work / "cut.mp4")  # kept for the Resolve project's captions
+            chunks = lit_captions(chunks, edl["bright"])
         if chunks or edl["hook_text"].strip() or cards:
             overlay = work / "overlay.webm"
             paper = [(g["start"], g["start"] + g["duration"]) for g in scenes if g.get("look") == "cutaway"]
             render_overlay(chunks, edl["hook_text"], total, overlay, cards,
-                           ACCENT.get(production["brand"], ACCENT["urban_makers"]), **({"paper": paper} if paper else {}))
+                           ACCENT.get(production["brand"], ACCENT["urban_makers"]), font=look["caption_font"],
+                           style=look["titles"], hook_italic=edl.get("hook_italic"),
+                           **({"paper": paper} if paper else {}))
 
         music_info, music_file = {"mood": edl["music"]["mood"], "tempo_bpm": edl["music"]["tempo_bpm"]}, None
         chosen = (plan.get("music_plan") or {}).get("chosen")

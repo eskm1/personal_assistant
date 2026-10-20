@@ -2248,6 +2248,7 @@ function carouselPageHTML(d) {
       `<ul class="link-list">${d.sources.map((x) => `<li><button class="link" data-open-clip="${esc(x.id)}">${esc(x.title)}</button></li>`).join("")}</ul>`) : "",
     d.cost && owner ? foldHTML("production", "cost", "Cost", money(d.cost), `<p class="muted small">So far for this carousel: Claude ${esc(money(d.cost_parts?.claude ?? d.cost))}${d.self_fix_cost ? ` (Studio's own fixes ${esc(money(d.self_fix_cost))})` : ""}${d.cost_parts?.image_count ? `, concept pictures ${esc(money(d.cost_parts.images))} (${esc(d.cost_parts.image_count)} drawn)` : ""}.</p>`) : "",
     rulesHTML(d),
+    redoHTML(d, canDecide && owner),
     phone() && canDecide && owner ? foldHTML("production", "more", "More", "", `<div class="more-part"><button class="btn ghost danger" id="decide-reject">Reject this draft</button></div>`) : "",
   ].join("");
   return `${titleHTML(d, sub)}
@@ -2359,9 +2360,10 @@ function productionPageHTML(d) {
       ["Missing shots", d.missing_shots?.length && `<ul class="shots">${d.missing_shots.map((s) => `<li><strong>${esc(s.shot)}</strong><span>${esc(s.why)}</span></li>`).join("")}</ul>`]]
       .filter(([, body]) => body).map(([h, body]) => `<div class="more-part"><h3>${esc(h)}</h3>${body}</div>`).join("");
     const reject = canDecide && owner ? `<div class="more-part"><button class="btn ghost danger" id="decide-reject">Reject this draft</button></div>` : "";
-    folds = rows.caption() + rows.editor() + rows.transcript() + rows.rules() + foldHTML("production", "more", "More details", "", more + reject);
+    folds = rows.caption() + rows.editor() + rows.transcript() + rows.rules() + redoHTML(d, canDecide && owner)
+      + foldHTML("production", "more", "More details", "", more + reject);
   } else {
-    folds = Object.values(rows).map((f) => f()).join("");
+    folds = Object.values(rows).map((f) => f()).join("") + redoHTML(d, canDecide && owner);
   }
   return `${titleHTML(d, sub)}
     ${failedBox}${statusBox}
@@ -2507,6 +2509,18 @@ function clipPageHTML(d) {
     ${suggestedPostHTML(d)}
     ${clipVerdictHTML(d)}
     <section class="folds">${folds}</section>`;
+}
+
+// A fresh edit of the same idea in today's style (titles, captions, music taste): this one, or every
+// Reel waiting for review. Notes, earlier versions and the idea stay.
+function redoHTML(d, can) {
+  if (!can) return "";
+  const others = state.items.filter((i) => i.kind === "production" && i.status === "ready" && i.id !== d.id && !i.archived).length;
+  return foldHTML("production", "redo", "Edit it again", "",
+    `<p class="muted small">${isCarousel(d) ? "The slides rewritten in the current style guide and laid out again."
+      : "A fresh edit of the same idea with the latest titles, captions and music taste."} Your notes and the earlier versions stay. It costs about what a send-back does.</p>
+     <div class="row"><button class="btn" id="redo-one">Edit this one again</button>
+     ${others ? `<button class="btn" id="redo-all">Edit all ${esc(others + 1)} waiting again</button>` : ""}</div>`);
 }
 
 // Under the tile: version, type and languages (a draft), when it was filmed (a clip).
@@ -2790,6 +2804,14 @@ async function detailClick(e) {
     } else if (id === "decide-approve") {
       await api(`/api/production/${d.id}/decision`, { decision: "approve", caption: $("#caption").value });
       toast("Approved. Schedule it on Instagram from its page in Done.");
+      await nextForReview();
+    } else if (id === "redo-one") {
+      await api(`/api/production/${d.id}/decision`, { decision: "redo" });
+      toast("Studio is editing it again. The new version comes back to To review.");
+      await nextForReview();
+    } else if (id === "redo-all") {
+      const r = await api("/api/productions/redo", {});
+      toast(`Studio is editing ${plural(r.count, "draft")} again, one at a time. They come back to To review.`);
       await nextForReview();
     } else if (id === "decide-reject") {
       if (!confirm("Reject this edit? It moves to Done and won't be revised.")) return;
