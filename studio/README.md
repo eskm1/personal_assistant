@@ -301,9 +301,9 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
 1. Claude plans the cut from the idea. It sees every word with its timestamp, so it cuts
    between phrases, drops dead air and false starts, and writes the hook text and a music
    brief. On a revision it also gets your notes and the previous cut list.
-2. Cut points are moved out of words into the gaps around them, with a little air. Then
+2. Cut points follow your voice, not just the transcript's timings: Studio measures each clip's sound once (`voice_edges.py`, kept as `voice.npz`) and only cuts after a word has really died away, and before it starts. Cuts keep whole sentences: only um, uh, 嗯, 呃 and an immediate repeat ("the the") are dropped by themselves, and words cut from inside a kept sentence come back (short gaps by joining the cuts again, longer ones after one cheap Claude check); the draft's checks say what was kept and why. Then
    **jump cuts**: inside what's kept, any pause longer than 0.35 s (silence, a breath, a lone
-   "um"/"uh" or 嗯/呃/啊) is cut down to a short breath. Never inside a word; B-roll is untouched.
+   "um"/"uh" or 嗯/呃; "ah"/啊 only when alone between long pauses) is cut down to a short breath. Never inside a word; B-roll is untouched.
 3. **Framing**: horizontal footage (Z fc, GoPro) is cropped around your face instead of down
    the middle (OpenCV's face finder; if you walk across a long shot, it splits into a few
    still crops, never a pan). No face = the centre. Vertical footage is as filmed. On talking
@@ -353,7 +353,7 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    Sound track, searched with your taste in mind (`music.TASTE`: soft, warm, unhurried; tracks you like and
    ones to avoid; `Studio\music_taste.json` adds to it); personal posts get no music, plus a note on what to
    add in the Instagram app.
-6. The draft is re-transcribed to check no word was clipped, and its loudness is measured
+6. Every join is checked against the source sound for a clipped word; one is extended and that cut rendered again before delivery. The draft is re-transcribed to check no word was clipped, and its loudness is measured
    (target -14 LUFS, corrected if it's off). Both show under **Checks and measurements**.
 7. Studio's read (`draft_review.py`): Claude looks at stills of the finished draft, its
    captions, words, cut list and checks, and writes the verdict and fix list. Each fix says

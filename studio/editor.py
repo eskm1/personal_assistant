@@ -5,11 +5,15 @@ The editor (phase 5): turns a planned production into a draft Reel.
      keep, at phrase boundaries (it sees every word with its timestamp), the hook
      text, and the music brief. On a revision it also gets Bryan's notes (and sorts
      each into an editing problem, which Studio learns as a rule, or taste).
-  2. Cut points are snapped to word edges with a little air, so no word is clipped.
-     Studio's checks on the ends (sentence_guard): never end on a stray word that
-     starts a new sentence, never open on the tail of one, no dead air at either end.
-     Then pauses inside each kept stretch are cut down to a short breath (jump cuts),
-     and lone "um"s go.
+  2. Cut points are snapped to word edges with a little air, then moved to where the
+     voice really stops and starts in the clip's own sound (voice_edges.py: Whisper's
+     word ends are often early, which clipped the end of "comfortable"), so no word is
+     clipped. The cut never breaks a sentence (join_guard: words cut from inside a kept
+     sentence come back, or Claude is asked once whether it still reads). Studio's checks
+     on the ends (sentence_guard): never end on a stray word that starts a new sentence,
+     never open on the tail of one, no dead air at either end. Then pauses inside each
+     kept stretch are cut down to a short breath (jump cuts), and only true hesitations
+     ("um", "uh", 嗯, 呃) and stutters ("the the": the first copy) go.
   3. Framing (framing.py): horizontal footage is cropped around the person's face,
      and talking shots punch in and out every few seconds.
   4. ffmpeg cuts every piece from the ORIGINAL files in one pass (one encode, so
@@ -28,8 +32,10 @@ The editor (phase 5): turns a planned production into a draft Reel.
   6. Sound (mix_final): the voice is cleaned and levelled first, the music set well under
      it (dipped while Bryan talks), the gap measured and guarded, then -14 LUFS. Urban
      Makers posts get an Epidemic Sound track; other accounts get a note on what to add.
-  7. Checks: the draft is re-transcribed to confirm every word survived the cuts,
-     and its loudness is measured (and corrected if it's off).
+  7. Checks: every join is listened to in the source (is the voice still going right
+     before the cut? then the word was clipped: the cut is extended and rendered again),
+     the draft is re-transcribed to confirm every word survived the cuts, and its
+     loudness is measured (and corrected if it's off).
   8. Studio's read (draft_review.py), then Studio's own fix rounds (self_fix.py) on the
      fixes the editor can make, and only then To review.
 """
@@ -38,6 +44,7 @@ import html
 import itertools
 import json
 import logging
+import math
 import re
 import shutil
 import tempfile
@@ -53,6 +60,7 @@ import music
 import playbook
 import render
 import settings
+import voice_edges
 import wording
 from settings import ANTHROPIC_API_KEY, CLAUDE_MODEL, ROOT
 
@@ -60,18 +68,35 @@ log = logging.getLogger("studio.editor")
 
 RENDERS = ROOT / "Renders"
 W, H, FPS = 1080, 1920, 30
-# Whisper ends a word slightly before the sound dies; keep a little air either side.
+# Whisper ends a word slightly before the sound dies; keep a little air either side. These are
+# the least air a cut gets: where the clip's sound is known (voice_edges), a cut end moves on to
+# where the voice really stops and a cut start back to where it really starts.
 HEAD_PAD, TAIL_PAD = 0.08, 0.15
 MIN_CUT = 0.4
 # Jump cuts: a pause longer than settings.EDIT_MAX_PAUSE is cut down to this much air
-# after the last word and before the next (about a breath), and no piece is left
-# shorter than MIN_PIECE (it stays joined to its neighbour instead).
+# after the last word and before the next (about a breath; at least this much: voice_edges
+# moves it to the voice's real end and start), and no piece is left shorter than MIN_PIECE
+# (it stays joined to its neighbour instead).
 BREATH_AFTER, BREATH_BEFORE = 0.07, 0.05
 MIN_PIECE = 0.25
 # Hesitation sounds dropped when Whisper wrote them as a word of their own, with a gap
-# either side (FILLER_GAP seconds at least).
-FILLERS = {"um", "umm", "uh", "uhh", "erm", "uhm", "ah", "嗯", "呃", "啊"}
+# either side (FILLER_GAP seconds at least). Only true hesitations: "ah" can start a real
+# phrase ("ah, that's why") and 啊 is often a meaningful particle (好啊, 是啊), so those two
+# go only when they stand alone with a long pause either side (LONE_GAP). Nothing else is
+# ever dropped from inside a sentence by code, except a stutter (STUTTER_GAP below).
+FILLERS = {"um", "umm", "uh", "uhh", "erm", "uhm", "嗯", "呃"}
+MAYBE_FILLERS = {"ah", "啊"}
 FILLER_GAP = 0.06
+LONE_GAP = 0.3
+# A stutter: the same word (or two or three) said twice in a row, the second within this
+# many seconds: the first copy goes. Words people double on purpose stay.
+STUTTER_GAP = 0.6
+KEEP_DOUBLES = {"that", "had", "is", "very", "really", "so", "no", "yes", "yeah", "bye", "much", "more", "many",
+                "too", "far", "long", "again", "over", "round", "around", "go", "well", "ha", "haha", "hey", "now",
+                "knock", "come", "wait", "okay", "ok", "right", "there", "here"}
+# A join inside a sentence that dropped real words: put back without asking when the words
+# cut are this short (seconds), else Claude is asked once whether the sentence still reads.
+JOIN_RESTORE = 4.0
 
 EDL_SCHEMA = {
     "type": "object",
@@ -159,8 +184,13 @@ of footage make the final 9:16 video. Follow Bryan's playbook:
 
 Rules for the cut list:
 - Work from the approved plan's segments, but you choose the exact in and out points, and you may \
-tighten, split or drop parts of a segment (dead air, false starts, repeated takes) and reorder \
-when the story needs it. Use only the clips listed.
+drop whole sentences (a repeated take, a false start, a tangent, dead air) and reorder when the story \
+needs it. Use only the clips listed.
+- Never break a sentence. Every cut starts where a sentence (or a clause that stands on its own) \
+starts and ends where one ends; never drop words from inside a sentence you keep, not even one: \
+a viewer hears every kept sentence whole, or the sentence stops making sense. If a sentence is too \
+long, drop all of it or keep all of it. Hesitations (um, uh) and stutters ("the the") are removed \
+by Studio automatically: don't cut around them.
 - Cut between phrases, never inside a word: put cut points in the gaps between the timestamped \
 words, never in the middle of one. Keep the payoff and anything that qualifies a claim.
 {pause_rule}- Cuts play in the order you list them. Each is clip_id plus start and end seconds within that clip.
@@ -402,8 +432,8 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes
             + "\n\nFootage:\n\n"
             + "\n\n".join(_clip_block(c, segments) for c in clips.values())
             + _revision_block(conn, production, fixes))
-    pause_rule = ("- Pauses are tightened automatically after you plan: silences, breaths and lone \"um\"s "
-                  "inside a cut are cut down to a short breath (jump cuts), and so is silence at the start and "
+    pause_rule = ("- Pauses are tightened automatically after you plan: silences, breaths, lone \"um\"s and "
+                  "stutters inside a cut are cut down to a short breath (jump cuts), and so is silence at the start and "
                   "end of a cut with speech. So keep whole phrases in one cut rather than splitting a cut just to "
                   "skip a pause, and give a deliberate silent moment (a reveal, B-roll) a cut of its own.\n"
                   if settings.EDIT_JUMP_CUTS else "")
@@ -473,7 +503,10 @@ def polish_plan(edl: dict, ref: str, client=None) -> dict:
 
 def snap(cut: dict, clip: dict) -> dict | None:
     """Move cut points out of words into the gaps around them, with a little air,
-    without reaching into the neighbouring word. None if what's left is too short."""
+    without reaching into the neighbouring word. Where the clip's sound is known, the
+    end moves on to where the voice really stops and the start back to where it really
+    starts (voice_edges), never into the next or previous word. None if what's left is
+    too short."""
     words, duration = _words(clip), clip["duration"] or 0
     start, end = max(0.0, cut["start"]), min(duration, cut["end"])
     for w in words:
@@ -483,59 +516,135 @@ def snap(cut: dict, clip: dict) -> dict | None:
             end = w["end"]
     before = [w for w in words if w["end"] <= start]
     after = [w for w in words if w["start"] >= end]
-    start = max(start - HEAD_PAD, before[-1]["end"] if before else 0.0, 0.0)
-    end = min(end + TAIL_PAD, after[0]["start"] if after else duration, duration)
+    first = next((w for w in words if start <= w["start"] < end), None)
+    last = next((w for w in reversed(words) if start < w["end"] <= end), None)
+    start, end = (max(start - HEAD_PAD, before[-1]["end"] if before else 0.0, 0.0),
+                  min(end + TAIL_PAD, after[0]["start"] if after else duration, duration))
+    v = voice_edges.voice(clip) if words else None
+    if v and first:
+        start = voice_edges.start_point(v, first["start"], start, prev_end=before[-1]["end"] if before else None)
+    if v and last:
+        end = min(voice_edges.end_point(v, last["end"], end, next_start=after[0]["start"] if after else None,
+                                        limit=duration), duration)
     if end - start < MIN_CUT:
         return None
     return {**cut, "start": round(start, 3), "end": round(end, 3)}
 
 
+def _filler_core(word: str) -> str:
+    return re.sub(r"[\s.,!?;:…，。！？、~\-]+", "", word.lower())
+
+
 def _is_filler(word: str) -> bool:
-    return re.sub(r"[\s.,!?;:…，。！？、~\-]+", "", word.lower()) in FILLERS
+    """A true hesitation sound (um, uh, 嗯, 呃), whatever its gaps."""
+    return _filler_core(word) in FILLERS
+
+
+def _hesitation(word: str, gap_before: float, gap_after: float) -> bool:
+    """Dropped as a hesitation: a true one with a little gap either side, or an "ah" / 啊 that
+    stands alone with a long pause either side (else it's part of what's said)."""
+    core = _filler_core(word)
+    if core in FILLERS:
+        return gap_before >= FILLER_GAP and gap_after >= FILLER_GAP
+    return core in MAYBE_FILLERS and gap_before >= LONE_GAP and gap_after >= LONE_GAP
+
+
+def _same_word(word: str) -> str:
+    return re.sub(r"[^\w']+", "", word.lower())
+
+
+def stutters(words: list[dict]) -> set[int]:
+    """The words (their indices) that are the first copy of a stutter: the same word, or two or
+    three, said twice in a row with at most STUTTER_GAP between ("excites excites", "the the",
+    "of the of the"). Never Chinese (看看 is one word said twice), never a word doubled on purpose
+    (KEEP_DOUBLES: "very very"), never across the end of a sentence ("No. No.")."""
+    norms = [_same_word(w["word"]) for w in words]
+    drop, i, n = set(), 0, len(words)
+    while i < n:
+        for size in (3, 2, 1):
+            if i + 2 * size > n:
+                continue
+            first, second = norms[i:i + size], norms[i + size:i + 2 * size]
+            if not all(first) or first != second or any(_CJK.search(x) for x in first):
+                continue
+            if size == 1 and first[0] in KEEP_DOUBLES:
+                continue
+            if any(SENTENCE_END.search(w["word"].strip()) for w in words[i:i + size]):
+                continue
+            if words[i + size]["start"] - words[i + size - 1]["end"] > STUTTER_GAP:
+                continue
+            drop.update(range(i, i + size))
+            i += size
+            break
+        else:
+            i += 1
+    return drop
+
+
+def droppable(words: list[dict]) -> set[int]:
+    """The words (indices, in a clip's word list) Studio's code may drop: hesitations and the
+    first copy of a stutter. Everything else Bryan says inside a kept sentence stays."""
+    out = set(stutters(words))
+    for i, w in enumerate(words):
+        before = w["start"] - words[i - 1]["end"] if i else 9.0
+        after = words[i + 1]["start"] - w["end"] if i + 1 < len(words) else 9.0
+        if _hesitation(w["word"], before, after):
+            out.add(i)
+    return out
 
 
 def tighten(cuts: list[dict], clips: dict[int, dict], max_pause: float | None = None) -> list[dict]:
     """Jump cuts: split each cut into pieces that skip its long pauses.
 
-    Inside a cut, a gap between words longer than max_pause (and a lone "um" or
-    嗯 with gaps around it) is cut down to a breath: a little air after the last
-    word and before the next. Silence longer than max_pause at the start or end of
-    the cut is trimmed to the same air the cut points get. Cuts are only ever made
-    in the gaps between words, a piece is never shorter than MIN_PIECE (it stays
-    joined to its neighbour instead), and a cut with no speech (B-roll) is left as
-    it is. Each piece keeps its cut's "part" (its place in Claude's plan)."""
+    Inside a cut, a gap between words longer than max_pause (and a lone "um" or 嗯 with gaps
+    around it, or the first copy of a stutter) is cut down to a breath: a little air after the
+    last word and before the next, moved to where the voice really stops and starts when the
+    clip's sound is known (voice_edges). Silence longer than max_pause at the start or end of
+    the cut is trimmed to the same air the cut points get. Cuts are only ever made in the gaps
+    between words, a piece is never shorter than MIN_PIECE (it stays joined to its neighbour
+    instead), and a cut with no speech (B-roll) is left as it is. Each piece keeps its cut's
+    "part" (its place in Claude's plan)."""
     max_pause = settings.EDIT_MAX_PAUSE if max_pause is None else max_pause
     out = []
     for n, c in enumerate(cuts):
         part = c.get("part", n)
-        words = sorted((w for w in _words(clips[c["clip_id"]])
+        clip = clips[c["clip_id"]]
+        words = sorted((w for w in _words(clip)
                         if w["start"] >= c["start"] - 0.01 and w["end"] <= c["end"] + 0.01),
                        key=lambda w: w["start"])
+        stutter = stutters(words)
         keep, dropped = [], []
         for i, w in enumerate(words):
             before = w["start"] - (words[i - 1]["end"] if i else c["start"])
             after = (words[i + 1]["start"] if i + 1 < len(words) else c["end"]) - w["end"]
-            if _is_filler(w["word"]) and before >= FILLER_GAP and after >= FILLER_GAP:
+            if i in stutter or _hesitation(w["word"], before, after):
                 dropped.append(w)
             else:
                 keep.append(w)
         if not keep:  # no speech, or nothing but "um": leave it as planned
             out.append({**c, "part": part})
             continue
+        v = voice_edges.voice(clip)
         start, end = c["start"], c["end"]
-        if keep[0]["start"] - start > max_pause or any(d["end"] <= keep[0]["start"] for d in dropped):
-            start = max(start, keep[0]["start"] - HEAD_PAD,
-                        max((d["end"] for d in dropped if d["end"] <= keep[0]["start"]), default=start))
-        if end - keep[-1]["end"] > max_pause or any(d["start"] >= keep[-1]["end"] for d in dropped):
-            end = min(end, keep[-1]["end"] + TAIL_PAD,
-                      min((d["start"] for d in dropped if d["start"] >= keep[-1]["end"]), default=end))
+        prior = [d for d in dropped if d["end"] <= keep[0]["start"]]
+        if keep[0]["start"] - start > max_pause or prior:
+            base = max(start, keep[0]["start"] - HEAD_PAD, max((d["end"] for d in prior), default=start))
+            start = voice_edges.start_point(v, keep[0]["start"], base, prev_end=prior[-1]["end"] if prior else None,
+                                            limit=c["start"])
+        later = [d for d in dropped if d["start"] >= keep[-1]["end"]]
+        if end - keep[-1]["end"] > max_pause or later:
+            base = min(end, keep[-1]["end"] + TAIL_PAD, min((d["start"] for d in later), default=end))
+            end = voice_edges.end_point(v, keep[-1]["end"], base, next_start=later[0]["start"] if later else None,
+                                        limit=c["end"])
         spans = [[start, None]]
         for a, b in zip(keep, keep[1:]):
             between = [d for d in dropped if d["start"] >= a["end"] and d["end"] <= b["start"]]
             if b["start"] - a["end"] <= max_pause and not between:
                 continue
-            cut_from = min(a["end"] + BREATH_AFTER, between[0]["start"] if between else b["start"])
-            cut_to = max(b["start"] - BREATH_BEFORE, between[-1]["end"] if between else a["end"])
+            nxt = between[0]["start"] if between else b["start"]
+            prv = between[-1]["end"] if between else a["end"]
+            cut_from = voice_edges.end_point(v, a["end"], min(a["end"] + BREATH_AFTER, nxt), next_start=nxt)
+            cut_to = voice_edges.start_point(v, b["start"], max(b["start"] - BREATH_BEFORE, prv), prev_end=prv)
             if cut_to - cut_from < 0.05:
                 continue
             spans[-1][1] = cut_from
@@ -578,48 +687,269 @@ def sentence_guard(cuts: list[dict], clips: dict[int, dict]) -> tuple[list[dict]
         return cuts, done
     # The end: the last cut that speaks (only silent pictures may follow it).
     c = cuts[spoken[-1]]
-    words = _inside(c, _words(clips[c["clip_id"]]))
+    all_words = _words(clips[c["clip_id"]])
+    v = voice_edges.voice(clips[c["clip_id"]])
+    words = _inside(c, all_words)
     ends = [k for k, w in enumerate(words) if SENTENCE_END.search(w["word"].strip())]
     if ends and ends[-1] < len(words) - 1:
         last, tail = words[ends[-1]], words[ends[-1] + 1:]
-        new_end = min(last["end"] + TAIL_PAD, tail[0]["start"])
+        new_end = voice_edges.end_point(v, last["end"], min(last["end"] + TAIL_PAD, tail[0]["start"]),
+                                        next_start=tail[0]["start"], limit=c["end"])
         if tail[-1]["end"] - tail[0]["start"] <= MAX_DANGLING and new_end - c["start"] >= MIN_CUT:
             c["end"] = round(new_end, 3)
             stray = " ".join(w["word"].strip() for w in tail)
             done.append(f"ended on the last full sentence (cut the stray \"{stray}\" at the end)")
             words = words[:ends[-1] + 1]
     if spoken[-1] == len(cuts) - 1 and c["end"] - words[-1]["end"] > EDGE_SILENCE:
-        c["end"] = round(words[-1]["end"] + TAIL_PAD, 3)
+        nxt = next((w for w in all_words if w["start"] >= words[-1]["end"] and w is not words[-1]), None)
+        c["end"] = voice_edges.end_point(v, words[-1]["end"], round(words[-1]["end"] + TAIL_PAD, 3),
+                                         next_start=nxt["start"] if nxt else None, limit=c["end"])
         done.append("trimmed the silence after the last word")
     # The start: the first cut that speaks, when it opens partway through a sentence.
     c = cuts[spoken[0]]
     all_words = _words(clips[c["clip_id"]])
+    v = voice_edges.voice(clips[c["clip_id"]])
     words = _inside(c, all_words)
     before = [w for w in all_words if w["end"] <= words[0]["start"] + 0.001 and w is not words[0]]
     mid = before and words[0]["start"] - before[-1]["end"] < 1.0 and not SENTENCE_END.search(before[-1]["word"].strip())
     if mid:
         k = next((k for k, w in enumerate(words) if SENTENCE_END.search(w["word"].strip())), None)
         if k is not None and k + 1 < len(words) and words[k]["end"] - words[0]["start"] <= MAX_DANGLING:
-            new_start = max(words[k]["end"], words[k + 1]["start"] - HEAD_PAD)
+            new_start = voice_edges.start_point(v, words[k + 1]["start"],
+                                                max(words[k]["end"], words[k + 1]["start"] - HEAD_PAD),
+                                                prev_end=words[k]["end"])
             if c["end"] - new_start >= MIN_CUT:
                 c["start"] = round(new_start, 3)
                 stray = " ".join(w["word"].strip() for w in words[:k + 1])
                 done.append(f"opened on a full sentence (cut the end of the one before, \"{stray}\")")
                 words = words[k + 1:]
     if spoken[0] == 0 and words[0]["start"] - c["start"] > EDGE_SILENCE:
-        c["start"] = round(max(c["start"], words[0]["start"] - HEAD_PAD), 3)
+        c["start"] = voice_edges.start_point(v, words[0]["start"], round(max(c["start"], words[0]["start"] - HEAD_PAD), 3),
+                                             limit=c["start"])
         done.append("trimmed the silence before the first word")
     return cuts, done
 
 
-def timeline(cuts: list[dict], clips: dict[int, dict]) -> list[dict]:
-    """Every kept word on the draft's own clock."""
+# ── Whole sentences ───────────────────────────────────────────────────────────
+
+def _sentence_ids(words: list[dict]) -> list[int]:
+    ids, n = [], 0
+    for w in words:
+        ids.append(n)
+        if SENTENCE_END.search(w["word"].strip()):
+            n += 1
+    return ids
+
+
+def _restart(cut_words: list[str], next_words: list[str]) -> bool:
+    """A false start Claude was right to cut: the words cut begin like the words kept after them
+    ("we use the" before "we always use the adhesive")."""
+    if not cut_words or not next_words or len(cut_words) > 8:
+        return False
+    if cut_words[0] == next_words[0]:
+        return True
+    head = set(next_words[:len(cut_words) + 3])
+    return len(set(cut_words) & head) / len(set(cut_words)) >= 0.6
+
+
+def _broken_join(a: dict, b: dict, clips: dict[int, dict]) -> dict | None:
+    """The join between cut a and the cut after it, b, when it sits inside one sentence and
+    dropped real words (anything but hesitations, stutters and silence): {clip_id, words (the
+    clip's), last, first (indices of the kept words either side), cut (the indices between)}."""
+    if a["clip_id"] != b["clip_id"] or a["clip_id"] not in clips:
+        return None
+    words = _words(clips[a["clip_id"]])
+    kept_a = [k for k, w in enumerate(words) if w["start"] >= a["start"] - 0.01 and w["end"] <= a["end"] + 0.01]
+    kept_b = [k for k, w in enumerate(words) if w["start"] >= b["start"] - 0.01 and w["end"] <= b["end"] + 0.01]
+    if not kept_a or not kept_b or kept_b[0] <= kept_a[-1] + 1:
+        return None
+    last, first = kept_a[-1], kept_b[0]
+    ids = _sentence_ids(words)
+    if ids[last] != ids[first]:
+        return None
+    free = droppable(words)
+    real = [k for k in range(last + 1, first) if k not in free]
+    if not real:
+        return None
+    if _restart([_same_word(words[k]["word"]) for k in real],
+                [_same_word(words[k]["word"]) for k in kept_b[:len(real) + 3]]):
+        return None
+    return {"clip_id": a["clip_id"], "words": words, "last": last, "first": first, "cut": list(range(last + 1, first)),
+            "real": real}
+
+
+def _quoted(words: list[dict]) -> str:
+    text = " ".join(w["word"].strip() for w in words)
+    parts = text.split()
+    return " ".join(parts[:8]) + (" ..." if len(parts) > 8 else "")
+
+
+def _restore_note(clip_id: int, words: list[dict]) -> dict:
+    """A note for the draft's checks, timed once the cut is final (_timed_notes)."""
+    return {"clip_id": clip_id, "t": words[0]["start"],
+            "did": f"kept \"{_quoted(words)}\" at {{at}} so the sentence makes sense"}
+
+
+_JOIN_SYSTEM = """You check a Reel's cut for broken sentences. At each join below, the words before and \
+after it were kept from one sentence of Bryan's, and the numbered words between were cut. A viewer hears \
+the kept words once, straight through. Say whether the kept sentence still reads complete and coherent, \
+with the same meaning Bryan gave it. If it doesn't, list the numbers of the cut words that must come back \
+for it to read right: as few as that takes, in whole phrases. A false start or a repeated take may stay \
+cut. Never restore a word only because it was cut; restore what the sentence needs.{notes}"""
+
+_JOIN_SCHEMA = {
+    "type": "object",
+    "properties": {"joins": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"id": {"type": "integer"}, "reads_complete": {"type": "boolean"},
+                       "restore": {"type": "array", "items": {"type": "integer"}}},
+        "required": ["id", "reads_complete", "restore"], "additionalProperties": False}}},
+    "required": ["joins"],
+    "additionalProperties": False,
+}
+
+
+def _ask_joins(asks: list[dict], client=None, ref: str = "", notes: list[str] = ()) -> dict[int, list[int]]:
+    """One Claude call (text only, effort low) over the joins: {join id: [indices in the clip's
+    words to restore]}. notes: what this edit was asked to change (Bryan's notes, or Studio's own
+    fixes); a cut they asked for stays cut. Its cost is counted with the edit. {} when Claude
+    can't be asked."""
+    if not asks or not (client or ANTHROPIC_API_KEY):
+        return {}
+    import llm
+    import usage
+    blocks = []
+    for n, j in enumerate(asks, 1):
+        words, ids = j["words"], _sentence_ids(j["words"])
+        sentence = [k for k in range(len(words)) if ids[k] == ids[j["last"]]]
+        before = " ".join(words[k]["word"].strip() for k in sentence if k <= j["last"])
+        after = " ".join(words[k]["word"].strip() for k in sentence if k >= j["first"])
+        cut = " ".join(f"[{m}] {words[k]['word'].strip()}" for m, k in enumerate(j["cut"], 1))
+        blocks.append(f"join {n}\n  kept before: {before}\n  cut: {cut}\n  kept after: {after}")
+    client = client or anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or None)
+    response = llm.final_message(
+        client, model=CLAUDE_MODEL, max_tokens=4000,
+        betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+        output_config={"effort": "low", "format": {"type": "json_schema", "schema": _JOIN_SCHEMA}},
+        system=_JOIN_SYSTEM.replace("{notes}", (
+            "\n\nThis edit was asked to make these changes; words they ask to cut stay cut:\n"
+            + "\n".join(f"- {n}" for n in notes)) if notes else ""),
+        messages=[{"role": "user", "content": "\n\n".join(blocks)}])
+    usage.record("edit", ref, response)
+    if response.stop_reason in ("refusal", "max_tokens"):
+        raise RuntimeError(f"the sentence check stopped ({response.stop_reason})")
+    answer = json.loads(next(b.text for b in response.content if b.type == "text"))
+    out = {}
+    for item in answer.get("joins") or []:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), int) or not 1 <= item["id"] <= len(asks):
+            continue
+        j = asks[item["id"] - 1]
+        picks = sorted({j["cut"][m - 1] for m in item.get("restore") or [] if isinstance(m, int) and 1 <= m <= len(j["cut"])})
+        if picks and not item.get("reads_complete"):
+            out[item["id"] - 1] = picks
+    return out
+
+
+def _runs(indices: list[int]) -> list[list[int]]:
+    runs = []
+    for k in indices:
+        if runs and k == runs[-1][-1] + 1:
+            runs[-1].append(k)
+        else:
+            runs.append([k])
+    return runs
+
+
+def _join_up(cuts: list[dict], clips: dict[int, dict]) -> list[dict]:
+    """Neighbouring cuts of one clip with nothing Bryan said between them (at most a second of
+    silence, hesitations or stutters) become one cut."""
+    out = [dict(cuts[0])] if cuts else []
+    for c in cuts[1:]:
+        p = out[-1]
+        if p["clip_id"] == c["clip_id"] and c["start"] >= p["start"] and c["clip_id"] in clips:
+            words = _words(clips[c["clip_id"]])
+            free = droppable(words)
+            between = [k for k, w in enumerate(words) if w["start"] >= p["end"] - 0.01 and w["end"] <= c["start"] + 0.01]
+            if c["start"] <= p["end"] + 0.01 or (c["start"] - p["end"] <= 1.0 and all(k in free for k in between)):
+                p["end"] = max(p["end"], c["end"])
+                continue
+        out.append(dict(c))
+    return out
+
+
+def join_guard(cuts: list[dict], clips: dict[int, dict], client=None, ref: str = "",
+               asked: list[str] = ()) -> tuple[list[dict], list[dict]]:
+    """The cut never breaks a sentence. Where two cuts meet inside one sentence and the words
+    between them were real words (not hesitations, stutters or silence), they come back: when
+    the words cut last JOIN_RESTORE seconds or less, the two cuts simply become one; longer ones
+    go to Claude once (all of them in one call) to say whether the sentence still reads complete,
+    and the words it says are needed come back. asked: the changes this edit was asked for
+    (Bryan's notes, Studio's own fixes): then every such join goes to Claude with them, so a cut
+    Bryan asked for ("drop the 'as you can see'") stays cut. Returns the cuts and notes for the
+    draft's checks ({clip_id, t, did}; _timed_notes puts the draft time in)."""
+    if not cuts:
+        return cuts, []
+    out, notes, asks = [dict(cuts[0])], [], []
+    for c in cuts[1:]:
+        j = _broken_join(out[-1], c, clips)
+        if j and not asked and j["words"][j["first"]]["start"] - j["words"][j["last"]]["end"] <= JOIN_RESTORE:
+            out[-1] = {**out[-1], "end": c["end"]}
+            notes.append(_restore_note(j["clip_id"], [j["words"][k] for k in j["real"]]))
+            continue
+        if j:
+            asks.append({**j, "after": len(out) - 1})
+        out.append(dict(c))
+    if asks:
+        try:
+            answers = _ask_joins(asks, client, ref, list(asked))
+        except Exception as e:  # the cut as planned beats no draft
+            log.warning("The sentence check on the joins didn't work (%s); the cut stays as planned", e)
+            answers = {}
+        for n in sorted(answers, key=lambda n: asks[n]["after"], reverse=True):
+            j = asks[n]
+            clip = clips[j["clip_id"]]
+            new = []
+            for run in _runs(answers[n]):
+                piece = snap({**out[j["after"]], "start": j["words"][run[0]]["start"], "end": j["words"][run[-1]]["end"],
+                              "why": "kept so the sentence makes sense"}, clip)
+                if piece:
+                    new.append(piece)
+                    notes.append(_restore_note(j["clip_id"], [j["words"][k] for k in run]))
+            out[j["after"] + 1:j["after"] + 1] = new
+        out = _join_up(out, clips)
+    return out, notes
+
+
+def _timed_notes(notes: list[dict], cuts: list[dict]) -> list[str]:
+    """join_guard's notes with the moment on the draft's clock (m:ss)."""
+    out = []
+    for note in notes:
+        offset, at = 0.0, None
+        for c in cuts:
+            if c["clip_id"] == note["clip_id"] and c["start"] - 0.2 <= note["t"] <= c["end"]:
+                at = offset + max(0.0, note["t"] - c["start"])
+                break
+            offset += c["end"] - c["start"]
+        at = 0.0 if at is None else at
+        out.append(note["did"].replace("{at}", f"{int(at // 60)}:{int(at % 60):02d}"))
+    return out
+
+
+def timeline(cuts: list[dict], clips: dict[int, dict], sound: bool = False) -> list[dict]:
+    """Every kept word on the draft's own clock. sound: each word also gets "sound_end", where
+    its voice really stops (voice_edges; never past its piece), when the clip's sound is known."""
     out, offset = [], 0.0
     for c in cuts:
-        for w in _words(clips[c["clip_id"]]):
+        words = _words(clips[c["clip_id"]])
+        v = voice_edges.voice(clips[c["clip_id"]]) if sound and words else None
+        for k, w in enumerate(words):
             if w["start"] >= c["start"] - 0.01 and w["end"] <= c["end"] + 0.01:
                 out.append({"word": w["word"], "start": offset + w["start"] - c["start"],
                             "end": offset + w["end"] - c["start"]})
+                if v:
+                    nxt = words[k + 1]["start"] if k + 1 < len(words) else None
+                    real = voice_edges.end_point(v, w["end"], w["end"], next_start=nxt, limit=c["end"])
+                    out[-1]["sound_end"] = offset + max(w["end"], real - voice_edges.BREATH_OUT) - c["start"]
         offset += c["end"] - c["start"]
     return out
 
@@ -692,7 +1022,9 @@ def caption_chunks(words: list[dict], total: float) -> list[dict]:
         end = chunks[i + 1][0]["start"] - 2 / FPS if i + 1 < len(chunks) else min(total, chunk[-1]["end"] + 0.4)
         end = min(end, chunk[-1]["end"] + 0.8)  # don't hold a caption through a long silence
         text = re.sub(r"[.,;:]+$", "", " ".join(w["word"].strip() for w in chunk)).strip()
-        if not out and text:
+        # A capital to open the draft and each new sentence (a stutter's first copy, "The the", may
+        # have taken the capital with it).
+        if text and (not out or SENTENCE_END.search(chunks[i - 1][-1]["word"].strip())):
             text = text[0].upper() + text[1:]
         if end - start > 0.05 and text:
             out.append({"text": text, "start": round(start, 3), "end": round(end, 3)})
@@ -777,7 +1109,8 @@ def _snap_end(start: float, want: float, words: list[dict]) -> float:
     phrase = [w for w in fits if re.search(r"[.,!?;:。，！？]$", w["word"].strip()) and abs(w["end"] - target) <= 0.8]
     if phrase:
         best = min(phrase, key=lambda w: abs(w["end"] - target))
-    return best["end"] + TAIL_PAD
+    # Where the word's voice really stops (timeline(sound=True)), when that's later than Whisper's end.
+    return max(best["end"] + TAIL_PAD, best.get("sound_end", 0.0) + voice_edges.BREATH_OUT)
 
 
 def face_boxes(cuts: list[dict], clips: dict[int, dict], start: float, end: float) -> list[tuple[float, float, float]]:
@@ -982,7 +1315,7 @@ def scene_summary(scenes: list[dict]) -> str:
 # ── Rendering ─────────────────────────────────────────────────────────────────
 
 RATE = 48000
-JOIN_FADE = 0.008  # seconds of fade either side of a join in the sound, so it can't click
+JOIN_FADE = 0.012  # seconds of fade either side of a join in the sound, so it can't click
 GROUP_GAP = 3.0    # pieces of one clip closer than this are read from the file in one go
 
 
@@ -1021,17 +1354,11 @@ def _group_filter(pieces: list[dict], first: list[int], clip: dict, tag: str) ->
             f"[{tag}c]{crop(zooms)}[{tag}c2];[{tag}w2][{tag}c2]overlay=0:0:enable='{when.lstrip('+')}'")
 
 
-def render_cut(cuts: list[dict], clips: dict[int, dict], out: Path) -> float:
-    """All pieces in one ffmpeg run from the originals: frame-exact, one encode.
-
-    Each piece is a whole number of frames, rounded from the running total so the
-    picture never drifts from the captions' clock. Pieces of one clip that follow
-    each other closely (a stretch with its pauses cut, punch-ins, reframes) are read
-    from the file once, dropping the frames in between, which keeps the memory a
-    4K clip needs to one read per stretch. Pieces that carry straight on from the
-    one before take their sound in one unbroken piece; elsewhere the sound fades
-    for a few milliseconds either side of the join, so jump cuts don't click."""
-    # Frames per piece, and runs of pieces read together: [first piece, last piece].
+def _frame_plan(cuts: list[dict]) -> tuple[list[int], list[list[int]], list[int], list[float]]:
+    """How render_cut lays the pieces out: frames per piece (whole frames, rounded from the
+    running total), runs of pieces read together ([first, last]), where each piece starts in its
+    run (frames) and in its clip (seconds). The sound of piece k is source[k] to
+    source[k] + frames[k] / FPS in its clip."""
     frames, edge, running = [], 0, 0.0
     for c in cuts:
         running += c["end"] - c["start"]
@@ -1052,6 +1379,20 @@ def render_cut(cuts: list[dict], clips: dict[int, dict], out: Path) -> float:
             at[k] = (at[k - 1] + frames[k - 1] if carries_on else
                      max(round((cuts[k]["start"] - cuts[g0]["start"]) * FPS), at[k - 1] + frames[k - 1] if k > g0 else 0))
             source[k] = cuts[g0]["start"] + at[k] / FPS
+    return frames, groups, at, source
+
+
+def render_cut(cuts: list[dict], clips: dict[int, dict], out: Path) -> float:
+    """All pieces in one ffmpeg run from the originals: frame-exact, one encode.
+
+    Each piece is a whole number of frames, rounded from the running total so the
+    picture never drifts from the captions' clock. Pieces of one clip that follow
+    each other closely (a stretch with its pauses cut, punch-ins, reframes) are read
+    from the file once, dropping the frames in between, which keeps the memory a
+    4K clip needs to one read per stretch. Pieces that carry straight on from the
+    one before take their sound in one unbroken piece; elsewhere the sound fades
+    for a few milliseconds either side of the join, so jump cuts don't click."""
+    frames, groups, at, source = _frame_plan(cuts)
 
     args, graph, video, n = [settings.FFMPEG, "-y", "-v", "error"], [], [], -1
     for g, (g0, g1) in enumerate(groups):
@@ -1859,6 +2200,67 @@ def check_words(final: Path, expected: list[dict], work: Path) -> dict:
     return {"words_expected": len(want), "match": round(matcher.ratio(), 3), "missing": missing[:20]}
 
 
+def _sound_ends(cuts: list[dict]) -> list[tuple[int, float]]:
+    """(piece, where its sound stops in its clip, as rendered: frame-rounded) for every piece whose
+    sound stops there in the draft: each join, and the draft's end. A piece that carries straight
+    on into the next isn't a join."""
+    frames, _, _, source = _frame_plan(cuts)
+    out = []
+    for k, c in enumerate(cuts):
+        end = source[k] + frames[k] / FPS
+        if k + 1 < len(cuts) and cuts[k + 1]["clip_id"] == c["clip_id"] and abs(end - source[k + 1]) < 1e-6:
+            continue
+        out.append((k, end))
+    return out
+
+
+def _word_at(words: list[dict], t: float) -> dict | None:
+    """The word sounding at t (or the last one that started before it)."""
+    return max((w for w in words if w["start"] < t), key=lambda w: w["start"], default=None)
+
+
+def clipped_words(cuts: list[dict], clips: dict[int, dict]) -> list[dict]:
+    """The clipped-word check: at each join (and the draft's end), is the voice still going in the
+    last voice_edges.CLIP_WINDOW before the cut, in the clip's own sound? Then a word was cut short.
+    Returns [{piece, end (clip seconds), at (draft seconds), word}]."""
+    frames = _frame_plan(cuts)[0]
+    out = []
+    for k, end in _sound_ends(cuts):
+        clip = clips.get(cuts[k]["clip_id"])
+        v = voice_edges.voice(clip) if clip else None
+        if not voice_edges.clipped(v, end):
+            continue
+        w = _word_at(_words(clip), end)
+        out.append({"piece": k, "end": round(end, 3), "at": round(sum(frames[:k + 1]) / FPS, 2),
+                    "word": w["word"].strip() if w else ""})
+    return out
+
+
+def unclip(cuts: list[dict], clips: dict[int, dict], found: list[dict]) -> tuple[list[dict], int]:
+    """Each clipped end (clipped_words) moved on to where the voice really stops, never into the
+    next word and never into another piece of the same clip. Returns the cuts and how many moved."""
+    cuts, moved = [dict(c) for c in cuts], 0
+    for f in found:
+        c = cuts[f["piece"]]
+        clip = clips[c["clip_id"]]
+        v, words, end = voice_edges.voice(clip), _words(clip), f["end"]
+        w = _word_at(words, end)
+        nxt = next((x for x in words if w is not None and x["start"] > w["start"]), None)
+        limit = min([clip.get("duration") or v.duration]
+                    + [o["start"] for o in cuts if o is not c and o["clip_id"] == c["clip_id"] and o["start"] >= end])
+        new = voice_edges.end_point(v, max(end, w["end"]) if w else end, end,
+                                    next_start=nxt["start"] if nxt and nxt["start"] > end else None, limit=limit)
+        new = min(new + 1 / FPS, limit)  # a frame's margin: the render rounds each piece to whole frames
+        if new > c["end"] + 0.005:
+            c["end"] = round(new, 3)
+            moved += 1
+    return cuts, moved
+
+
+def _mmss(t: float) -> str:
+    return f"{int(t // 60)}:{int(t % 60):02d}"
+
+
 def check_loudness(final: Path) -> dict:
     result = extract._run([settings.FFMPEG, "-hide_banner", "-nostats", "-i", str(final),
                            "-af", "ebur128=peak=true", "-f", "null", "-"])
@@ -1901,7 +2303,7 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
         plan.setdefault("music_plan", {})["chosen"] = linked
 
     edl = plan_edit(conn, production, clips, client)
-    edl["cuts"] = _cut(edl, clips)
+    edl["cuts"] = _cut(edl, clips, client, f"production:{production_id}", [n["body"] for n in notes])
     _render(conn, production, clips, edl, plan, version, find_track)
     if notes:  # Bryan's editing notes become rules Studio keeps (learning.py)
         import learning
@@ -1910,15 +2312,19 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
     return Path(self_fix.deliver(conn, production_id, client, find_track)["video_path"])
 
 
-def _cut(edl: dict, clips: dict[int, dict]) -> list[dict]:
-    """Claude's cut list made exact: snapped to the gaps between words, Studio's checks on the
-    ends (sentence_guard), then jump cuts and framing. What the checks changed goes in
-    edl["checks"]."""
+def _cut(edl: dict, clips: dict[int, dict], client=None, ref: str = "", asked: list[str] = ()) -> list[dict]:
+    """Claude's cut list made exact: snapped to the gaps between words (and the voice's real
+    edges), no sentence broken (join_guard; client and ref for its one question to Claude, asked:
+    the notes or fixes this edit was asked for), Studio's checks on the ends (sentence_guard),
+    then jump cuts and framing. What the checks changed goes in edl["checks"]."""
     cuts = [s for s in (snap(c, clips[c["clip_id"]]) for c in edl["cuts"] if c["clip_id"] in clips) if s]
     if not cuts:
         raise RuntimeError("the edit plan kept no usable footage")
+    cuts, restored = join_guard(cuts, clips, client, ref, asked)
     cuts, edl["checks"] = sentence_guard(cuts, clips)
-    return finish_cuts(cuts, clips, edl)
+    cuts = finish_cuts(cuts, clips, edl)
+    edl["checks"] = _timed_notes(restored, cuts) + edl["checks"]
+    return cuts
 
 
 def finish_cuts(cuts: list[dict], clips: dict[int, dict], edl: dict) -> list[dict]:
@@ -1948,7 +2354,59 @@ def finish_cuts(cuts: list[dict], clips: dict[int, dict], edl: dict) -> list[dic
     if done:
         edl["summary"] = (edl.get("summary", "").rstrip() + " Studio also " + ", ".join(done[:-1])
                           + (" and " if len(done) > 1 else "") + done[-1] + ".").strip()
-    return cuts
+    return on_frames(cuts, clips)
+
+
+def _frame_up(t: float) -> float:
+    return math.ceil(round(t * FPS, 6)) / FPS
+
+
+def _frame_down(t: float) -> float:
+    return math.floor(round(t * FPS, 6)) / FPS
+
+
+def on_frames(cuts: list[dict], clips: dict[int, dict]) -> list[dict]:
+    """Every cut point where the sound jumps (each join, the draft's start and end) put on its
+    clip's frame grid, so the render cuts the sound exactly there: render_cut makes each piece
+    whole frames, which otherwise moved a cut by up to a frame (into a word, at a tight join). An
+    end moves on to the next frame and a start back to the one before, unless that reaches into
+    the next (or previous) word's sound; then the other way. A clip with no known sound (B-roll)
+    goes to the nearest frame, so the pieces after it stay on the grid too."""
+    out = [dict(c) for c in cuts]
+    carry = [k > 0 and cuts[k - 1]["clip_id"] == c["clip_id"] and abs(cuts[k - 1]["end"] - c["start"]) < 0.002
+             for k, c in enumerate(cuts)]
+    for k, c in enumerate(out):
+        clip = clips.get(c["clip_id"])
+        v = voice_edges.voice(clip) if clip else None
+        start, end = cuts[k]["start"], cuts[k]["end"]
+        if v is None:
+            if not carry[k]:
+                c["start"] = round(round(start * FPS) / FPS, 4)
+            if not (k + 1 < len(cuts) and carry[k + 1]):
+                c["end"] = round(round(end * FPS) / FPS, 4)
+            if c["end"] - c["start"] < 1 / FPS:
+                c["start"], c["end"] = start, end
+            continue
+        words = _words(clip)
+        if not carry[k]:
+            prev = max((w for w in words if w["end"] <= start + 0.005), key=lambda w: w["end"], default=None)
+            floor = v.quiet_from(prev["end"], max(prev["end"], start)) if prev else 0.0
+            down = _frame_down(start)
+            if floor is None:  # the voice runs on into this start (a tight join): the nearest frame
+                c["start"] = round(round(start * FPS) / FPS, 4)
+            else:
+                c["start"] = round(down if down >= floor - 0.001 else _frame_up(start), 4)
+        if not (k + 1 < len(cuts) and carry[k + 1]):
+            nxt = min((w for w in words if w["start"] >= end - 0.005), key=lambda w: w["start"], default=None)
+            cap = v.sound_from(nxt["start"], lo=end) if nxt else (clip.get("duration") or v.duration)
+            up = _frame_up(end)
+            if cap is None:  # the voice runs on from this end into the next word: the nearest frame
+                c["end"] = round(round(end * FPS) / FPS, 4)
+            else:
+                c["end"] = round(up if up <= cap + 0.001 else _frame_down(end), 4)
+        if c["end"] - c["start"] < 1 / FPS:  # never a piece of nothing
+            c["start"], c["end"] = cuts[k]["start"], cuts[k]["end"]
+    return out
 
 
 def _same_music(production: dict, plan: dict, find_track=None):
@@ -1999,7 +2457,7 @@ def self_revise(conn, production_id: int, fixes: list[dict], round_no: int, clie
     if not clips:
         raise RuntimeError("none of the draft's clips are in the library any more")
     edl = plan_edit(conn, production, clips, client, fixes=fixes, ref=self_fix.ref(production_id))
-    edl["cuts"] = _cut(edl, clips)
+    edl["cuts"] = _cut(edl, clips, client, self_fix.ref(production_id), [f["body"] for f in fixes])
     if previous.get("look"):
         edl["look"] = previous["look"]
     find_track, plan = _same_music(production, plan, find_track)
@@ -2021,7 +2479,27 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
     with tempfile.TemporaryDirectory(prefix="studio-edit-") as tmp:
         work = Path(tmp)
         total = render_cut(cuts, clips, work / "cut.mp4")
-        words = timeline(cuts, clips)
+        # The clipped-word check: the voice still going right before a join means a word was cut
+        # short. Each is moved on to where the voice stops and the cut rendered again, once.
+        clipped = clipped_words(cuts, clips)
+        still = clipped
+        if clipped:
+            fixed_cuts, moved = unclip(cuts, clips, clipped)
+            if moved:
+                cuts = edl["cuts"] = fixed_cuts
+                total = render_cut(cuts, clips, work / "cut.mp4")
+                still = clipped_words(cuts, clips)
+        left = {f["piece"] for f in still}
+        for f in clipped:
+            if f["piece"] not in left:
+                checks.append({"did": f"kept the end of \"{f['word']}\" at {_mmss(f['at'])} (the cut was clipping it)",
+                               "counted": True})
+        for f in still:
+            checks.append({"did": f"the end of \"{f['word']}\" at {_mmss(f['at'])} may still sound cut short",
+                           "counted": False})
+        joins = {"checked": len(_sound_ends(cuts)), "clipped": len(clipped), "fixed": len(clipped) - len(still),
+                 "still": [{k: f[k] for k in ("at", "word")} for f in still]}
+        words = timeline(cuts, clips, sound=True)
         chunks = caption_chunks(words, total)
         overlay = None
         if placed:  # a re-render: the graphics are where the draft had them
@@ -2101,7 +2579,7 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         if fix_loudness(final, loud):
             loud = check_loudness(final)
             checks.append({"did": "set the loudness to Instagram's level", "counted": False})
-        qa = {**loud, **check_words(final, words, work), "sound": sound, "checks": checks,
+        qa = {**loud, **check_words(final, words, work), "sound": sound, "checks": checks, "joins": joins,
               # beats.py's check on the spoken hook: does the first sentence land inside 3 seconds?
               "hook": wording.hook_timing(words)}
 

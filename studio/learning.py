@@ -45,6 +45,8 @@ _lock = threading.Lock()
 CODE_CHECKS = {
     "reel": [
         "Ends on the last full sentence: a stray word that starts the next one is cut.",
+        "Cuts follow your voice's real start and end; every join is checked for a clipped word.",
+        "No sentence is broken: words cut from inside a kept sentence come back.",
         "Opens on a full sentence, with no dead air before the first word or after the last.",
         "Cards stay above the caption line, and captions that repeat a card's words are hidden while it's up.",
         "Captions are at most 18 characters and stay up long enough to read.",
