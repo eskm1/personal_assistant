@@ -120,26 +120,54 @@ def _language(audio: np.ndarray) -> tuple[str | None, float | None]:
     return lang, p
 
 
+# Whisper decodes at most 448 tokens per window, prompt included. faster-whisper's prompt is the
+# hotwords (up to 223 tokens) plus the text before this window (up to 223 tokens) plus a few
+# markers, so long hotwords on a long talking head overflowed it: "ValueError: The maximum decoding
+# length must be > 0" failed the whole edit (Bryan's screenshot, 2026-10-21). Kept to this many
+# tokens, the prompt always leaves the window room to decode.
+HOTWORD_TOKENS = 120
+_OVERFLOW = "maximum decoding length"
+
+
+def _fit_hotwords(text: str | None) -> str | None:
+    """Drop terms from the end (the glossary puts the short, most-misheard ones first) until the
+    list fits in HOTWORD_TOKENS of Whisper's own tokens. Without the tokenizer: a char estimate."""
+    if not text:
+        return None
+    terms = [t for t in text.split(", ") if t]
+    tok = getattr(_model, "hf_tokenizer", None)
+
+    def size(ts: list[str]) -> int:
+        joined = " " + ", ".join(ts)
+        try:
+            return len(tok.encode(joined, add_special_tokens=False).ids)
+        except Exception:
+            return len(joined) // 2  # glossary terms run about 2-3 characters a token; err short
+    while terms and size(terms) > HOTWORD_TOKENS:
+        terms.pop()
+    return ", ".join(terms) or None
+
+
 def _hotwords() -> str | None:
     """The trade glossary's terms (glossary.py: MCST, HDB, screed, brand names...), so Whisper hears
     them right. faster-whisper (1.2.1) puts hotwords before every window, not just the first, unlike
     initial_prompt. None when the glossary can't be read (Whisper still runs)."""
     try:
         import glossary
-        return glossary.hotwords()
+        return _fit_hotwords(glossary.hotwords())
     except Exception as e:  # a transcript beats no transcript
         log.warning("No glossary for Whisper: %s", e)
         return None
 
 
-def _transcribe_once(wav_path: Path) -> dict:
+def _transcribe_once(wav_path: Path, hotwords: bool = True) -> dict:
     audio = _load_wav(wav_path)
     language, picked_p = _language(audio)
     segments, info = _model.transcribe(
         audio,
         language=language,
         initial_prompt=_ZH_PROMPT if language == "zh" else None,
-        hotwords=_hotwords(),
+        hotwords=_hotwords() if hotwords else None,
         word_timestamps=True,
         vad_filter=True,  # skips silence, which also stops Whisper inventing words in it
     )
@@ -171,6 +199,10 @@ def transcribe(wav_path: Path) -> dict:
     try:
         return _transcribe_once(wav_path)
     except Exception as e:
+        if isinstance(e, ValueError) and _OVERFLOW in str(e):
+            # The prompt still didn't fit: the transcript without the glossary beats a failed edit.
+            log.warning("Whisper's prompt overflowed (%s); transcribing %s again without the glossary", e, wav_path.name)
+            return _transcribe_once(wav_path, hotwords=False)
         if _device != "cuda":
             raise
         log.warning("GPU transcription failed (%s); retrying on the CPU", e)
