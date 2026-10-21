@@ -156,14 +156,42 @@ def accepts_gzip() -> bool:
     return "gzip" in (request.headers.get("Accept-Encoding") or "").lower()
 
 
+# A script asked for with an OLD ?v= comes from a page saved before Studio was updated (the home-screen
+# app's own copy, web/sw.js). Today's script under yesterday's page can stop on a part the old page
+# doesn't have and leave it blank (Bryan's iPhone, 2026-10-21), so it gets this instead: forget the
+# saved pages and open the new one (at most once in 30 s, so it can never loop).
+STALE_SCRIPT = b"""/* Studio was updated after this page was saved: open the new one. */
+(function () {
+  try {
+    var t = +sessionStorage.getItem("studio.stale") || 0;
+    if (Date.now() - t < 30000) return;
+    sessionStorage.setItem("studio.stale", String(Date.now()));
+  } catch (e) {}
+  var go = function () { location.reload(); };
+  try {
+    if (self.caches) {
+      caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }).then(go, go);
+      return;
+    }
+  } catch (e) {}
+  go();
+})();
+"""
+
+
 def send(path: Path, cache: str = "no-cache") -> Response:
     """One of the pages' files, as it is now (its imports and fonts stamped). Asked for with its
-    current ?v=, it's kept for a year; without (or an old one), checked each time."""
+    current ?v=, it's kept for a year; without, checked each time. A script asked for with an old
+    ?v= gets STALE_SCRIPT (its page is out of date)."""
     path = path.resolve()
     suffix = path.suffix.lower()
+    asked = request.args.get("v")
+    if suffix in (".js", ".mjs") and asked and asked != key(path):
+        return Response(STALE_SCRIPT, headers={"Content-Type": TYPES.get(suffix, "text/javascript"),
+                                                "Cache-Control": "no-store"})
     gz = suffix in TEXT and accepts_gzip() and path.stat().st_size > GZIP_MIN
     data, etag = _body(path, gz)
-    keep = request.args.get("v") == key(path)
+    keep = asked == key(path)
     headers = {"Content-Type": TYPES.get(suffix, "application/octet-stream"), "ETag": f'"{etag}"',
                "Cache-Control": YEAR if keep else cache, "Vary": "Accept-Encoding"}
     if gz:
