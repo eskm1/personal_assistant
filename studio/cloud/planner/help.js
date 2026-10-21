@@ -145,6 +145,7 @@ window.StudioHelp = (() => {
       "Pause where it needs a change and type in the box under the video: the note pins to that moment.",
       "Studio's read lists what to fix. They all go to the editor when you **Send back**.",
       "Main action: the bar at the bottom. **Send back** with your notes (anyone), or **Approve** (Bryan).",
+      "A slideshow Reel (a carousel with music): a note can change a slide's time, the order or the music.",
     ], tour: [
       ["#player-frame", "The draft. Tap to play."],
       ["#quick-note, #note-jump, #note-body", "Type a note. It pins to the moment the video is at."],
@@ -157,11 +158,13 @@ window.StudioHelp = (() => {
       "Swipe the slides, note what to change, then decide.",
       "A note can name a slide.",
       "Main action: the bar at the bottom. **Approve**, or **Send back** with your notes.",
+      "Bryan can **Make a slideshow Reel**: the slides as a Reel with music, back in To review as a draft of its own.",
     ], tour: [
       [".swiper, #player-frame", "The slides. Swipe or use the arrows."],
       ["#note-slide", "Which slide the note is about."],
       ["#note-body", "A note for Studio. Say which slide."],
       [".read-card", "Studio's read of the slides."],
+      ["#make-slideshow", "Makes these slides into a Reel with music. It comes back to To review on its own."],
       ["#decision-bar", "Approve, or send it back with your notes."],
     ] },
     producing: { name: "Being edited", lines: [

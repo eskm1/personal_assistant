@@ -128,6 +128,9 @@ EDIT_MAX_PAUSE = float(_env("STUDIO_EDIT_MAX_PAUSE", "0.7"))
 # Makers end card (the mark, the Instagram handle, the post's ask) while the music fades out.
 # Off = the draft ends after that beat, with no card.
 END_CARD = _flag("STUDIO_END_CARD", True)
+# Slideshow Reels (slideshow.py: a carousel's slides as a Reel with music): each slide very slowly grows to
+# 103% while it's up (the whole slide, never cropped). Off = the slides stay still.
+SLIDESHOW_PUSH_IN = _flag("STUDIO_SLIDESHOW_PUSH_IN", True)
 # Reframing: horizontal footage (Z fc, GoPro) is cropped around the person's face
 # instead of down the middle. Off = the centre crop.
 EDIT_REFRAME = _flag("STUDIO_EDIT_REFRAME", True)

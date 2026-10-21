@@ -25,8 +25,11 @@ const STAGES = [
 ];
 const shell = window.StudioShell;
 const BRAND = { personal: "Personal", urban_makers: "Urban Makers", unsure: "Brand unsure" };
-const FORMAT = { talking_head: "Talking head", day_in_the_life: "Day in the life", compilation: "Compilation", other: "Other", carousel: "Carousel" };
+const FORMAT = { talking_head: "Talking head", day_in_the_life: "Day in the life", compilation: "Compilation", other: "Other", carousel: "Carousel",
+  slideshow: "Slideshow Reel" };
 const isCarousel = (d) => d?.kind === "production" && d.format === "carousel";
+// A carousel's slides made into a Reel with music (slideshow.py): reviewed like any Reel.
+const isSlideshow = (d) => d?.kind === "production" && d.format === "slideshow";
 const STATUS = {
   ready: "Ready for review", revising: "Revising", producing: "Editing", planned: "Planned",
   approved: "Approved", posted: "Posted", rejected: "Rejected", queued: "Queued", uploading: "Uploading",
@@ -2158,13 +2161,13 @@ function noteListHTML(notes, currentVersion, isProduction) {
   }).join("")}</ul>`;
 }
 
-function composerRowHTML(placeholder) {
+function composerRowHTML(placeholder, remember = true) {
   return `<div class="composer">
       <label class="grow"><span class="sr-only">Add a note</span>
         <input id="note-body" maxlength="2000" autocomplete="off" placeholder="${esc(placeholder)}"></label>
       <button class="btn" id="note-add">Add note</button>
     </div>
-    ${isOwner() ? `<label class="check small" title="Adds it to the playbook the editor follows on every future edit"><input type="checkbox" id="note-remember"> Remember for future edits</label>` : ""}`;
+    ${isOwner() && remember ? `<label class="check small" title="Adds it to the playbook the editor follows on every future edit"><input type="checkbox" id="note-remember"> Remember for future edits</label>` : ""}`;
 }
 
 function captionPeek(caption) {
@@ -2450,7 +2453,35 @@ function carouselPageHTML(d) {
       ${carouselComposerHTML(d)}
       <p class="muted small">A note can be about one slide or the whole post. Send back, and Studio rewrites the slides from your notes and lays them out again.</p>
     </section>
+    ${slideshowSecHTML(d)}
     <section class="folds">${folds}</section>`;
+}
+
+// Bryan's "Make a slideshow Reel" on a carousel (slideshow.py): its slides as a Reel with his music, a draft of
+// its own. Once made, the link to it. Only Bryan gets it (d.slideshow is null for the team).
+function slideshowSecHTML(d) {
+  const s = d.slideshow;
+  if (!s || (s.why_not && !s.made)) return "";
+  const made = s.made;
+  const where = made ? ({ ready: "waiting in To review", approved: "approved", posted: "posted", failed: "stuck: open it to retry" }[made.status]
+    || "being made") : "";
+  return `<section class="d-sec" id="slideshow-sec"><h2>Slideshow Reel</h2>
+    ${made ? `<div class="row"><button class="btn" data-open-production="${esc(made.id)}">Open the slideshow Reel</button></div>
+      <p class="muted small">Made from these slides, ${esc(where)}. This carousel stays as it is.</p>`
+    : `<div class="row"><button class="btn" id="make-slideshow">Make a slideshow Reel</button></div>
+      <p class="muted small">Studio makes these slides into a Reel with your music. It comes back to To review as its own draft; this carousel stays as it is.</p>`}
+  </section>`;
+}
+
+// On a slideshow Reel: the carousel it was made from, and how long each slide is up.
+function slideshowFoldHTML(d) {
+  const s = d.slideshow;
+  if (!s) return "";
+  const rows = (s.slides || []).map((x) => `<li><strong>Slide ${esc(x.n)}</strong> ${esc(x.heading)} <span class="muted small">· ${esc(Number(x.seconds).toFixed(1))} s from ${esc(mmss(x.start))}</span></li>`).join("");
+  return foldHTML("production", "slides", "Slides and timing", s.slides?.length ? plural(s.slides.length, "slide") : "",
+    `${s.from ? `<p class="small">Made from the carousel <button class="link" data-open-production="${esc(s.from.id)}">${esc(s.from.title)}</button>${s.from.version ? ` (v${esc(s.from.version)})` : ""}.</p>` : ""}
+     ${rows ? `<ol class="slide-words">${rows}</ol>` : ""}
+     <p class="muted small">Each slide is up long enough to read its words. A note can change a slide's time, the order or the music.</p>`);
 }
 
 // Instagram, on an approved or posted draft: schedule it (Bryan), when it goes out, why it couldn't,
@@ -2532,6 +2563,7 @@ function productionPageHTML(d) {
     brief: () => foldHTML("production", "brief", "Brief and source clips", d.sources.length ? plural(d.sources.length, "clip") : "", briefBody(d)),
     resolve: () => d.resolve && owner ? foldHTML("production", "resolve", "Open in DaVinci Resolve", RESOLVE_PEEK[d.resolve.state] || "", resolveBody(d)) : "",
     rules: () => rulesHTML(d),
+    slides: () => slideshowFoldHTML(d),
     missing: () => d.missing_shots?.length ? foldHTML("production", "missing", "Missing shots", plural(d.missing_shots.length, "shot"),
       `<ul class="shots">${d.missing_shots.map((s) => `<li><strong>${esc(s.shot)}</strong><span>${esc(s.why)}</span></li>`).join("")}</ul>`) : "",
   };
@@ -2544,7 +2576,7 @@ function productionPageHTML(d) {
       ["Missing shots", d.missing_shots?.length && `<ul class="shots">${d.missing_shots.map((s) => `<li><strong>${esc(s.shot)}</strong><span>${esc(s.why)}</span></li>`).join("")}</ul>`]]
       .filter(([, body]) => body).map(([h, body]) => `<div class="more-part"><h3>${esc(h)}</h3>${body}</div>`).join("");
     const reject = canDecide && owner ? `<div class="more-part"><button class="btn ghost danger" id="decide-reject">Reject this draft</button></div>` : "";
-    folds = rows.caption() + rows.editor() + rows.transcript() + rows.rules() + redoHTML(d, canDecide && owner)
+    folds = rows.caption() + rows.editor() + rows.slides() + rows.transcript() + rows.rules() + redoHTML(d, canDecide && owner)
       + foldHTML("production", "more", "More details", "", more + reject);
   } else {
     folds = Object.values(rows).map((f) => f()).join("") + redoHTML(d, canDecide && owner);
@@ -2558,8 +2590,8 @@ function productionPageHTML(d) {
     <section class="d-sec" id="notes-sec"><h2>Your notes for the editor${notesNow ? ` <span class="count-pill">${notesNow}</span>` : ""}</h2>
       ${noteListHTML(d.notes, d.version, true)}
       ${d.video ? `<div class="row note-jump-row"><button class="btn" id="note-jump">Add a note at a moment</button></div>
-        <p class="muted small">Play, pause where it needs a change, and write it in the box under the video: the note is pinned to that moment.</p>`
-        : composerRowHTML("What should change? e.g. \"Cut the first two seconds\"")}
+        <p class="muted small">Play, pause where it needs a change, and write it in the box under the video: the note is pinned to that moment.${isSlideshow(d) ? " A note can change how long a slide is up, the order or the music." : ""}</p>`
+        : composerRowHTML("What should change? e.g. \"Cut the first two seconds\"", !isSlideshow(d))}
     </section>
     <section class="folds">${folds}</section>`;
 }
@@ -2704,10 +2736,12 @@ function redoHTML(d, can) {
   const others = state.items.filter((i) => i.kind === "production" && i.status === "ready" && i.id !== d.id && !i.archived).length;
   return foldHTML("production", "redo", "Edit it again", "",
     `<p class="muted small">${isCarousel(d) ? "The slides rewritten in the current style guide and laid out again."
+      : isSlideshow(d) ? "The slides timed again from their words, with the music picked again."
       : "A fresh edit of the same idea with the latest titles, captions and music taste."} Your notes and the earlier versions stay. It costs about what a send-back does.</p>
      <div class="row"><button class="btn" id="redo-one">Edit this one again</button>
      ${others ? `<button class="btn" id="redo-all">Edit all ${esc(others + 1)} waiting again</button>` : ""}</div>
      <p class="muted small">${isCarousel(d) ? "Start over rewrites the slides from the plan, not from this version."
+      : isSlideshow(d) ? "Start over goes back to the carousel's order and timing, with the music picked again."
       : "Start over makes a brand-new edit from your footage, as if it were the first draft. This cut and its fixes are set aside; your notes stay."}</p>
      <div class="row"><button class="btn" id="redo-fresh">Start over</button></div>`);
 }
@@ -2739,7 +2773,7 @@ function renderTileMeta(d) {
         <input id="quick-note" maxlength="2000" autocomplete="off" enterkeyhint="send" placeholder="Note at ${esc(at)}"></label>
       <button class="btn" id="quick-add">Add</button>
     </div>
-    ${d.kind === "production" && isOwner() ? `<label class="check small quick-remember" title="Adds it to the playbook the editor follows on every future edit"><input type="checkbox" id="note-remember"> Remember for future edits</label>` : ""}
+    ${d.kind === "production" && !isSlideshow(d) && isOwner() ? `<label class="check small quick-remember" title="Adds it to the playbook the editor follows on every future edit"><input type="checkbox" id="note-remember"> Remember for future edits</label>` : ""}
     <div class="quick-status small" id="quick-status" aria-live="polite"></div>
     <div class="tile-links"><button class="link" id="play-full">Play full screen</button>
       <button class="link watch-close" id="watch-close">Close video</button></div>` : ""}`;
@@ -2924,6 +2958,8 @@ async function detailClick(e) {
   }
   const planLink = e.target.closest("[data-open-plan-idea]");
   if (planLink) { openPlanIdea(Number(planLink.dataset.openPlanIdea)); return; }
+  const prodLink = e.target.closest("[data-open-production]");
+  if (prodLink) { openProduction(Number(prodLink.dataset.openProduction)); return; }
   const id = e.target.closest("button")?.id || e.target.id;
   const d = state.detail;
   const fixNote = e.target.closest("[data-fix-note]"), fixShot = e.target.closest("[data-fix-shot]");
@@ -3023,6 +3059,13 @@ async function detailClick(e) {
       mark("redo");
       toast("Studio is editing it again. The new version comes back to To review.");
       await nextForReview();
+    } else if (id === "make-slideshow") {
+      const r = await api(`/api/production/${d.id}/slideshow`, {});
+      mark("slideshow_made", { again: !r.made });
+      toast(r.made ? "Studio is making the slideshow Reel. It comes back to To review as its own draft."
+        : "It's already made. Opening it.");
+      await sync();
+      if (r.made) await loadDetail(); else openProduction(r.id);
     } else if (id === "redo-fresh") {
       await api(`/api/production/${d.id}/decision`, { decision: "fresh" });
       mark("start_over");

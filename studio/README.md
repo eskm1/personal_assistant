@@ -690,6 +690,29 @@ lays them out again as the next version; **Approve** and they're copied to OneDr
 in a folder named after the post (01.png, 02.png ... and caption.txt), and **Download (.zip)** has them too.
 Writing slides costs a few cents; laying them out is free.
 
+**Slideshow Reels (a carousel with music).** Instagram doesn't let Studio add music to a carousel, so a carousel
+can also go out as a Reel with one of your Epidemic Sound tracks in it. On a carousel waiting for review (or
+approved), **Make a slideshow Reel** (you only, under the notes) makes a new draft of the same idea; it comes
+back to **To review** as a draft of its own, and the carousel stays exactly as it is (you can still post it from
+the Instagram app with its own music). Studio (`slideshow.py`) lays the slides out again for the Reel, the same
+words and pictures without the carousel's **Swipe** cue and slide numbers (a slide whose picture can't be had again
+keeps the carousel's own, and the draft's checks say so), and puts each in a 9:16 frame on the Urban Makers
+green, kept clear of Instagram's buttons and words at the top, bottom and right, each up long enough to read its
+words (about 0.3 s plus 0.06 s a letter, 2.5 to 6 seconds, the cover a little longer), with short crossfades and
+a very slow push-in that never crops a slide (`STUDIO_SLIDESHOW_PUSH_IN=0` keeps them still). Then the usual
+close: a short beat, the end card with the post's ask and @urbanmakers_sg, the music fading out. The music is
+picked as for any Reel (your taste; a track link pasted in a note, on the carousel or this draft, picks exactly
+that track) and set for a post with no voice; there are no captions. It's reviewed like any Reel: Studio's read,
+its watch-through (each slide up long enough to read; there's no voice to listen back to) and its own fixes
+(the music level, a slide's time or the order). **Remember for future edits** isn't offered on a slideshow's
+notes: they're about its slides and music, not the Reels' editing playbook. A note can change how long a slide is up, the order (or leave a
+slide out) or the music; then **Send back**, **Approve**, **Schedule** and it posts as a Reel. The slides' words
+and pictures are the carousel's: change them there and make a new slideshow. Pressing **Make a slideshow Reel**
+again opens the one already made. Cost: the same calls as a Reel's draft without its edit plan, so a little less
+than a Reel: the music pick, Studio's read and any of Studio's own fixes (shown on the draft as usual); a
+send-back with notes adds one short call (about a cent); a note that's only a track link adds none. Studio can't line slide changes up with the music's beats yet
+(Epidemic Sound's tools don't give Studio a track's beats), so slides change on their reading times.
+
 **AI concept pictures.** For a design idea you haven't built yet (Ideas and Know-how posts mostly), a slide can
 show an AI picture of it instead of a photo. In the slide's picture buttons press **AI concept** and say in a few
 words what it should show ("a reading corner by the window, light oak and linen"); Claude's Write slides may

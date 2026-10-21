@@ -3,8 +3,8 @@ Studio fixes its own list before Bryan sees a draft ("the fixes should be someth
 editor catches before giving me the reviewed version"; 2026-10-20: "Please try to ensure the best
 possible quality before the video comes to me").
 
-After a draft renders (editor.py) or a carousel is laid out (carousel.py), Studio's read
-(draft_review.py) runs. Each fix in it says whether the editor can make it itself (editor_can_fix)
+After a draft renders (editor.py; a slideshow Reel, slideshow.py) or a carousel is laid out
+(carousel.py), Studio's read (draft_review.py) runs. Each fix in it says whether the editor can make it itself (editor_can_fix)
 and, if so, exactly how: a machine action (fix_actions.py: a caption word, a stutter, a pause, a
 cut point, a card, the hook, the music level, a slide's words...). While there are fixes the
 editor can make, up to settings.SELF_FIX_ROUNDS rounds (default 3):
@@ -12,7 +12,8 @@ editor can make, up to settings.SELF_FIX_ROUNDS rounds (default 3):
   1. the actions are made directly on the draft's own edit plan ("patches": no new edit plan, so
      nothing else in the cut changes) and it's rendered again as the SAME version, to a file of its
      own, with every code check; what no action can make (or a patch didn't fix) goes to the editor
-     once, all together, for a new plan (editor.self_revise / carousel.self_revise), the old way;
+     once, all together, for a new plan (editor.self_revise / carousel.self_revise), the old way; a slideshow
+     Reel's patch is the music level, its re-plan the slides' times and order (slideshow.patch / self_revise);
   2. Studio reads it again;
   3. the round is judged fix by fix: kept when the fixes it made are gone from the new read
      (matched by area, moment and words, not exact wording) and nothing that matters got worse
@@ -281,6 +282,7 @@ def deliver(conn, production_id: int, client=None, find_track=None, rounds: int 
     cap = settings.SELF_FIX_MAX_USD
     row = _row(conn, production_id)
     scope = "carousel" if row.get("format") == "carousel" else "reel"
+    slides = row.get("format") == "slideshow"  # a Reel of a carousel's slides: its own patches and re-plan
     whole = f"production:{production_id}"
     base = usage.total_for(conn, whole)
     first_spell = float(json.loads(row.get("edl") or "{}").get("spell_usd") or 0) if scope == "reel" else 0.0
@@ -299,7 +301,7 @@ def deliver(conn, production_id: int, client=None, find_track=None, rounds: int 
     best, best_row = review, row
     tries: list[dict] = []
     done, stopped = 0, None
-    replan_usd = _edit_usd(conn, production_id) if scope == "reel" else 0.15
+    replan_usd = 0.05 if slides else _edit_usd(conn, production_id) if scope == "reel" else 0.15
     while best is not None:
         todo = [(n, f) for n, f in enumerate(best.get("fixes", []), 1) if f in fixable(best)]
         plan = [(n, f, _method(f, tries)) for n, f in todo]
@@ -327,6 +329,9 @@ def deliver(conn, production_id: int, client=None, find_track=None, rounds: int 
                 if scope == "carousel":
                     import carousel
                     made, results = carousel.patch(conn, production_id, actions, done)
+                elif slides:
+                    import slideshow
+                    made, results = slideshow.patch(conn, production_id, actions, done, client, find_track)
                 else:
                     import editor
                     made, results = editor.self_patch(conn, production_id, actions, done, client, find_track)
@@ -335,6 +340,9 @@ def deliver(conn, production_id: int, client=None, find_track=None, rounds: int 
                 if scope == "carousel":
                     import carousel
                     made = carousel.self_revise(conn, production_id, notes, done, client)
+                elif slides:
+                    import slideshow
+                    made = slideshow.self_revise(conn, production_id, notes, done, client, find_track)
                 else:
                     import editor
                     made = editor.self_revise(conn, production_id, notes, done, client, find_track)
@@ -398,8 +406,9 @@ def deliver(conn, production_id: int, client=None, find_track=None, rounds: int 
         entry.update(kept=True, fixed=len(fixed))
         history["rounds"].append(entry)
         history["fixed"] += fixed
-        learned = learning.learn([{"rule": f.get("rule"), "same_rule": f.get("same_rule")} for _, f in gone if f.get("rule")],
-                                 scope, "studio")
+        # A slideshow's rules (slide times, its music) aren't the Reels' editing rules: not learned.
+        learned = [] if slides else learning.learn(
+            [{"rule": f.get("rule"), "same_rule": f.get("same_rule")} for _, f in gone if f.get("rule")], scope, "studio")
         entry["rules"] = [f"R{r['id']}" for r in learned]
         _remove(_files(best_row), _files(new_row))
         best, best_row = new, new_row
@@ -421,7 +430,7 @@ def deliver(conn, production_id: int, client=None, find_track=None, rounds: int 
     conn.execute("UPDATE productions SET status = 'ready', self_fix = ?, updated_at = ? WHERE id = ?",
                  (json.dumps(history, ensure_ascii=False), catalog.now(), production_id))
     conn.commit()
-    if best is not None and count:
+    if best is not None and count and not slides:
         learning.log_draft(conn, production_id, row["version"], scope, caught, history["fixed_count"],
                            history["left"], done, usd)
     if done:

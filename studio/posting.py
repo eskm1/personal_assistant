@@ -217,11 +217,16 @@ def _production(conn, production_id: int):
 
 
 def _kind(prod) -> str:
+    """A carousel posts its slides; everything else is a Reel (a slideshow Reel of a carousel's slides too)."""
     return "carousel" if prod["format"] == "carousel" else "reel"
 
 
 def _idea_remote(conn, production_id: int) -> int | None:
     row = conn.execute("SELECT remote_id FROM ideas WHERE production_id = ? AND remote_id IS NOT NULL", (production_id,)).fetchone()
+    if row is None:  # a slideshow Reel: the idea is its carousel's, which still points at the carousel
+        row = conn.execute("""SELECT i.remote_id FROM productions p JOIN ideas i ON i.id = json_extract(p.plan, '$.idea_id')
+                              WHERE p.id = ? AND p.format = 'slideshow' AND i.remote_id IS NOT NULL""",
+                           (production_id,)).fetchone()
     return row["remote_id"] if row else None
 
 

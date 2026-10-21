@@ -2086,6 +2086,27 @@ def caption_shade(chunks: list[dict], paper: list[tuple[float, float]] = (), joi
     return [(round(s, 3), round(e, 3)) for s, e in runs if e - s >= 0.3]
 
 
+def _overlay_assets(project: Path, font: str | None = None, serif: bool = False) -> list[str]:
+    """GSAP and the bundled fonts copied into a HyperFrames project: the caption font (caption_font) and,
+    with serif, the gallery look's serif (titles, the end card). Returns their @font-face rules."""
+    shutil.copy(render.RENDER_DIR / "node_modules" / "gsap" / "dist" / "gsap.min.js", project)
+    css = []
+    for n, (path, weight) in enumerate(caption_font(font)[1]):
+        name = "caption.woff2" if n == 0 else f"caption-{n + 1}.woff2"
+        shutil.copy(path, project / name)
+        css.append(f'@font-face{{font-family:"Studio Caption";src:url("{name}") format("woff2");'
+                   f'font-weight:{weight};font-display:block}}')
+    if serif:
+        _, regular, italic = TITLE_FONTS[TITLE_STYLES["gallery"]["serif"]]
+        shutil.copy(regular, project / "serif.woff2")
+        shutil.copy(italic, project / "serif-italic.woff2")
+        css.append('@font-face{font-family:"Studio Serif";src:url("serif.woff2") format("woff2");font-weight:400;'
+                   'font-style:normal;font-display:block}'
+                   '@font-face{font-family:"Studio Serif";src:url("serif-italic.woff2") format("woff2");'
+                   'font-weight:400;font-style:italic;font-display:block}')
+    return css
+
+
 def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
                    graphics: list[dict] = (), accent: str = "#f5a524", fmt: str = "webm", font: str | None = None,
                    paper: list[tuple[float, float]] = (), style: str | None = None, hook_italic: str | None = None,
@@ -2102,27 +2123,12 @@ def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
     if end:
         chunks = [{**c, "end": min(c["end"], end["start"])} for c in chunks if c["start"] < end["start"] - 0.1]
     graphics = [g for g in graphics if g.get("style") in ("card", "callout")]
-    family, faces = caption_font(font)
     hook_plain, auto_italic = title_parts(hook)
     hook_italic = auto_italic if hook_italic is None else hook_italic
     with tempfile.TemporaryDirectory(prefix="studio-overlay-") as tmp:
         project = Path(tmp) / "overlay"
         project.mkdir()
-        shutil.copy(render.RENDER_DIR / "node_modules" / "gsap" / "dist" / "gsap.min.js", project)
-        css = []
-        for n, (path, weight) in enumerate(faces):
-            name = "caption.woff2" if n == 0 else f"caption-{n + 1}.woff2"
-            shutil.copy(path, project / name)
-            css.append(f'@font-face{{font-family:"Studio Caption";src:url("{name}") format("woff2");'
-                       f'font-weight:{weight};font-display:block}}')
-        if style == "gallery" or end:
-            _, regular, italic = TITLE_FONTS[TITLE_STYLES["gallery"]["serif"]]
-            shutil.copy(regular, project / "serif.woff2")
-            shutil.copy(italic, project / "serif-italic.woff2")
-            css.append('@font-face{font-family:"Studio Serif";src:url("serif.woff2") format("woff2");font-weight:400;'
-                       'font-style:normal;font-display:block}'
-                       '@font-face{font-family:"Studio Serif";src:url("serif-italic.woff2") format("woff2");'
-                       'font-weight:400;font-style:italic;font-display:block}')
+        css = _overlay_assets(project, font, serif=style == "gallery" or bool(end))
         clips, animations = [], []
         if hook_plain:
             # The hook gives way to the first card or callout.
@@ -2748,6 +2754,18 @@ def clear_of_end(graphics: list[dict], limit: float) -> tuple[list[dict], list[s
     return sorted(out, key=lambda g: g.get("start", 0)), notes
 
 
+def music_brief(music_plan: dict, chosen: dict | None = None) -> str:
+    """What the music search is asked for: exactly the track Bryan linked or the team picked, else the
+    plan's mood, search words and tempo (music.find_track adds his taste)."""
+    if chosen and chosen.get("url"):
+        return (f"Use exactly the track Bryan linked: {chosen['url']} (Epidemic Sound track id "
+                f"{chosen['track_id']}). Look it up by that id or link; don't swap in another track")
+    if chosen:
+        return (f"Use exactly this track the team picked: \"{chosen['title']}\" by {chosen['artist']} "
+                f"(recording id {chosen['recording_id']})")
+    return f"{music_plan['mood']}; search: {music_plan['search']}; about {music_plan['tempo_bpm']:.0f} BPM"
+
+
 def _same_music(production: dict, plan: dict, find_track=None):
     """find_track and plan for a render that keeps the draft's music (a re-render, or one of
     Studio's own fix rounds): the same file when it's still there, else the same track."""
@@ -2970,12 +2988,7 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         music_info, music_file = {"mood": edl["music"]["mood"], "tempo_bpm": edl["music"]["tempo_bpm"]}, None
         chosen = (plan.get("music_plan") or {}).get("chosen")
         if music.allowed_for(production["brand"]) and settings.EPIDEMIC_SOUND_API_KEY:
-            brief = (f"Use exactly the track Bryan linked: {chosen['url']} (Epidemic Sound track id "
-                     f"{chosen['track_id']}). Look it up by that id or link; don't swap in another track"
-                     if chosen and chosen.get("url") else
-                     f"Use exactly this track the team picked: \"{chosen['title']}\" by {chosen['artist']} "
-                     f"(recording id {chosen['recording_id']})" if chosen else
-                     f"{edl['music']['mood']}; search: {edl['music']['search']}; about {edl['music']['tempo_bpm']:.0f} BPM")
+            brief = music_brief(edl["music"], chosen)
             try:
                 music_file, track = (find_track or music.find_track)(
                     brief, total, ROOT / "Music", ref=f"production:{production_id}")

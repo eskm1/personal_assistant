@@ -8,7 +8,9 @@ pinned to a moment), and what already works.
 A carousel (format 'carousel') gets its own read: Claude looks at every slide image and the
 slide text, and checks the words are big enough to read on a phone, the spelling, that the
 claims are sensible, that the ask uses only the offers listed in the planner, and that no
-place name or address appears. Its fixes name a slide instead of a moment.
+place name or address appears. Its fixes name a slide instead of a moment. A slideshow Reel (slideshow.py: a
+carousel's slides with music) gets the Reel's read with its own material (_slideshow_context: the slides and their
+times, no voice or captions, what its editor can change).
 
 One Claude call per draft version, a few cents. A failed review never fails the draft:
 it's logged, the draft stays ready, and the dashboard offers "Get Studio's read".
@@ -594,6 +596,64 @@ def _context(conn, production: dict) -> str:
     return "\n\n".join(lines)
 
 
+def _slideshow_context(conn, production: dict) -> str:
+    """A slideshow Reel's material (slideshow.py): the carousel's slides on the Reel's clock, the close, the
+    music and the checks, and what the editor can change in one (no voice, no captions, no cut list)."""
+    edl = json.loads(production.get("edl") or "{}")
+    plan = json.loads(production.get("plan") or "{}")
+    qa = json.loads(production.get("qa") or "{}")
+    music_info = json.loads(production.get("music") or "{}")
+    ss = edl.get("slideshow") or {}
+    total = production.get("duration") or 0
+    lines = [f"Post: {production['title']}, a slideshow Reel: the carousel's slides one after another on the brand "
+             f"background, with music and no voice, draft v{production['version']}, {total:.1f} seconds.",
+             "There's no voice and no captions track: the words are on the slides. Judge \"captions\" as the slides' "
+             "words being easy to read in the time each is up, \"sound\" as the music alone, and the hook as the "
+             "cover (the first slide)."]
+    if plan.get("hook"):
+        lines.append(f"Planned hook: {plan['hook']}")
+    if plan.get("cta"):
+        lines.append(f"Call to action: {plan['cta']}")
+    lines.append("Slides (the order shown: start-end seconds, slide number, its words):\n" + "\n".join(
+        f"  {s['start']:.1f}-{s['start'] + s['seconds']:.1f}s: slide {s['n']}"
+        + (f" ({s['role']})" if s.get("role") else "") + f": {s['text']}" for s in ss.get("slides") or []))
+    lines.append(f"Each slide crossfades into the next over {ss.get('fade', 0.45):.2f}s"
+                 + (", slowly pushed in" if (ss.get("push_in") or 1) > 1 else "") + ".")
+    close = edl.get("close") or {}
+    card = close.get("card") or {}
+    if close.get("at") is not None:
+        lines.append(f"The close (on purpose, not dead air): the last slide stays up {close.get('tail', 0):.1f}s more, "
+                     + (f"then the Urban Makers end card from {close['at']:.1f}s for {card.get('seconds', 0):.1f}s "
+                        f"(the mark, {card.get('handle') or 'no handle'}" + (f", \"{card['ask']}\"" if card.get("ask") else "")
+                        + ")" if card else "then it ends") + ", while the music fades out.")
+    checks = []
+    if qa.get("lufs") is not None:
+        checks.append(f"loudness {qa['lufs']:.1f} LUFS (target -14)")
+    did = [c["did"] if isinstance(c, dict) else str(c) for c in qa.get("checks") or []]
+    if did:
+        checks.append("Studio's own checks already " + "; ".join(did))
+    lines.append("Checks: " + ("; ".join(checks) or "none ran"))
+    m = edl.get("music") or {}
+    if music_info.get("source") == "epidemic":
+        lines.append(f"Music: \"{music_info.get('title')}\" by {music_info.get('artist')} ({m.get('mood')}), "
+                     f"level {m.get('volume_db', -16)} dB, carrying the post on its own.")
+    else:
+        lines.append(f"Music: none in the file ({music_info.get('note') or music_info.get('error') or 'none found'}).")
+    lines.append("What Studio's editor can change in a slideshow Reel: a slide's time on screen, the order of the "
+                 "slides (or leaving one out), the music track and its level. A time, order or track change is "
+                 "editor_can_fix with action replan (reason: what to change); the music level is music_level. A "
+                 "slide's words, spelling or picture belong to the carousel: those fixes are not editor_can_fix "
+                 "(for_bryan \"message\"), and \"what\" says to change it on the carousel.")
+    if edl.get("summary"):
+        lines.append(f"The editor's own summary: {edl['summary']}")
+    asked = conn.execute("""SELECT body FROM feedback WHERE target = 'production' AND target_id = ?
+                            AND version = ? ORDER BY id""", (production["id"], production["version"] - 1)).fetchall()
+    if asked:
+        lines.append("Bryan asked for these changes on the last version (done in this draft; never suggest "
+                     "undoing them):\n" + "\n".join(f"  - {r['body']}" for r in asked))
+    return "\n\n".join(lines)
+
+
 def _cut_words(cuts: list[dict], clips: dict[int, dict], total: float) -> str:
     """What Bryan said that the cut left out: at each join inside one clip (not hesitations or
     stutters), and just before the draft's start and after its end, so the read can ask for words
@@ -723,8 +783,8 @@ def run(conn, production_id: int, client=None, ref: str | None = None) -> dict:
     # thread while Claude reads; its flags join the read's fixes (final_check.merge).
     import final_check
     pending = final_check.start(conn, production)
-    text = _context(conn, production)
     edl = json.loads(production["edl"])
+    text = _slideshow_context(conn, production) if edl.get("slideshow") else _context(conn, production)
     grid = [total * (i + 0.5) / STILLS for i in range(STILLS)]
     extra = [round((d["start"] + d["end"]) / 2, 2) for d in inserts(edl)
              if not any(d["start"] <= t <= d["end"] for t in grid)]

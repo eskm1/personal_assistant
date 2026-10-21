@@ -34,6 +34,7 @@ import cloud_sync
 import settings
 import playbook
 import previews
+import slideshow
 import usage
 import webassets
 import wording
@@ -611,7 +612,9 @@ def _carousel_detail(row: sqlite3.Row) -> dict:
                  "concepts": {"finished": finished, "per_image_usd": settings.IMAGE_COST_USD,
                               "options": len(concepts.OPTIONS), "why_not": concepts.available()},
                  "music": None, "qa": None, "resolve": None, "slides": slides, **_posting_detail(row),
-                 "download": f"/api/production/{row['id']}/download" if pngs else None})
+                 "download": f"/api/production/{row['id']}/download" if pngs else None,
+                 # Bryan's "Make a slideshow Reel": can it be made now, and the one made (slideshow.py)
+                 "slideshow": slideshow.carousel_detail(db(), row) if is_owner() else None})
     clip_ids = json.loads(row["source_clips"] or "[]")
     if clip_ids:
         marks = ",".join("?" * len(clip_ids))
@@ -811,6 +814,8 @@ def production_detail(production_id: int):
                  "music": json.loads(row["music"]) if row["music"] else None,
                  "qa": {k: v for k, v in json.loads(row["qa"]).items() if k != "heard"} if row["qa"] else None,
                  "resolve": _resolve_state(dict(row)) if edl else None, **_posting_detail(row)})
+    if row["format"] == slideshow.FORMAT:  # a carousel's slides with music: its slides' times, no Resolve project
+        item.update(slideshow=slideshow.detail(db(), row), resolve=None, shot_list=False)
     return jsonify(item)
 
 
@@ -1019,6 +1024,9 @@ def add_note(target: str, target_id: int):
         return jsonify({"error": "empty note"}), 400
     at = (request.json or {}).get("at_seconds")
     remember = bool((request.json or {}).get("remember")) and is_owner()
+    if remember and target == "production":  # a slideshow Reel's notes (times, order, music) aren't Reel editing rules
+        fmt = db().execute("SELECT format FROM productions WHERE id = ?", (target_id,)).fetchone()
+        remember = not (fmt and fmt["format"] == slideshow.FORMAT)
     slide = (request.json or {}).get("slide")
     if slide is not None:  # a carousel note about one slide
         row = db().execute("SELECT format, slides, plan FROM productions WHERE id = ?", (target_id,)).fetchone() \
@@ -1269,6 +1277,22 @@ def decide(production_id: int):
         return jsonify({"error": "unknown decision"}), 400
     log.info("Production %s: %s", production_id, decision)
     return jsonify({"ok": True})
+
+
+@app.post("/api/production/<int:production_id>/slideshow")
+@owner_only
+def make_slideshow(production_id: int):
+    """A carousel's slides made into a Reel with music, as a new draft of the same idea (slideshow.py); the
+    carousel stays as it is. Pressed again, it answers with the one already made."""
+    row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    if row is None:
+        abort(404)
+    try:
+        new_id, made = slideshow.make(db(), production_id)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 400
+    log.info("Production %s: slideshow Reel %s%s", production_id, new_id, "" if made else " (already made)")
+    return jsonify({"ok": True, "id": new_id, "made": made})
 
 
 @app.post("/api/productions/redo")

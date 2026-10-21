@@ -78,7 +78,8 @@ def freed_so_far() -> int:
 
 def production_files(row) -> list[Path]:
     """Every file and folder of a production's drafts in Renders (all versions, fix rounds,
-    Resolve projects, carousel slides), except its current still: that stays as the record."""
+    Resolve projects, carousel slides, a slideshow Reel's copies of its slides), except its current still:
+    that stays as the record."""
     pid = int(row["id"])
     keep = Path(row["thumb_path"]).resolve() if row["thumb_path"] else None
     out = []
@@ -86,7 +87,8 @@ def production_files(row) -> list[Path]:
         return out
     for p in RENDERS.iterdir():
         name = p.name
-        if not (name.startswith(f"production_{pid}_v") or name.startswith(f"carousel_{pid}_v")):
+        if not (name.startswith(f"production_{pid}_v") or name.startswith(f"carousel_{pid}_v")
+                or name == f"slideshow_{pid}"):
             continue
         if p.is_dir() and keep and keep.is_relative_to(p.resolve()):
             out.extend(f for f in p.iterdir() if f.resolve() != keep)   # a carousel's folder: all but its still

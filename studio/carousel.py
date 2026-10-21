@@ -376,8 +376,10 @@ def _logo() -> str:
     return re.sub(r'\s(width|height)="[^"]*"', "", svg, count=2).replace("<svg", '<svg aria-hidden="true"', 1)
 
 
-def slide_html(n: int, total: int, slide: dict, picture: Path | None, mark: str = "") -> str:
-    """One slide as a section of the page (layout by role, and whether it has a picture)."""
+def slide_html(n: int, total: int, slide: dict, picture: Path | None, mark: str = "", reel: bool = False) -> str:
+    """One slide as a section of the page (layout by role, and whether it has a picture). reel: laid out for a
+    slideshow Reel (slideshow.py), without what only makes sense in a carousel: the "Swipe" cue and the "2/6"
+    counter. The Urban Makers mark stays."""
     role = slide["role"]
     layout = f"{role}-{'photo' if picture else 'text'}"
     h_px, b_px = SIZES[layout]
@@ -389,7 +391,7 @@ def slide_html(n: int, total: int, slide: dict, picture: Path | None, mark: str 
         parts.append('<div class="shade-top"></div>')
         parts.append('<div class="panel"></div>' if split else '<div class="shade"></div>')
     top_mark = f'<span class="mark">{_logo()}Urban Makers</span>' if role != "ask" else "<span></span>"
-    parts.append(f'<div class="top">{top_mark}<span class="num">{n}/{total}</span></div>')
+    parts.append(f'<div class="top">{top_mark}' + ("" if reel else f'<span class="num">{n}/{total}</span>') + "</div>")
     if mark:
         parts.append(f'<span class="tag">{html.escape(mark)}</span>')
     copy = []
@@ -400,7 +402,7 @@ def slide_html(n: int, total: int, slide: dict, picture: Path | None, mark: str 
     if slide["body"]:
         copy.append(f'<div class="b">{_lines(slide["body"])}</div>')
     parts.append(f'<div class="copy">{"".join(copy)}</div>')
-    if role == "cover" and total > 1:
+    if role == "cover" and total > 1 and not reel:
         parts.append(f'<div class="swipe">Swipe{_ARROW}</div>')
     if role == "ask" and not picture:
         parts.append(f'<div class="sign">{_logo()}Urban Makers</div>')
@@ -408,10 +410,12 @@ def slide_html(n: int, total: int, slide: dict, picture: Path | None, mark: str 
             f'data-h="{h_px}" data-b="{b_px}">{"".join(parts)}</section>')
 
 
-def page_html(slides: list[dict], pictures: list[tuple[Path | None, str]]) -> str:
-    """The whole carousel as one page: every slide 1080x1350, one under the other."""
+def page_html(slides: list[dict], pictures: list[tuple[Path | None, str]], reel: bool = False) -> str:
+    """The whole carousel as one page: every slide 1080x1350, one under the other (reel: for a slideshow Reel,
+    slide_html)."""
     css = _CSS % {"display": FONTS["display"].resolve().as_uri(), "text": FONTS["text"].resolve().as_uri(), **COLOURS}
-    body = "".join(slide_html(n, len(slides), s, pic, mark) for n, (s, (pic, mark)) in enumerate(zip(slides, pictures), 1))
+    body = "".join(slide_html(n, len(slides), s, pic, mark, reel)
+                   for n, (s, (pic, mark)) in enumerate(zip(slides, pictures), 1))
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><style>{css}</style></head>'
             f'<body>{body}<script>{_FIT % {"min": FIT_MIN}}</script></body></html>')
 
@@ -439,15 +443,16 @@ def shoot(page: str, out_dir: Path) -> dict:
     return report
 
 
-def lay_out(conn, slides: list[dict], out_dir: Path) -> dict:
-    """Pictures, layout and PNGs for these slides. Returns {files, layout, pictures}."""
+def lay_out(conn, slides: list[dict], out_dir: Path, reel: bool = False) -> dict:
+    """Pictures, layout and PNGs for these slides (reel: for a slideshow Reel, no Swipe cue or counter).
+    Returns {files, layout, pictures}."""
     pictures, notes = [], []
     for n, s in enumerate(slides, 1):
         path, mark, why = slide_images.picture(s["image"], conn)
         pictures.append((path, mark))
         notes.append({"n": n, "source": s["image"].get("source", "text") if path else "text",
                       **({"missing": why} if why else {})})
-    report = shoot(page_html(slides, pictures), out_dir)
+    report = shoot(page_html(slides, pictures, reel), out_dir)
     files = [s["file"] for s in report["slides"]]
     if len(files) != len(slides) or not all(Path(f).is_file() for f in files):
         raise RuntimeError("Chrome didn't save every slide")

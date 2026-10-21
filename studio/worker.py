@@ -399,6 +399,9 @@ def run_editor(stop_after_one: bool = False) -> None:
             if row["format"] == "carousel":  # slides laid out as PNGs (carousel.py), not a video edit
                 import carousel
                 carousel.run(conn, production_id)
+            elif row["format"] == "slideshow":  # a carousel's slides as a Reel with music (slideshow.py)
+                import slideshow
+                slideshow.run(conn, production_id)
             else:
                 editor.edit(conn, production_id)
             notify.digest.add("draft")
@@ -683,6 +686,9 @@ def main() -> int:
         if row and row["format"] == "carousel":
             import carousel
             carousel.run(conn, args.edit)
+        elif row and row["format"] == "slideshow":
+            import slideshow
+            slideshow.run(conn, args.edit)
         else:
             import editor
             editor.edit(conn, args.edit)

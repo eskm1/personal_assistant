@@ -63,6 +63,8 @@ FEATURES = [
      "events": [("action", r"^home_film$"), ("click", r"^\.hm-bryan")]},
     {"key": "stage_menu", "name": "Review's More stages (phone)", "shipped": "2026-10-21",
      "events": [("action", r"^stage_menu$"), ("click", r"^#tabs-more$")]},
+    {"key": "slideshow", "name": "Make a slideshow Reel (a carousel with music)", "shipped": "2026-10-21",
+     "events": [("click", r"^#make-slideshow$"), ("action", r"^slideshow_made$")]},
 ]
 
 # The golden paths. Each step: alternatives (kind, regex on the target, or on the page for views[, detail k=v]).

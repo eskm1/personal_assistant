@@ -34,6 +34,9 @@ patches as any other fix (fix_actions: move_cut, drop_words, restore_words, grap
 nothing smaller fits) and judge them the same way: a round is kept when the flag is gone from the
 next check and nothing got worse. What can't be fixed is left for Bryan with its left_because.
 
+A slideshow Reel (slideshow.py: a carousel's slides with music) has no voice, so it's only watched: each slide is
+held to the same reading time (up to slideshow.MAX_SECONDS, the most a slide gets), and the end card as on any Reel.
+
 Reels only. It runs on its own thread while Claude reads the draft (start, then merge), so a draft
 waits no longer for it; settings.FINAL_CHECK = False turns it off. It never breaks a draft: anything
 that goes wrong is logged and the read carries on without it.
@@ -149,7 +152,7 @@ def start(conn, production: dict) -> Future | None:
         return None
     try:
         job = _job(conn, production)
-        if not job["edl"].get("cuts") or not job["video"].exists():
+        if not (job["edl"].get("cuts") or job["edl"].get("slideshow")) or not job["video"].exists():
             return None
     except Exception as e:
         log.warning("Studio couldn't start listening back to production %s: %s: %s", production.get("id"),
@@ -179,12 +182,15 @@ def check(job: dict) -> dict:
     heard (where the heard words came from), frames}. Each half that fails is logged and skipped."""
     t0 = time.time()
     out = {"flags": [], "listened": False, "watched": False, "heard": None, "frames": 0}
-    try:
-        flags, heard = listen(job)
-        out.update(listened=True, heard=heard)
-        out["flags"] += flags
-    except Exception as e:
-        log.warning("Studio couldn't listen back to production %s: %s: %s", job["id"], type(e).__name__, e)
+    if job["edl"].get("slideshow"):  # slides and music: no voice to listen back to
+        out["heard"] = "no voice"
+    else:
+        try:
+            flags, heard = listen(job)
+            out.update(listened=True, heard=heard)
+            out["flags"] += flags
+        except Exception as e:
+            log.warning("Studio couldn't listen back to production %s: %s: %s", job["id"], type(e).__name__, e)
     try:
         flags, frames = watch(job)
         out.update(watched=True, frames=frames)
@@ -557,7 +563,8 @@ def _text_box(text: str, sub: str, look: str, kind: str) -> tuple[float, float, 
 def shown(edl: dict, total: float) -> list[dict]:
     """What the draft shows over the footage, in time order: the hook and every graphic, each with
     {n (its number in the read, None for the hook), kind, style, start, end, text, box (None when
-    it fills the screen: a card, a full-screen drawing, the end card), g (the graphic)}."""
+    it fills the screen: a card, a full-screen drawing, the end card), g (the graphic)}; on a slideshow
+    Reel each slide too (kind "slide", n None, slide: its number)."""
     look = editor.draft_look(edl)["titles"]
     close = edl.get("close") or {}
     card = close.get("card")
@@ -588,6 +595,10 @@ def shown(edl: dict, total: float) -> list[dict]:
             out.append({"n": n, "kind": "callout", "style": style, "start": s, "end": e,
                         "text": " ".join(x for x in (title, sub) if x), "box": _text_box(title, sub, look, "callout"),
                         "g": g})
+    for x in (edl.get("slideshow") or {}).get("slides") or []:
+        out.append({"n": None, "kind": "slide", "style": "slide", "start": float(x["start"]),
+                    "end": float(x["start"]) + float(x["seconds"]), "text": x.get("text") or "", "box": None, "g": None,
+                    "slide": x["n"]})
     return sorted(out, key=lambda x: x["start"])
 
 
@@ -677,7 +688,15 @@ def watch(job: dict) -> tuple[list[dict], int]:
         if x["box"] is not None and _cover_run(faces, x["box"], x["start"], x["end"]) > COVER_SECONDS:
             out.append(_cover_fix(x, name, faces, graphics, clear_by))
         # Up too briefly, or gone before its words can be read
-        if x["kind"] != "hook" or x.get("cut_by"):
+        if x["kind"] == "slide":
+            import slideshow
+            need = min(_need(x["text"]), slideshow.MAX_SECONDS)
+            if length < need - 0.05:
+                out.append(_fix("too_fast", f"Leave slide {x['slide']} up longer ({need:.1f}s) at {_mmss(x['start'])}",
+                                f"It's up for {length:.1f}s; its words need about {need:.1f}s to read.", x["start"],
+                                x["end"], _action("replan", start=x["start"], end=x["end"],
+                                                  reason=f"slide {x['slide']} up {need:.1f}s"), x["text"], area="captions"))
+        elif x["kind"] != "hook" or x.get("cut_by"):
             need = _need(x["text"]) if x["text"] else FLASH
             if length < FLASH or length < need - 0.05:
                 out.append(_time_fix(x, name, length, need, graphics, clear_by))
