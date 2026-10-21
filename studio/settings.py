@@ -82,6 +82,9 @@ WHISPER_LANGUAGES = tuple(x.strip() for x in _env("WHISPER_LANGUAGES", "en,zh").
 ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")
 CLAUDE_MODEL = _env("STUDIO_CLAUDE_MODEL", "claude-opus-5-5")
 CLAUDE_EFFORT = _env("STUDIO_CLAUDE_EFFORT", "medium")
+# Studio's read of a draft (draft_review.py): the step that judges quality and lists the fixes. Bryan,
+# 2026-10-21: "stick to high then we re-evaluate" (low/medium/high/xhigh/max; higher = more thinking, more cost).
+READ_EFFORT = _env("STUDIO_READ_EFFORT", "high")
 BRANDS_FILE = _path("STUDIO_BRANDS_FILE", HERE / "brands.md")
 
 # ── AI concept images (carousels; concepts.py) ────────────────────────────────

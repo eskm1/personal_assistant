@@ -422,7 +422,7 @@ def run_carousel(conn, production: dict, client=None, ref: str | None = None) ->
     response = llm.final_message(
         client, model=settings.CLAUDE_MODEL, max_tokens=16000,
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
-        output_config={"effort": "low", "format": {"type": "json_schema", "schema": CAROUSEL_SCHEMA}},
+        output_config={"effort": settings.READ_EFFORT, "format": {"type": "json_schema", "schema": CAROUSEL_SCHEMA}},
         system=_CAROUSEL_SYSTEM.replace("{content_plan}", carousel._context_text())
         .replace("{fixable}", _FIXABLE.replace("{examples}", _CAROUSEL_FIXABLE)).replace("{actions}", _CAROUSEL_ACTIONS),
         messages=[{"role": "user", "content": content}],
@@ -725,7 +725,7 @@ def run(conn, production_id: int, client=None, ref: str | None = None) -> dict:
     response = llm.final_message(
         client, model=settings.CLAUDE_MODEL, max_tokens=16000,
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
-        output_config={"effort": "low", "format": {"type": "json_schema", "schema": SCHEMA}},
+        output_config={"effort": settings.READ_EFFORT, "format": {"type": "json_schema", "schema": SCHEMA}},
         system=_SYSTEM.replace("{playbook}", playbook.text())
         .replace("{fixable}", _FIXABLE.replace("{examples}", _REEL_FIXABLE)).replace("{actions}", _REEL_ACTIONS)
         .replace("{illustrate}", _ILLUSTRATE if settings.EDIT_SCENES and settings.EDIT_SCENES_MAX > 0 else _NO_ILLUSTRATE),
