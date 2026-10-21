@@ -1,7 +1,8 @@
 """Test media made at run time, so nothing large is committed: real speech (flite, through ffmpeg's flite
 filter) with known word edges, a person on a plain background (fixtures/person.jpg, the person cut out of
 OpenCV's Apache-2.0 sample photo messi5.jpg; OpenCV's face detector needs a real face, so this one small
-picture is committed), B-roll with no face, a warm music bed and a tone.
+picture is committed), B-roll with no face, a warm music bed and a tone, and a carousel's slides (flat colours,
+drawn with Pillow).
 
 The speech sets match the suites' originals exactly (same words, gaps and random seeds), so every
 check sees the same timings it was written against."""
@@ -248,3 +249,43 @@ def finalcheck_media(m: Path):
     shutil.copy(e / "words.json", m / "words.json")
     broll(m / "broll.mp4", 6)
     return m
+
+
+# ── A carousel's slides (the slideshow suite's) ───────────────────────────────
+def slide_pngs(folder: Path, headings, colours, font_size=70):
+    """Carousel slides as 1080x1350 PNGs (01.png, 02.png, ...), each one flat colour so a frame tells which slide
+    is up: a white frame at the slide's own margins, a dark line at its very edge (to see it's all there), and
+    "n. heading" in the carousel's Figtree. thumb.jpg is the last slide, small. Returns the files' paths."""
+    from PIL import Image, ImageDraw, ImageFont
+    folder.mkdir(parents=True, exist_ok=True)
+    fig = Path(__file__).resolve().parents[2] / "render" / "carousel" / "fonts" / "Figtree-latin.woff2"
+    try:
+        font = ImageFont.truetype(str(fig), font_size)
+    except Exception:
+        font = ImageFont.load_default()
+    files = []
+    for n, (heading, col) in enumerate(zip(headings, colours), 1):
+        im = Image.new("RGB", (1080, 1350), col)
+        d = ImageDraw.Draw(im)
+        d.rectangle([84, 84, 996, 1266], outline=(255, 255, 255), width=10)
+        d.rectangle([0, 0, 1079, 1349], outline=(20, 20, 20), width=4)
+        d.text((120, 500), f"{n}. {heading}", fill=(255, 255, 255), font=font)
+        f = folder / f"{n:02d}.png"; im.save(f); files.append(str(f))
+    im.convert("RGB").resize((540, 675)).save(folder / "thumb.jpg")
+    return files
+
+
+def flat_photo(out: Path, size=(1200, 900), colour=(150, 120, 90)):
+    """A plain photo (one colour), as an uploaded picture on the Studio machine."""
+    from PIL import Image
+    out.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", size, colour).save(out)
+    return out
+
+
+def tone_track(out: Path, seconds=90):
+    """A soft steady chord (262 + 392 Hz) as an mp3, the stand-in for a calm Epidemic track."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"sine=frequency=262:duration={seconds}", "-f", "lavfi",
+         "-i", f"sine=frequency=392:duration={seconds}", "-filter_complex", "amix=inputs=2", "-c:a", "libmp3lame", str(out)])
+    return out

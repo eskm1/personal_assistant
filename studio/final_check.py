@@ -479,6 +479,8 @@ def _broken(parts: list[dict], clips: dict, want: list[dict]) -> list[dict]:
             continue
         nxt = next((w for w in want if w["start"] >= p["d1"] - 0.01), None)
         words = editor._words(clips[p["clip_id"]])
+        if editor.ends_clause(words, last["i"]):
+            continue  # a whole clause, before an "and" or "so" that starts the next one
         free = editor.droppable(words)
         if nxt and nxt["clip_id"] == p["clip_id"] and nxt["i"] > last["i"] and all(
                 k in free for k in range(last["i"] + 1, nxt["i"])):
@@ -518,6 +520,8 @@ def _ending(parts: list[dict], clips: dict, want: list[dict]) -> list[dict]:
         return []
     p = parts[last["piece"]]
     words = editor._words(clips[last["clip_id"]])
+    if editor.ends_clause(words, last["i"]):  # "...left there | and ...": a whole clause
+        return []
     rest = editor._rest_of_sentence(words, words[last["i"]])
     t = p["d1"]
     action = (_action("restore_words", start=t, **{"from": " ".join(w["word"].strip() for w in rest)}) if rest

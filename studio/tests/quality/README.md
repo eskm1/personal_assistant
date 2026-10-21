@@ -12,10 +12,10 @@ python tests/quality/run.py --jobs 2 --keep # fewer at once; keep the logs and f
 python tests/quality/suite_cuts.py          # one suite on its own (STUDIO_QUALITY_KEEP=1 keeps its folder)
 ```
 
-How long: about 6,800 CPU-seconds in all, most of it real renders (HyperFrames overlays and 1080x1920
+How long: about 7,800 CPU-seconds in all, most of it real renders (HyperFrames overlays and 1080x1920
 encodes); `finalcheck` is over half of it and runs its renders one after another. On a 4-vCPU box that is
 about 30 minutes at best; measured 2026-10-21: 43 minutes, all green, on a 4-vCPU box shared with other
-work (load ~15). Each line shows the suite's wall time and its CPU time (with its ffmpeg and Chrome).
+work (load ~15), and 39 minutes with slideshow added (7,775 CPU-seconds). Each line shows the suite's wall time and its CPU time (with its ffmpeg and Chrome).
 
 Use Studio's own Python (the server's or a session's venv: the one with `requirements.txt`). Needs ffmpeg
 with the flite filter (Ubuntu's ffmpeg has it), node, and HyperFrames installed in `render/` (`npm ci`), as
@@ -32,11 +32,12 @@ works in a temporary folder of its own (`STUDIO_ROOT` included), removed after.
 | `suite_finalcheck.py` | 59 | The listen-back and watch-through (`final_check.py`): each flag fires on a crafted bad render (word cut short, said twice, a broken sentence, ending mid-sentence; a title over the face, a flash, too fast to read, the same animation twice, still on at the close) and stays quiet on a clean one; the fixes come in the read's shape and Studio's own rounds make them; a failure never breaks a draft; the check runs alongside Claude's read on a ~45 s Reel within its budget. |
 | `suite_patches.py` | 59 | The fix rounds as patches (`fix_actions.py`): caption word, drop words, restore words, card timing, hook text, then one re-plan for what no patch can do; judged fix by fix; the cost cap; a round that makes things worse is dropped; what's left says why. The spell-check and its guard (never a number, a new name or a change of meaning), the glossary reaching Whisper and the captions, a carousel slide patch. |
 | `suite_selffix.py` | 67 | Studio fixes its own read before Bryan sees a draft: one round, Bryan told once at the end, the fixed render delivered, rules learned into the playbook, the cost recorded apart. Send-back notes (editing becomes a rule, taste doesn't). Edge cases: a round that isn't better, one that fails, rounds off, the round limit, a failed read, a re-render, a restart mid-rounds. Carousels through the same loop. |
-| `suite_edit_units.py` | 70 | Unit checks: the sentence guard (stray last word, mid-sentence start, dead air), caption case and timing, cards clear of the caption line, the bundled fonts and their licences, the music ducking expression, learned rules (count, cap, retire, merge, forget, Bryan's part untouched), notes sorted, the trend, scores. |
+| `suite_edit_units.py` | 77 | Unit checks: the sentence guard and clause ends (a whole clause before "and"/"so"/"but"/"then" may end what is said) (stray last word, mid-sentence start, dead air), caption case and timing, cards clear of the caption line, the bundled fonts and their licences, the music ducking expression, learned rules (count, cap, retire, merge, forget, Bryan's part untouched), notes sorted, the trend, scores. |
+| `suite_slideshow.py` | 97 | Slideshow Reels (`slideshow.py`): a carousel's slides made into a 9:16 Reel with music. Owner only, one per carousel; the slides laid out again for the Reel (no Swipe cue or counter, a carousel's own layout exactly as before), a missing photo falls back to the carousel's slide; times from the words, slides in order, crossfades, a slow push-in inside the safe zones, the end card and the music fade, read in frames and sound. Studio's read and the watch-through (no listen-back: no voice), send back (order, times, a track link), a music-level patch, Start over, posting as a Reel, the carousel untouched, a personal post with no music or end card, a release's restart. |
 | `suite_whisper_prompt.py` | 10 | The glossary's hotwords fit Whisper's 448-token window (the 2026-10-21 "maximum decoding length must be > 0" failure), and an overflow retries without them instead of failing the edit. |
 
-Real ffmpeg, HyperFrames and OpenCV renders in cuts, ending, finalcheck, patches (part 1) and selffix (parts
-1, 2, 4); the loops' edge cases use quick fake renders. `--skip-real` on patches and selffix skips the real
+Real ffmpeg, HyperFrames and OpenCV renders in cuts, ending, finalcheck, patches (part 1), selffix (parts
+1, 2, 4) and slideshow (every render, about 9 minutes on its own); the loops' edge cases use quick fake renders. `--skip-real` on patches and selffix skips the real
 renders (fewer checks: the runner always runs them in full).
 
 ## The test media
@@ -52,12 +53,15 @@ Made at run time by `media.py`, nothing large committed:
   photo `messi5.jpg` (Apache-2.0, `fixtures/person.LICENSE.txt`). OpenCV's face detector needs a real
   face, so this 25 KB picture is the one media file committed.
 - B-roll (ffmpeg's test pattern), a warm chord bed for music, tones.
+- **A carousel's slides** (slideshow): 1080x1350 PNGs drawn with Pillow, one flat colour each so a frame tells
+  which slide is up, a white frame at the slide's margins and a dark line at its edge (to see nothing is cropped).
 
-`fixtures/before/` holds Studio as it was before two fixes (xz-compressed, 77 KB): `editor.py` before
-bde7803 (cuts follow the voice) and before 576f763 (gentle cuts, the ending), and the playbook seed before
-576f763. The suites load them to show the test media still reproduces the bug each fix is for, as the
-"old draft" a re-render must repair, and as the old playbook the migration rewrites. If a later change
-elsewhere stops the old editor importing, fix the import in the suite, don't drop the check.
+`fixtures/before/` holds Studio as it was before three changes (xz-compressed, 94 KB): `editor.py` before
+bde7803 (cuts follow the voice) and before 576f763 (gentle cuts, the ending), the playbook seed before
+576f763, and `carousel.py` before 9d1f570 (slideshow Reels). The suites load them to show the test media
+still reproduces the bug each fix is for, as the "old draft" a re-render must repair, as the old playbook
+the migration rewrites, and as the carousel layout a carousel must still get now the Reel has its own. If a
+later change elsewhere stops an old file importing, fix the import in the suite, don't drop the check.
 
 ## Adding to it
 

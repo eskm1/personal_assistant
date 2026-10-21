@@ -258,7 +258,7 @@ def left_because(fix: dict, tries: list[dict], stopped: str | None, rounds: int,
         return {"kind": "stopped", "text": f"Studio stopped before this one: it reached its US${cap:.2f} limit for this draft."}
     if stopped == "read":
         return {"kind": "stopped", "text": "Studio couldn't read the draft again to check a fix, so it stopped."}
-    return {"kind": "stopped", "text": f"Studio found it after its last fix round ({rounds} a draft)."}
+    return {"kind": "stopped", "text": f"Studio found it after its last fix round (it does {rounds} rounds a draft)."}
 
 
 def _edit_usd(conn, production_id: int) -> float:

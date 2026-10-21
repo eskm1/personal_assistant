@@ -706,6 +706,38 @@ def tighten(cuts: list[dict], clips: dict[int, dict], max_pause: float | None = 
 
 
 SENTENCE_END = re.compile(r"[.!?。！？…]['\"”’)\]]*$")
+# Talking, people chain clauses with "and" or "so" where writing has a full stop, and Whisper writes
+# none: "...the width of beam that is left there and once it's hacked...". Stopping before such a word
+# ends a whole clause, not half a sentence (Bryan heard v9 of #12 end on "left there" as complete,
+# 2026-10-21, while Studio flagged it). Only after a clause of a few words that doesn't end on a word
+# that needs the next one ("the", "of", "is"...).
+CLAUSE_JOINERS = {"and", "so", "but", "then"}
+CLAUSE_MIN_WORDS = 5
+_NEEDS_MORE = {"a", "an", "the", "of", "to", "in", "on", "at", "for", "with", "from", "by", "into", "my", "your",
+               "our", "their", "his", "her", "its", "this", "that", "these", "those", "is", "are", "was", "were",
+               "be", "been", "will", "would", "can", "could", "should", "have", "has", "had", "do", "does", "and",
+               "or", "but", "so", "if", "because", "when", "very", "more", "most", "about", "like", "than"}
+
+
+def _bare(word: str) -> str:
+    return re.sub(r"[^\w']+", "", str(word or "").lower())
+
+
+def ends_clause(words: list[dict], k: int) -> bool:
+    """words[k] may end what's said: a full stop, or (no punctuation) the end of a clause the next
+    word chains on with "and", "so", "but" or "then"."""
+    if not 0 <= k < len(words):
+        return False
+    if SENTENCE_END.search(words[k]["word"].strip()):
+        return True
+    if k + 1 >= len(words) or _bare(words[k + 1]["word"]) not in CLAUSE_JOINERS or _bare(words[k]["word"]) in _NEEDS_MORE:
+        return False
+    run = 0
+    for w in reversed(words[:k + 1]):
+        if SENTENCE_END.search(w["word"].strip()):
+            break
+        run += 1
+    return run >= CLAUSE_MIN_WORDS
 # A stray start of the next sentence at the very end (or the tail of the one before at the very
 # start) shorter than this is cut; a longer one is a deliberate part of the edit.
 MAX_DANGLING = 1.5

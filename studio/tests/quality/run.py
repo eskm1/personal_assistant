@@ -1,5 +1,5 @@
-"""Run Studio's edit-quality suites: cuts, endings, listen-back and watch-through, fix rounds, Whisper's
-prompt. One line per suite with its pass count; exits 1 if any check fails.
+"""Run Studio's edit-quality suites: cuts, endings, listen-back and watch-through, fix rounds, slideshow
+Reels, Whisper's prompt. One line per suite with its pass count; exits 1 if any check fails.
 
     python tests/quality/run.py                # from studio/, all suites, 4 at a time
     python tests/quality/run.py cuts ending    # just these
@@ -21,8 +21,9 @@ SUITES = {
     "selffix": ("suite_selffix.py", [], 67),
     "ending": ("suite_ending.py", [], 71),
     "patches": ("suite_patches.py", [], 59),
+    "slideshow": ("suite_slideshow.py", [], 97),
     "cuts": ("suite_cuts.py", [], 41),
-    "edit_units": ("suite_edit_units.py", [], 70),
+    "edit_units": ("suite_edit_units.py", [], 77),
     "whisper_prompt": ("suite_whisper_prompt.py", [], 10),
 }
 TIMEOUT = 90 * 60  # a hang, not a slow box: finalcheck alone takes 15-45 min on 4 vCPU

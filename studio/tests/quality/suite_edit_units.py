@@ -224,4 +224,26 @@ r_b = {"verdict": "Nearly ready: 1 thing to fix", "scores": {"hook": "good", "pa
        "fixes": [{"when": "this_draft", "editor_can_fix": False}]}
 ok(self_fix.score(r_b) < self_fix.score(r_a) and len(self_fix.fixable(r_a)) == 3 and not self_fix.fixable(r_b), "score and fixable")
 ok(self_fix.score({"verdict": "Needs work: x", "scores": {}, "fixes": []}) > self_fix.score(r_a), "needs work is worst")
+print("== Clause ends (2026-10-21: #12 v9 ended on \"left there\" before \"and\"; Studio called it mid-sentence)")
+import fix_actions
+said = [W(x, i * 0.3, i * 0.3 + 0.25) for i, x in enumerate(
+    "you will see that there is a beam that is left there and once it is gone".split())]
+there = 11
+ok(editor.ends_clause(said, there), "a clause before \"and\" may end what's said")
+ok(not editor.ends_clause(said, there - 2), "\"that is\" before \"left\": not an end (no joiner after)")
+short = [W("and", 0, 0.2), W("it", 0.2, 0.4), W("was", 0.4, 0.6), W("nice", 0.6, 0.8), W("so", 0.8, 1.0), W("we", 1.0, 1.2)]
+ok(not editor.ends_clause(short, 3), "a clause under five words is not an end")
+needs = [W(x, i * 0.3, i * 0.3 + 0.25) for i, x in enumerate("we will hack away all of the and then".split())]
+ok(not editor.ends_clause(needs, 6), "ending on \"the\" before \"and\" is not an end")
+ok(editor.ends_clause([W("It", 0, .2), W("works.", .2, .5)], 1), "a full stop still ends a sentence")
+try:
+    fix_actions._whole(said, [there + 1], there, "end")
+    ok(True, "a fix round may cut before \"and\" after a whole clause")
+except fix_actions.NotApplied as e:
+    ok(False, f"a fix round may cut before \"and\" after a whole clause ({e})")
+try:
+    fix_actions._whole(said, [there - 1, there], there - 2, "end")
+    ok(False, "a fix round still may not stop on \"that is\" mid-clause")
+except fix_actions.NotApplied:
+    ok(True, "a fix round still may not stop on \"that is\" mid-clause")
 finish()

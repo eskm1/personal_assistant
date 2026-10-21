@@ -355,7 +355,7 @@ def _whole(words: list[dict], dropped: list[int], kept: int | None, side: str) -
     if not dropped or kept is None:
         return
     if side == "end":
-        whole = bool(editor.SENTENCE_END.search(words[kept]["word"].strip()))
+        whole = editor.ends_clause(words, kept)
     else:
         whole = kept == 0 or bool(editor.SENTENCE_END.search(words[kept - 1]["word"].strip()))
     if not whole and not _droppable(words, dropped[0], dropped[-1]):
