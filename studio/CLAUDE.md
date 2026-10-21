@@ -86,6 +86,15 @@ older rules stand: Bryan decides approvals, spending, captions and posting; neve
 
 ## Testing
 
+**Edit quality gate (Bryan, 2026-10-21, on the redone v9: "It's much better now ... let's try to keep up that
+quality ... at least now the hygiene factors are there").** Before any push that touches the editor (`editor.py`,
+`voice_edges.py`, `fix_actions.py`, `self_fix.py`, `final_check.py`, `draft_review.py`, `playbook.py`, `restyle.py`,
+`slideshow.py`), transcription (`transcribe.py`, `glossary.py`, `spelling.py`) or rendering (`render.py`, `render/`,
+the mix, `resolve_export.py`), run `python tests/quality/run.py` from studio/ (30-45 min on 4 vCPU;
+`tests/quality/README.md`) and push only on "all green". A red check is fixed, never loosened or skipped. A check
+changed on purpose says why in the commit; new edit behaviour gets its check in the suite that owns it, with its
+count raised in `run.py`.
+
 Local Supabase stack via the Supabase CLI + Docker (`cloud/supabase`), Playwright for the planner,
 stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "import worker, dashboard, ..."`
 (`updater._MODULES`) before pushing.
