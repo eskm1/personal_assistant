@@ -154,11 +154,14 @@ def srt(chunks: list[dict]) -> str:
 
 
 def fcpxml(title: str, cuts: list[dict], clips: dict[int, dict], sources: dict[int, dict],
-           layers: list[tuple[str, Path, int]], music: tuple[Path, dict, float] | None) -> str:
+           layers: list[tuple[str, Path, int]], music: tuple[Path, dict, float] | None, after: float = 0.0) -> str:
     """layers: (name, file, lane) transparent video layers lasting the whole timeline.
-    music: (file, media info, volume dB)."""
+    music: (file, media info, volume dB). after: seconds the timeline runs on past the cut (the
+    close: the draft holds its last frame, then the end card, which is on the graphics layer)."""
     placed = frames_to_cuts(cuts)
-    total = sum(n for _, n in placed)
+    cut_frames = sum(n for _, n in placed)
+    gap = max(round(after * FPS), 0)
+    total = cut_frames + gap
     formats = {(FRAME, editor.W, editor.H): "r1"}
     resources, assets = [], {}
 
@@ -211,6 +214,9 @@ def fcpxml(title: str, cuts: list[dict], clips: dict[int, dict], sources: dict[i
                      f'name={quoteattr(clips[c["clip_id"]]["title"] or clips[c["clip_id"]]["source_name"] or "Clip")} '
                      f'start="{t(start)}" duration="{t(Fraction(length, FPS))}" tcFormat="NDF">'
                      + "".join(inner) + "</asset-clip>")
+    if gap:
+        spine.append(f'<gap name="End card" offset="{t(Fraction(cut_frames, FPS))}" start="3600s" '
+                     f'duration="{t(Fraction(gap, FPS))}"/>')
 
     for (duration, width, height), fid in formats.items():
         resources.append(f'<format id="{fid}" frameDuration="{t(duration)}" width="{width}" height="{height}"/>')
@@ -234,7 +240,7 @@ _HOW_TO = """How to open "{title}" in DaVinci Resolve (free version is fine)
    media pool" ticked and press OK.
 3. The timeline opens at 1080x1920, 30 fps:
      V1  the cut, from your ORIGINAL clips (full quality; drag a cut's edge to
-         get back footage the draft trimmed away)
+         get back footage the draft trimmed away){gap}
 {layers}{music}4. Captions you want to retype: File > Import > Subtitle... > captions.srt,
    drag it onto the timeline, and turn off the captions track (the eye icon).
 5. Export: Deliver page > preset "H.264 Master" (or YouTube 1080p), set the
@@ -278,7 +284,14 @@ def build(conn, production_id: int) -> Path:
     try:
         sources = {cid: media_info(Path(clips[cid]["video_path"])) for cid in ids}
         exact = sum(c["end"] - c["start"] for c in cuts)
-        chunks = editor.caption_chunks(editor.timeline(cuts, clips), exact)
+        # The close (editor.close_ending): the last frame held, then the end card on the graphics layer.
+        close = edl.get("close") or {}
+        close_at = float(close.get("at") or exact)
+        card = close.get("card") or None
+        whole = round(close_at + (card["seconds"] if card else 0.0), 3)
+        end = {"start": close_at, "duration": card["seconds"], "ask": card.get("ask", ""),
+               "handle": card.get("handle", "")} if card else None
+        chunks = editor.caption_chunks(editor.timeline(cuts, clips), close_at)
         accent = editor.ACCENT.get(production["brand"], "#ff4d6d")
         look = editor.draft_look(edl)  # the draft's own titles and caption font
         if look["titles"] == "gallery":
@@ -286,18 +299,18 @@ def build(conn, production_id: int) -> Path:
         layers, lane = [], 1
         # The drawn animations get a track of their own, under the cards and the captions.
         scenes = [g for g in edl.get("graphics", []) if g.get("style") == "scene" and "start" in g]
-        if scenes and editor.scenes_layer(scenes, exact, work / "animations.mov"):
+        if scenes and editor.scenes_layer(scenes, whole, work / "animations.mov"):
             layers.append(("Drawn animations", work / "animations.mov", lane))
             lane += 1
         cards = [g for g in edl.get("graphics", []) if g.get("style") != "scene"]
-        if edl.get("hook_text", "").strip() or cards:
-            editor.render_overlay([], edl.get("hook_text", ""), exact, work / "graphics.mov",
+        if edl.get("hook_text", "").strip() or cards or end:
+            editor.render_overlay([], edl.get("hook_text", ""), whole, work / "graphics.mov",
                                   cards, accent, fmt="mov", font=look["caption_font"], style=look["titles"],
-                                  hook_italic=edl.get("hook_italic"))
-            layers.append(("Hook and graphics", work / "graphics.mov", lane))
+                                  hook_italic=edl.get("hook_italic"), end=end)
+            layers.append(("Hook, graphics and end card" if end else "Hook and graphics", work / "graphics.mov", lane))
         if chunks:
             paper = [(g["start"], g["start"] + g["duration"]) for g in scenes if g.get("look") == "cutaway"]
-            editor.render_overlay(chunks, "", exact, work / "captions.mov", accent=accent, fmt="mov", paper=paper,
+            editor.render_overlay(chunks, "", whole, work / "captions.mov", accent=accent, fmt="mov", paper=paper,
                                   font=look["caption_font"], style=look["titles"])
             layers.append(("Captions", work / "captions.mov", lane + 1))
             (work / "captions.srt").write_text(srt(chunks), encoding="utf-8")
@@ -317,14 +330,16 @@ def build(conn, production_id: int) -> Path:
         final_music = (folder / "music.mp3", music[1], music[2]) if music else None
         title = f"{production['title'] or 'Studio post'} v{production['version']}"
         (work / "timeline.fcpxml").write_text(
-            fcpxml(title, cuts, clips, sources, final_layers, final_music), encoding="utf-8")
+            fcpxml(title, cuts, clips, sources, final_layers, final_music, after=whole - exact), encoding="utf-8")
         lane_lines = "".join(f"     V{lane + 1}  {name.lower()} (transparent layer)\n" for name, _, lane in layers)
         music_line = (f"     A2  music: {info.get('title', 'Epidemic Sound track')} by {info.get('artist', '?')}, "
                       f"at {music[2]:.0f} dB (the draft also dipped it under your voice)\n"
                       if music else
                       "     (no music: personal posts get theirs in the Instagram app)\n")
         (work / "HOW TO OPEN.txt").write_text(
-            _HOW_TO.format(title=title, layers=lane_lines, music=music_line, draft=production["video_path"]),
+            _HOW_TO.format(title=title, layers=lane_lines, music=music_line, draft=production["video_path"],
+                           gap=(". It ends in a short gap: the draft holds the last\n         frame there"
+                                + (" and the end card covers it." if end else ".")) if whole - exact >= 0.5 / FPS else ""),
             encoding="utf-8")
         if folder.exists():
             shutil.rmtree(folder)

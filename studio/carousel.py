@@ -512,14 +512,19 @@ def run(conn, production_id: int, client=None) -> Path:
     # Sent back (or interrupted while revising): Bryan's open notes on the last version. A Redraw
     # from Review only draws pictures again: the notes wait for Send back.
     # Studio's read of the last version rides along with any revision (Bryan: add them automatically).
+    import restyle
     import self_fix
+    fresh = was == "revising" and row["restyle"] == restyle.FRESH
     read = [{**f, "body": f"From Studio's read: {f['body']}"} for f in self_fix.read_notes(row, notes)] \
-        if was == "revising" or (notes and row["version"] >= 1 and not redraws) else []
-    if notes and (was == "revising" or (row["version"] >= 1 and not redraws)):
+        if not fresh and (was == "revising" or (notes and row["version"] >= 1 and not redraws)) else []
+    if fresh:  # start over: rewritten from the plan's own slides, not the last version's; no read of it
+        slides = clean_slides(json.loads(row["plan"] or "{}").get("slides")) or slides
+        revision = revise(conn, dict(row), slides, [restyle.CAROUSEL_NOTE] + notes, client)
+        slides = revision["slides"]
+    elif notes and (was == "revising" or (row["version"] >= 1 and not redraws)):
         revision = revise(conn, dict(row), slides, notes + read, client)
         slides = revision["slides"]
     elif was == "revising" and (row["restyle"] or read):  # a restyle (restyle.py) and/or the read's fixes
-        import restyle
         revision = revise(conn, dict(row), slides, ([restyle.CAROUSEL_NOTE] if row["restyle"] else []) + read, client)
         slides = revision["slides"]
     for n, change in redraws.items():

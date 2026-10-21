@@ -389,7 +389,8 @@ _ADDED_COLUMNS = {
         "removed_at": "TEXT",
         "removed_bytes": "INTEGER",
         # 1 = made again because Studio's look changed (restyle.py): a carousel's slides are rewritten
-        # in the current style guide even without notes. Cleared once the editor has taken it.
+        # in the current style guide even without notes. 2 = started over (a fresh edit, not a
+        # revision of the last cut). Cleared once the editor has taken it.
         "restyle": "INTEGER",
     },
     "ideas": {

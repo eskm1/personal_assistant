@@ -169,9 +169,9 @@ def _before(draft: Draft, cid: int, k: int, pad: float) -> float:
 
 
 # ── Changes to the cut list, worked out against the draft the read saw ────────
-# Each is (kind, clip_id, a, b[, piece]): "remove" the clip's seconds a-b wherever a piece holds them;
-# "end"/"start": the piece of that clip whose end/start is a moves to b; "insert_after"/"insert_before":
-# a new piece next to the piece of that clip ending/starting at a.
+# Each is (kind, clip_id, a, b): "remove" the clip's seconds a-b wherever a piece holds them;
+# "end"/"start": the piece of that clip whose end/start is a moves to b; "insert_after"/"insert_before"
+# (kind, clip_id, a, piece): the new piece next to the piece of that clip ending/starting at a.
 
 def _plan_drop(draft: Draft, a: dict) -> tuple[list[tuple], str]:
     found = draft.find(a.get("from") or "", _num(a.get("start")), raw=True)
@@ -195,12 +195,29 @@ def _plan_drop(draft: Draft, a: dict) -> tuple[list[tuple], str]:
         raise NotApplied("that would cut every word")
     words = draft.clip_words(cid)
     lo, hi = span[0]["i"], span[-1]["i"]
-    if not _droppable(words, lo, hi):
+    # The same words heard again straight after them in the draft (two takes either side of a join)
+    # may go too, though the clip itself goes on differently.
+    j = draft.words.index(span[-1])
+    heard = [_norm(w["raw"]) for w in draft.words[j + 1:j + 1 + len(span) + 3]]
+    cut = [_norm(w["raw"]) for w in span]
+    again = _stutter(cut, heard) or editor._restart(cut, heard)
+    if not (_droppable(words, lo, hi) or again):
         raise NotApplied("cutting those words would break the sentence they're in")
     cut_from = _after(draft, cid, lo - 1, editor.BREATH_AFTER) if lo > 0 else words[lo]["start"] - 0.02
     cut_to = _before(draft, cid, hi + 1, editor.BREATH_BEFORE) if hi + 1 < len(words) else words[hi]["end"] + 0.02
     cut_from, cut_to = min(cut_from, words[lo]["start"]), max(cut_to, words[hi]["end"])
     said = " ".join(w["raw"].strip() for w in span)
+    k = span[0]["piece"]
+    if any(n != k and c["clip_id"] == cid and c["start"] < cut_to and c["end"] > cut_from for n, c in enumerate(draft.cuts)):
+        # Another shot holds the same seconds of the clip (the repeat): only this shot loses them.
+        piece, mine = draft.cuts[k], [w for w in draft.words if w["piece"] == k]
+        if any(w["piece"] != k for w in span):
+            raise NotApplied("those words run across two shots")
+        if mine[-1] is span[-1]:
+            return [("end", cid, piece["end"], max(cut_from, piece["start"]))], f"cut \"{said}\" at {_mmss(span[0]['start'])}"
+        if mine[0] is span[0]:
+            return [("start", cid, piece["start"], min(cut_to, piece["end"]))], f"cut \"{said}\" at {_mmss(span[0]['start'])}"
+        raise NotApplied("those words are in two shots")
     return [("remove", cid, cut_from, cut_to)], f"cut \"{said}\" at {_mmss(span[0]['start'])}"
 
 
@@ -243,6 +260,10 @@ def _plan_pause(draft: Draft, a: dict) -> tuple[list[tuple], str]:
         raise NotApplied(f"there's no pause near {_mmss(t0)}")
     k, g0, g1 = max(picked, key=lambda g: (overlap(g), g[2] - g[1]))
     ops = []
+    if k == len(W) - 1 and g1 - g0 <= editor.END_TAIL + 0.35:
+        raise NotApplied("that's the short beat on the last shot before the end card")
+    if 0 <= k < len(W) - 1 and not editor.pause_to_cut(W[k]["raw"], g1 - g0, 0.0):
+        raise NotApplied("that pause is inside a sentence: Studio keeps it, it's how you said it")
     if k == -1:  # silence before the first word
         w = W[0]
         ops.append(("start", w["clip_id"], draft.cuts[w["piece"]]["start"],
@@ -304,6 +325,8 @@ def _plan_move(draft: Draft, a: dict) -> tuple[list[tuple], str]:
             new = min(p["end"], _after(draft, cid, ks[-1], editor.TAIL_PAD)) if ks else max(target, p["start"] + editor.MIN_CUT)
             if new >= p["end"] - 0.02 or new - p["start"] < editor.MIN_PIECE:
                 raise NotApplied("that would leave nothing of the shot before the cut")
+            _whole(words, [i for i, w in enumerate(words) if w["start"] >= new - 0.01 and w["end"] <= p["end"] + 0.01],
+                   ks[-1] if ks else None, "end")
         what = "kept more before" if new > p["end"] else "cut sooner at"
         return [("end", cid, p["end"], new)], f"{what} the cut at {_mmss(draft.offsets[b])} ({new - p['end']:+.1f}s)"
     if amount > 0:  # the start of the piece after the cut point: start earlier
@@ -319,8 +342,24 @@ def _plan_move(draft: Draft, a: dict) -> tuple[list[tuple], str]:
         new = max(p["start"], _before(draft, cid, ks[0], editor.HEAD_PAD)) if ks else min(target, p["end"] - editor.MIN_CUT)
         if new <= p["start"] + 0.02 or p["end"] - new < editor.MIN_PIECE:
             raise NotApplied("that would leave nothing of the shot after the cut")
+        _whole(words, [i for i, w in enumerate(words) if w["start"] >= p["start"] - 0.01 and w["end"] <= new + 0.01],
+               ks[0] if ks else None, "start")
     what = "started earlier at" if new < p["start"] else "started later at"
     return [("start", cid, p["start"], new)], f"{what} the cut at {_mmss(draft.offsets[b])} ({p['start'] - new:+.1f}s)"
+
+
+def _whole(words: list[dict], dropped: list[int], kept: int | None, side: str) -> None:
+    """A moved cut never stops (or starts) partway through a sentence by dropping real words: the words
+    a move cuts must be ones Studio may cut by itself (hesitations, stutters, a false start, whole
+    sentences), unless what's kept still ends (starts) a sentence there."""
+    if not dropped or kept is None:
+        return
+    if side == "end":
+        whole = bool(editor.SENTENCE_END.search(words[kept]["word"].strip()))
+    else:
+        whole = kept == 0 or bool(editor.SENTENCE_END.search(words[kept - 1]["word"].strip()))
+    if not whole and not _droppable(words, dropped[0], dropped[-1]):
+        raise NotApplied(f"that would {'stop' if side == 'end' else 'start'} partway through a sentence")
 
 
 def _plan_restore(draft: Draft, a: dict) -> tuple[list[tuple], str]:
@@ -403,10 +442,10 @@ def _run(pieces: list[dict], ops: list[tuple]) -> list[dict]:
             out[k]["end"] = round(y, 3)
         elif kind == "start":
             out[k]["start"] = round(y, 3)
-        elif kind == "insert_after":
-            out.insert(k + 1, op[4])
+        elif kind == "insert_after":  # (kind, clip_id, a, the new piece): _plan_restore's
+            out.insert(k + 1, dict(op[-1]))
         else:
-            out.insert(k, op[4])
+            out.insert(k, dict(op[-1]))
     return [p for p in out if p["end"] - p["start"] >= 0.1]
 
 

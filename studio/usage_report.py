@@ -35,6 +35,8 @@ FEATURES = [
      "events": [("action", r"^note_added$", "via=quick"), ("click", r"^#quick-note")]},
     {"key": "edit_again", "name": "Edit it again", "shipped": "2026-10-20",
      "events": [("click", r"^#redo-(one|all)$"), ("action", r"^redo$")]},
+    {"key": "start_over", "name": "Start over (a fresh edit)", "shipped": "2026-10-21",
+     "events": [("click", r"^#redo-fresh$"), ("action", r"^start_over$")]},
     {"key": "send_back_fixes", "name": "Send back with Studio's fixes", "shipped": "2026-10-19",
      "events": [("action", r"^sent_back$", "fixes=true")]},
     {"key": "caption_preview", "name": "Caption preview", "shipped": "2026-10-20",

@@ -118,10 +118,16 @@ LIGHT_COPIES = _flag("STUDIO_LIGHT_COPIES", True)
 SERVICE_WORKER = _flag("STUDIO_SERVICE_WORKER", True)
 
 # ── The editor's cutting and framing ──────────────────────────────────────────
-# Jump cuts: inside every stretch the editor keeps, silences, breaths and lone "um"s
-# longer than EDIT_MAX_PAUSE seconds are cut down to a short breath.
+# Jump cuts: inside every stretch the editor keeps, a pause between sentences or clauses (after a
+# full stop or comma, or any pause over a second) longer than EDIT_MAX_PAUSE seconds is cut down to
+# a natural breath, and lone "um"s go. A short pause inside a sentence is never cut (Bryan,
+# 2026-10-21: "it just cuts out words mid-speech"; it was 0.35 s, every pause, before).
 EDIT_JUMP_CUTS = _flag("STUDIO_EDIT_JUMP_CUTS", True)
-EDIT_MAX_PAUSE = float(_env("STUDIO_EDIT_MAX_PAUSE", "0.35"))
+EDIT_MAX_PAUSE = float(_env("STUDIO_EDIT_MAX_PAUSE", "0.7"))
+# The close of every Reel: after the last word, a short beat on the last shot, then the Urban
+# Makers end card (the mark, the Instagram handle, the post's ask) while the music fades out.
+# Off = the draft ends after that beat, with no card.
+END_CARD = _flag("STUDIO_END_CARD", True)
 # Reframing: horizontal footage (Z fc, GoPro) is cropped around the person's face
 # instead of down the middle. Off = the centre crop.
 EDIT_REFRAME = _flag("STUDIO_EDIT_REFRAME", True)
@@ -144,6 +150,11 @@ SELF_FIX_ROUNDS = min(max(int(_env("STUDIO_SELF_FIX_ROUNDS", "3")), 0), 5)
 # What Studio may spend on its read, its own fix rounds and the caption spell-check, per draft
 # version (US$). When the next step would pass it, Studio stops and says so on the draft.
 SELF_FIX_MAX_USD = max(float(_env("STUDIO_SELF_FIX_MAX_USD", "1.50")), 0.0)
+# Studio listens back to and watches through every finished Reel before Bryan sees it
+# (final_check.py: words cut short or said twice, broken sentences, an ending mid-sentence; titles
+# over the face, flashes, words gone before they can be read, the same animation twice, anything
+# still moving at the close). Free (no Claude); what it finds goes into Studio's own fix rounds.
+FINAL_CHECK = _flag("STUDIO_FINAL_CHECK", True)
 # The caption spell-check before each render (spelling.py): one short text-only Claude call that
 # catches words Whisper mis-heard (MCSC for MCST), against the trade glossary (Studio/glossary.txt)
 # and the brief. Off = only the glossary's own "wrong -> right" lines are applied. The model is the

@@ -809,7 +809,7 @@ def production_detail(production_id: int):
                  "cost": usage.total_for(db(), f"production:{production_id}") if is_owner() else None,
                  **_learning_detail(row, "reel"),
                  "music": json.loads(row["music"]) if row["music"] else None,
-                 "qa": json.loads(row["qa"]) if row["qa"] else None,
+                 "qa": {k: v for k, v in json.loads(row["qa"]).items() if k != "heard"} if row["qa"] else None,
                  "resolve": _resolve_state(dict(row)) if edl else None, **_posting_detail(row)})
     return jsonify(item)
 
@@ -1256,11 +1256,11 @@ def decide(production_id: int):
                                       "approved" if decision == "approve" else "rejected", caption)
     elif decision == "caption":
         catalog.set_production_status(db(), production_id, row["status"], caption)
-    elif decision == "redo":  # made again in today's look (restyle.py); nothing lost
+    elif decision in ("redo", "fresh"):  # made again in today's look, or started over (restyle.py); nothing lost
         if row["status"] != "ready":
             return jsonify({"error": "only a draft waiting for review can be made again"}), 400
         import restyle
-        restyle.mark(db(), [production_id])
+        restyle.mark(db(), [production_id], fresh=decision == "fresh")
     elif decision == "retry":
         if row["status"] != "failed":
             return jsonify({"error": "only a failed edit can be retried"}), 400

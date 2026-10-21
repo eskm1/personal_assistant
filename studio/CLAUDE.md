@@ -207,6 +207,19 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   review goes back to `revising` with `restyle = 1` (a Reel gets a fresh edit; a carousel is rewritten from
   `CAROUSEL_NOTE`, not learned as a rule), Telegram says so. Review's **Edit it again** (one / all waiting) does the
   same. Bump `RELEASE` when the look changes enough to redo what's waiting.
+- Cuts and endings, built 2026-10-21 (Bryan: "cuts out words mid-speech", "ends ... abruptly"; not yet proven on real
+  footage): jump cuts only shorten pauses between sentences/clauses (`editor.pause_to_cut`, `STUDIO_EDIT_MAX_PAUSE`
+  0.35 -> 0.7, a pause over `LONG_PAUSE` 1 s anywhere; ~0.26 s breath left, `BREATH_AFTER/BEFORE`); `whole_ends`
+  (a shot meeting another mid-sentence gets its sentence back) and sentence_guard finishing the last sentence;
+  patches refuse a trim_pause inside a sentence and a move_cut that stops mid-sentence (`fix_actions._whole`). The
+  close (`editor.close_ending`, `end_card`, `clear_of_end`, `_END_CSS`): ~0.8 s beat on the last shot (or its last
+  frame held), the gallery end card 1.8 s (mark, the plan's CTA via `end_ask`, the handle; `STUDIO_END_CARD`, Urban
+  Makers only), music fade 1.2 s, captions off, nothing drawn within 1 s of it; `edl["close"]`; Resolve gets a gap +
+  the card on graphics.mov. Prompt: whole sentences beat pacing targets. Playbook: two seed lines replaced
+  (`playbook.SEED_CHANGES`, `migrate()` once per start, exact lines only). Start over (`restyle = 2`, Review's Start
+  over, `editor._fresh_block`); RELEASE "2026-10-21 gentle cuts, a proper ending, started over" with
+  `RELEASE_FRESH`: on the next start each draft in To review is rejected + archived (note `restyle.REJECT_NOTE`) and
+  its idea restarts as a new production (`restyle.restart`, open notes moved, version carries on).
 - Fix rounds that fix, built 2026-10-20 (not yet proven with real Claude): Studio's read gives each editor-fixable fix
   an `action` (caption_word, drop_words, restore_words, trim_pause, move_cut, graphic, hook_text, music_level, replan;
   carousels slide_text) and a `for_bryan` reason; `self_fix.py` applies them as patches (`fix_actions.py`,

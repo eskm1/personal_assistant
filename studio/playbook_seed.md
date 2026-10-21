@@ -15,7 +15,7 @@ personal footage. They are a starting point, not law.
 - One idea per post. Hook, a line of context, the proof or process, then the payoff.
 - Close the loop you opened: if the hook asks "how", the post shows how.
 - Never invent results, prices, timelines or claims the footage and Bryan's words don't support.
-- End right after the last word or the payoff shot. No intro cards, no long outros.
+- End on a complete sentence, then a short beat on the last shot and the Urban Makers end card; never stop mid-sentence or mid-animation.
 
 ## Pacing and cutting
 
@@ -27,7 +27,7 @@ personal footage. They are a starting point, not law.
 
 ## Formats
 
-- Talking head: tight cuts, captions on every phrase, B-roll over the words it illustrates.
+- Talking head: cut between sentences and ideas, keep the natural pauses inside a sentence; trim only long silences. Captions on every phrase, B-roll over the words it illustrates.
 - Day in the life: music-led, short clips in time order, a few spoken lines as anchors.
 - Compilation: cut to the music's beat; before/after reveals land on a beat.
 - Urban Makers: show the work and the result. Close-ups of craft, the finished space,

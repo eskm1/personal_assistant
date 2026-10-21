@@ -159,6 +159,10 @@ def _key(text) -> str:
 
 def same_fix(a: dict, b: dict) -> bool:
     """Do two fixes (from two reads) name the same problem?"""
+    if a.get("check") or b.get("check"):  # Studio's listen-back and watch-through: its kind, word and moment
+        if a.get("check") != b.get("check") or _key(a.get("subject")) != _key(b.get("subject")):
+            return False
+        return a.get("start") is None or b.get("start") is None or abs(a["start"] - b["start"]) <= NEAR_SECONDS
     aa, ab = a.get("action") or {}, b.get("action") or {}
     kind = aa.get("type")
     if kind and kind == ab.get("type") and kind not in ("none", "replan"):
@@ -221,7 +225,7 @@ def _method(fix: dict, tries: list[dict]) -> str | None:
 
 
 def _try(fix: dict, how: str, ok: bool, outcome: str = "") -> dict:
-    return {"fix": {k: fix.get(k) for k in ("what", "area", "start", "end", "slide", "action")},
+    return {"fix": {k: fix.get(k) for k in ("what", "area", "start", "end", "slide", "action", "check", "subject")},
             "how": how, "ok": ok, "outcome": outcome}
 
 
@@ -238,6 +242,8 @@ def left_because(fix: dict, tries: list[dict], stopped: str | None, rounds: int,
             text += " Drawn for now in this draft."
         return {"kind": "footage", "text": text}
     if not fix.get("editor_can_fix"):
+        if fix.get("left_note"):  # Studio's own check found it but no change of its can make it
+            return {"kind": "look", "text": fix["left_note"]}
         reason = fix.get("for_bryan") or ""
         return {"kind": "footage" if reason == "footage" else "yours", "text": _BRYANS.get(reason, _BRYANS[""])}
     mine = _tries(fix, tries)

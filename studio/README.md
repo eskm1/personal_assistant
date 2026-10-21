@@ -308,8 +308,12 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    between phrases, drops dead air and false starts, and writes the hook text and a music
    brief. On a revision it also gets your notes and the previous cut list.
 2. Cut points follow your voice, not just the transcript's timings: Studio measures each clip's sound once (`voice_edges.py`, kept as `voice.npz`) and only cuts after a word has really died away, and before it starts. Cuts keep whole sentences: only um, uh, 嗯, 呃 and an immediate repeat ("the the") are dropped by themselves, and words cut from inside a kept sentence come back (short gaps by joining the cuts again, longer ones after one cheap Claude check); the draft's checks say what was kept and why. Then
-   **jump cuts**: inside what's kept, any pause longer than 0.35 s (silence, a breath, a lone
-   "um"/"uh" or 嗯/呃; "ah"/啊 only when alone between long pauses) is cut down to a short breath. Never inside a word; B-roll is untouched.
+   **jump cuts**: inside what's kept, a pause between sentences or clauses (after a full stop or a comma) longer
+   than 0.7 s, or any pause over a second, is cut down to a natural breath (about a quarter of a second); a lone
+   "um"/"uh" or 嗯/呃 goes ("ah"/啊 only when alone between long pauses). A short pause inside a sentence stays: it's
+   how you talk (your note of 2026-10-21: cutting every pause had made it sound like words were cut mid-speech). Never
+   inside a word; B-roll is untouched. Complete sentences come first: the pacing numbers in the playbook and the
+   house style are for shot changes and B-roll, never for cutting into speech.
 3. **Framing**: horizontal footage (Z fc, GoPro) is cropped around your face instead of down
    the middle (OpenCV's face finder; if you walk across a long shot, it splits into a few
    still crops, never a pan). No face = the centre. Vertical footage is as filmed. On talking
@@ -317,8 +321,18 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    end of a sentence, so a long shot never sits still (never on B-roll or under the hook).
    ffmpeg then cuts every piece from your **original** files in one pass at 1080x1920.
    Before that, Studio checks the ends of the draft by code: it never ends on a stray word that
-   starts a new sentence (an "and" after the last full stop), never opens on the tail of a
-   sentence, and trims dead air before the first word and after the last.
+   starts a new sentence (an "and" after the last full stop), never stops partway through the last
+   sentence (the rest of it comes back when it's short), never opens on the tail of a sentence, and
+   trims dead air before the first word. A shot that stops (or starts) partway through a sentence
+   where it meets another shot gets the rest of that sentence back the same way.
+   **The close**: every Reel ends on a complete sentence, then a short beat (about 0.8 s) on the last
+   shot (its own footage after your last word; when the clip ends there, its last frame is held), then
+   the Urban Makers end card for 1.8 s: the mark, the post's ask in the serif (the plan's call to action,
+   short, never a price or an offer it doesn't have) and @urbanmakers_sg (or the connected account's
+   handle). The picture dissolves into it, captions are off while it's up, your shot's sound fades and
+   the music fades out over the last 1.2 s. No card, callout or drawn animation runs into the close (one
+   that would is shortened, moved earlier or left out). `STUDIO_END_CARD=0` ends after the beat with no
+   card; personal posts get no card. The Resolve project gets it too (the card on the graphics layer).
 4. HyperFrames renders the captions (1 to 3 words in sentence case, timed to each word) and the
    hook as a transparent layer over the footage, in fonts bundled in `studio/render/captions/fonts`
    (`STUDIO_CAPTION_FONT`: `inter`, the default, `figtree`, `nunito`, `dm_sans` or `outfit`; nothing
@@ -373,6 +387,20 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    When a shot you didn't film could be drawn instead (a build-up, a dimension, a process), the read
    adds "Draw it for now: ..." beside the "film next time" fix: Studio's own round draws it in this
    draft, and the "film next time" fix stays for you, marked as drawn for now.
+   **Studio listens back and watches it through** (`final_check.py`, free: no Claude), on the finished file the way
+   a viewer does, while Claude reads it. Listening (what Whisper hears again, against the words the cut meant to keep,
+   and the voice's own sound at every cut): a word cut short or missing at a join or the end, a word or phrase heard
+   twice in a row that you didn't say twice (a stutter left in, two takes meeting at a join), real words cut from the
+   middle of a sentence or a shot stopping partway through one, and the voice ending mid-sentence. Watching (ten small
+   frames a second, against the draft's hook, cards and drawings): the hook, a callout or a panel over your face for
+   more than 0.3 s (OpenCV's face finder; full-screen cards and drawings replace the picture on purpose), a graphic up
+   under half a second, words gone before they can be read (0.3 s plus 0.06 s a letter, at least 1.2 s), the same
+   animation twice in a row, and a card or drawing still on in the last second before the close (or the end card
+   still moving as the video stops). Each one becomes a fix in Studio's read with its moment and the words around it,
+   and Studio's own rounds (below) make it like any other: a cut point moved, words brought back or cut, a title moved
+   clear of your face or kept up longer, a repeat or a late card taken off or moved. A 40-second Reel took about 10
+   seconds in testing, while the read was running, so a draft waits about 3 seconds longer. `STUDIO_FINAL_CHECK=0`
+   turns it off.
 8. **Studio fixes its own list** (`self_fix.py`, `fix_actions.py`): each fix Studio's read gives the editor comes with
    the exact change: a caption word (MCSC to MCST), a stutter or repeat to cut, words to bring back at a join or at the
    end, a pause to shorten, a cut point to move, a card to move, retime, reword or remove, the hook's words, the music
@@ -397,15 +425,24 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    says so under it. `STUDIO_LEARN_RULES=0` turns learning off.
 
 The jump cuts, reframing and punch-ins are settings in `.env` (all on by default; `0` turns one off, then press
-**Restart Studio**): `STUDIO_EDIT_JUMP_CUTS`, `STUDIO_EDIT_MAX_PAUSE` (seconds, default 0.35),
+**Restart Studio**): `STUDIO_EDIT_JUMP_CUTS`, `STUDIO_EDIT_MAX_PAUSE` (seconds, default 0.7; pauses between
+sentences only), `STUDIO_END_CARD` (default on),
 `STUDIO_EDIT_REFRAME`, `STUDIO_EDIT_PUNCH_INS`, `STUDIO_EDIT_PUNCH_ZOOM` (default 1.12), `STUDIO_EDIT_SCENES`,
 `STUDIO_EDIT_SCENES_MAX` (default 3; `0` = none). The fix rounds,
-learning, caption font and music gap are too: `STUDIO_SELF_FIX_ROUNDS`, `STUDIO_SELF_FIX_MAX_USD`,
+learning, caption font and music gap are too: `STUDIO_SELF_FIX_ROUNDS`, `STUDIO_SELF_FIX_MAX_USD`, `STUDIO_FINAL_CHECK`,
 `STUDIO_SPELL_CHECK`, `STUDIO_SPELL_MODEL`, `STUDIO_LEARN_RULES`,
 `STUDIO_LEARNED_RULES_MAX`, `STUDIO_CAPTION_FONT`, `STUDIO_TITLE_STYLE` (`gallery` or `classic`),
 `STUDIO_MUSIC_GAP_DB`. Older drafts keep their look until they're revised. A draft
 remembers its pieces and framing, so a re-render (after a subtitle fix, say) and the Resolve
 project match it.
+
+**Edit it again** (a draft waiting for review: this one, or all of them) makes a new version in today's look,
+working from the last cut. **Start over** makes a brand-new edit from your footage as if it were the first draft:
+the last cut, its cards and Studio's read of it are set aside (cutting a cut again and again can compound), your
+open notes still go in, and the version number carries on. A carousel's Start over rewrites the slides from the
+plan. When Studio's editing changes enough (2026-10-21: gentler cuts and the close), the drafts waiting for review
+are rejected on the next start (kept in Done > Archived, noted "Rejected for a fresh edit after the endings fix")
+and each idea starts over as a new edit, once; Telegram says so.
 
 Drafts are saved in `Studio\Renders`. If an edit fails, the draft shows the reason and a
 **Retry edit** button. To edit one production by hand: `worker.py --edit <id>`. To run the

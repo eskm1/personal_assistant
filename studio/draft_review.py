@@ -518,6 +518,15 @@ def _context(conn, production: dict) -> str:
     if cut_words:
         lines.append(cut_words)
     lines.append(f"Hook text on screen for the first ~2.5s: {edl.get('hook_text') or '(none)'}")
+    close = edl.get("close") or {}
+    if close.get("at") is not None:
+        card = close.get("card") or {}
+        lines.append(
+            f"The close (Studio adds it on purpose; it is not dead air): after the last word a {close.get('tail', 0) + close.get('hold', 0):.1f}s "
+            "beat on the last shot" + (f" (its last frame held {close['hold']:.1f}s)" if close.get("hold") else "")
+            + (f", then the Urban Makers end card from {close['at']:.1f}s for {card.get('seconds', 0):.1f}s "
+               f"(the mark, {card.get('handle') or 'no handle'}" + (f", \"{card['ask']}\"" if card.get("ask") else "") + ")"
+               if card else "") + ", while the music fades out.")
     numbered = [(n, g) for n, g in enumerate(edl.get("graphics", []), 1) if "start" in g]
     graphics = [(n, g) for n, g in numbered if g.get("style") != "scene"]
     lines.append("Graphics (numbered: G1 is item 1): " + ("; ".join(
@@ -614,7 +623,8 @@ def _cut_words(cuts: list[dict], clips: dict[int, dict], total: float) -> str:
         words = editor._words(clips[last["clip_id"]])
         after = [i for i, w in enumerate(words) if w["start"] >= last["end"] - 0.01 and w["start"] <= last["end"] + 6.0]
         if after:
-            ends.append(f"  after {total:.1f}s (the end) it goes on: \"{said(words, after[:12])}\"")
+            footage = sum(c["end"] - c["start"] for c in cuts)  # the end of the footage, before any end card
+            ends.append(f"  after {footage:.1f}s (the end of the footage) it goes on: \"{said(words, after[:12])}\"")
     out = []
     if joins:
         out.append("Words cut at joins (draft time of the join: the words cut there):\n" + "\n".join(joins[:12]))
@@ -709,6 +719,10 @@ def run(conn, production_id: int, client=None, ref: str | None = None) -> dict:
     if not video.exists():
         raise RuntimeError("the draft's video file is missing")
     total = production["duration"] or 0
+    # Studio's listen-back and watch-through of the finished file (free, no Claude), on its own
+    # thread while Claude reads; its flags join the read's fixes (final_check.merge).
+    import final_check
+    pending = final_check.start(conn, production)
     text = _context(conn, production)
     edl = json.loads(production["edl"])
     grid = [total * (i + 0.5) / STILLS for i in range(STILLS)]
@@ -735,6 +749,7 @@ def run(conn, production_id: int, client=None, ref: str | None = None) -> dict:
     if response.stop_reason in ("refusal", "max_tokens"):
         raise RuntimeError(f"Claude couldn't review this draft ({response.stop_reason})")
     review = _clean(json.loads(next(b.text for b in response.content if b.type == "text")), total, edl)
+    review = final_check.merge(review, pending)
     review["at"] = catalog.now()
     conn.execute("UPDATE productions SET review = ?, review_version = ? WHERE id = ?",
                  (json.dumps(review, ensure_ascii=False), production["version"], production_id))

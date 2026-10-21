@@ -2020,7 +2020,7 @@ function trendLine(d) {
 }
 
 // Why a fix Studio's read found is still Bryan's (self_fix.py's left_because).
-const LEFT_TAG = { footage: "Needs footage", yours: "Your call", tried: "Studio tried", stopped: "Not tried" };
+const LEFT_TAG = { footage: "Needs footage", yours: "Your call", tried: "Studio tried", stopped: "Not tried", look: "Have a look" };
 
 function selfFixHTML(d) {
   const fixed = d.self_fix?.fixed || [];
@@ -2706,7 +2706,10 @@ function redoHTML(d, can) {
     `<p class="muted small">${isCarousel(d) ? "The slides rewritten in the current style guide and laid out again."
       : "A fresh edit of the same idea with the latest titles, captions and music taste."} Your notes and the earlier versions stay. It costs about what a send-back does.</p>
      <div class="row"><button class="btn" id="redo-one">Edit this one again</button>
-     ${others ? `<button class="btn" id="redo-all">Edit all ${esc(others + 1)} waiting again</button>` : ""}</div>`);
+     ${others ? `<button class="btn" id="redo-all">Edit all ${esc(others + 1)} waiting again</button>` : ""}</div>
+     <p class="muted small">${isCarousel(d) ? "Start over rewrites the slides from the plan, not from this version."
+      : "Start over makes a brand-new edit from your footage, as if it were the first draft. This cut and its fixes are set aside; your notes stay."}</p>
+     <div class="row"><button class="btn" id="redo-fresh">Start over</button></div>`);
 }
 
 // Under the tile: version, type and languages (a draft), when it was filmed (a clip).
@@ -3019,6 +3022,11 @@ async function detailClick(e) {
       await api(`/api/production/${d.id}/decision`, { decision: "redo" });
       mark("redo");
       toast("Studio is editing it again. The new version comes back to To review.");
+      await nextForReview();
+    } else if (id === "redo-fresh") {
+      await api(`/api/production/${d.id}/decision`, { decision: "fresh" });
+      mark("start_over");
+      toast("Studio is starting it over from your footage. The new version comes back to To review.");
       await nextForReview();
     } else if (id === "redo-all") {
       const r = await api("/api/productions/redo", {});
