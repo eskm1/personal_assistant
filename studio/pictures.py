@@ -47,6 +47,16 @@ LABEL = "Concept"       # as on the carousels' concept slides (slide_images.Conc
 LOOK = "picture-1"      # bump when the look changes: the inserts are rendered again (the pictures aren't drawn again)
 NEAR_NOTE = 3.0         # seconds: a note this close to an insert's anchor is about that insert
 FONT = Path(__file__).resolve().parent / "render" / "captions" / "fonts" / "Inter-latin-600.woff2"
+# Site Notes (editor.TITLE_STYLES "site"): one caps label in its label style, "Concept · not a photo", Archivo 700 at
+# 34 px on the dark label, top left at x 64 (the labels' edge); the picture keeps its full bleed, no shade over it.
+SITE_LABEL = "Concept · not a photo"
+SITE_FONT = FONT.with_name("Archivo-latin-700.woff2")
+SITE_AT = (64, 240)
+
+
+def label_at(titles: str | None = None) -> tuple[int, int]:
+    """Where the Concept mark sits on a full-screen picture (x, y on the Reel), in the draft's look."""
+    return SITE_AT if titles == "site" else (92, 236)
 
 
 def available(post_type: str | None = None) -> str | None:
@@ -309,9 +319,11 @@ def place(graphics: list[dict], cuts: list[dict], clips: dict[int, dict], total:
 # ── Drawing and rendering ─────────────────────────────────────────────────────
 
 def file_key(g: dict) -> str:
-    """The rendered insert's cache key: the picture, its look and length, the Reel's frame, the look's version."""
+    """The rendered insert's cache key: the picture, its look and length, the Reel's frame, the look's version (and
+    Site Notes' label, g["titles"] "site")."""
     blob = json.dumps({"picture": g.get("picture"), "look": g.get("look"), "duration": round(g["duration"], 3),
-                       "frame": [editor.W, editor.H, editor.FPS], "v": LOOK}, sort_keys=True)
+                       "frame": [editor.W, editor.H, editor.FPS], "v": LOOK,
+                       **({"theme": "site"} if g.get("titles") == "site" else {})}, sort_keys=True)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:24]
 
 
@@ -377,7 +389,7 @@ def make(pics: list[dict], conn, production: dict, version: int, ref: str, clien
                     out.touch()
                 else:
                     part = editor.INSERTS / f"{key}.part.webm"
-                    render_one(res["path"], g["look"], g["duration"], part)
+                    render_one(res["path"], g["look"], g["duration"], part, g.get("titles"))
                     part.replace(out)
                 tally["reused"] += res["cached"]
                 done.append({**g, "file": key})
@@ -408,24 +420,38 @@ def ensure_file(g: dict) -> bool:
     if not path:
         return False
     try:
-        render_one(path, g.get("look") or "cutaway", g["duration"], out)
+        render_one(path, g.get("look") or "cutaway", g["duration"], out, g.get("titles"))
         return True
     except Exception as e:
         log.warning("Picture insert \"%s\" couldn't be rendered again: %s", g.get("title"), e)
         return False
 
 
-def _font(size: int):
+def _font(size: int, path: Path = FONT):
     from PIL import ImageFont
     try:
-        return ImageFont.truetype(str(FONT), size)
+        return ImageFont.truetype(str(path), size)
     except OSError:  # a Pillow without WOFF2: its own font, still a label
         return ImageFont.load_default(size)
 
 
-def label_image(scale: float = 1.0):
-    """The "Concept" mark: small letter-spaced capitals on a soft dark tag, in the gallery look's warm white."""
+def label_image(scale: float = 1.0, titles: str | None = None):
+    """The "Concept" mark: small letter-spaced capitals on a soft dark tag, in the gallery look's warm white; in
+    Site Notes, "Concept · not a photo" in its caps label (white Archivo on the square dark label)."""
     from PIL import Image, ImageDraw
+    if titles == "site":
+        font = _font(round(34 * scale), SITE_FONT)
+        text = SITE_LABEL.upper()
+        track = 0.12 * 34 * scale
+        widths = [font.getlength(ch) for ch in text]
+        pad_x, pad_y, th = round(16 * scale), round(10 * scale), round(34 * scale)
+        img = Image.new("RGBA", (round(sum(widths) + track * (len(text) - 1)) + 2 * pad_x, th + 2 * pad_y), (18, 17, 14, 230))
+        d = ImageDraw.Draw(img)
+        x = pad_x
+        for ch, w in zip(text, widths):
+            d.text((x, pad_y + th * 0.86), ch, font=font, fill=(255, 255, 255, 255), anchor="ls")
+            x += w + track
+        return img
     font = _font(round(22 * scale))
     text = LABEL.upper()
     track = 0.14 * 22 * scale
@@ -465,12 +491,12 @@ def _lay(frame, layer: tuple, dy: int = 0) -> None:
     frame[ys, xs, :3] = ((rgb * a + under * (255 - a)) // 255).astype(np.uint8)
 
 
-def render_one(picture: Path, look: str, duration: float, out: Path) -> None:
+def render_one(picture: Path, look: str, duration: float, out: Path, titles: str | None = None) -> None:
     """One picture insert as a transparent VP9 WebM at the Reel's size and frame rate: the picture cover-fitted
     (full screen for a cutaway; a rounded card from PANEL_TOP to PANEL_BOTTOM for a panel, with a hairline and a
     soft shadow), a slow push-in over its whole length (an exact sub-pixel scale each frame, so it never
     shimmers), a dissolve in and out (a panel also rises into place), a soft shade at the top and the Concept
-    mark."""
+    mark. titles "site": Site Notes' label (label_image) and no shade; the picture stays full bleed."""
     import cv2
     from PIL import Image, ImageDraw, ImageFilter
     import extract
@@ -484,7 +510,8 @@ def render_one(picture: Path, look: str, duration: float, out: Path) -> None:
     k = max(bw / src.shape[1], bh / src.shape[0]) * (1 + PUSH)
     big = cv2.resize(src, (max(1, round(src.shape[1] * k)), max(1, round(src.shape[0] * k))), interpolation=cv2.INTER_CUBIC)
     bcx, bcy = big.shape[1] / 2, big.shape[0] / 2
-    tag = label_image()
+    site = titles == "site"
+    tag = label_image(titles=titles)
     if panel:
         mask = Image.new("L", (bw, bh), 0)
         ImageDraw.Draw(mask).rounded_rectangle((0, 0, bw - 1, bh - 1), radius=28, fill=255)
@@ -499,6 +526,8 @@ def render_one(picture: Path, look: str, duration: float, out: Path) -> None:
         ImageDraw.Draw(rim).rounded_rectangle((0, 0, bw - 1, bh - 1), radius=28, outline=(246, 244, 238, 110), width=2)
         rim.alpha_composite(tag, (28, 28))
         rim = _sparse(rim, x0, y0)
+    elif site:
+        top = _sparse(tag, *SITE_AT)
     else:
         shade = Image.new("RGBA", (W, 520), (14, 18, 20, 0))
         shade.putalpha(Image.fromarray((115 * (1 - np.linspace(0, 1, 520)) ** 1.6)[:, None].repeat(W, 1).astype(np.uint8)))

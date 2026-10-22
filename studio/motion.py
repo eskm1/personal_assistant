@@ -43,7 +43,15 @@ THEME_FONTS = Path(__file__).resolve().parent / "cloud" / "planner" / "fonts"
 FONT_FILES = ["barlow-latin-500-normal.woff2", "barlow-latin-600-normal.woff2", "ibm-plex-sans-latin-400-normal.woff2",
               "ibm-plex-sans-latin-500-normal.woff2", "ibm-plex-sans-latin-600-normal.woff2",
               "ibm-plex-mono-latin-500-normal.woff2"]
-FAMILIES = ("Barlow", "IBM Plex Sans", "IBM Plex Mono")
+# The fonts each theme's page loads: (family, weight, file, folder). "paper" is the Urban Makers look of the explainers
+# and of the inserts in a gallery or classic Reel; "site" the inserts in a Site Notes Reel (editor.TITLE_STYLES), Archivo
+# alone (bundled with the captions' fonts).
+THEMES = {
+    "paper": [("Barlow", "500", FONT_FILES[0], THEME_FONTS), ("Barlow", "600", FONT_FILES[1], THEME_FONTS),
+              ("IBM Plex Sans", "400", FONT_FILES[2], THEME_FONTS), ("IBM Plex Sans", "500", FONT_FILES[3], THEME_FONTS),
+              ("IBM Plex Sans", "600", FONT_FILES[4], THEME_FONTS), ("IBM Plex Mono", "500", FONT_FILES[5], THEME_FONTS)],
+    "site": [("Archivo", w, f"Archivo-latin-{w}.woff2", render.RENDER_DIR / "captions" / "fonts") for w in ("700", "750", "800")],
+}
 MARK = render.RENDER_DIR / "carousel" / "um-mark.svg"
 ICONS = {k: v for k, v in json.loads((HERE / "icons.json").read_text(encoding="utf-8")).items() if not k.startswith("_")}
 
@@ -1089,11 +1097,19 @@ def _scene_times(spec: dict) -> list[tuple[float, float]]:
     return out
 
 
-def page_html(spec: dict, images: dict | None = None, mode: str = "full") -> str:
+def _font_faces(theme: str) -> str:
+    """The theme's @font-face rules (its files sit in the project's fonts/ folder)."""
+    return "".join(f'@font-face{{font-family:"{fam}";font-weight:{w};font-display:block;'
+                   f'src:url("fonts/{f}") format("woff2")}}' for fam, w, f, _ in THEMES[theme])
+
+
+def page_html(spec: dict, images: dict | None = None, mode: str = "full", theme: str = "paper") -> str:
     """The composition: a cleaned spec (validate()) as one page for HyperFrames. mode "full" is a
     whole explainer; the inserts are one scene over a talking head, transparent around it:
     "cutaway" fills the frame with paper (the content above the caption band), "panel" puts it on a
-    paper card over the top of the footage."""
+    paper card over the top of the footage. theme "site" (an insert in a Site Notes Reel): the drawing on
+    a dark panel over the footage in Archivo, a cutaway dimming the footage under it instead of covering it."""
+    site = theme == "site" and mode != "full"
     ctx = {"mode": mode, "images": images or {}}
     sx, sy, sw, sh = STAGES[mode]
     total = spec["duration"]
@@ -1113,7 +1129,10 @@ def page_html(spec: dict, images: dict | None = None, mode: str = "full") -> str
     for i, (s, (start, dur)) in enumerate(zip(spec["scenes"], times)):
         inner = BUILDERS[s["type"]](s, dur, ctx)
         last = i == len(spec["scenes"]) - 1
-        if mode == "panel":
+        if site:
+            shade = f'<div class="shade"{_a("fade", 0, 0.3)}></div>' if mode == "cutaway" else ""
+            inner = f'{shade}<div class="site-in"{_a("rise" if mode == "panel" else "fade", 0, 0.4)}>{_DEFS}{inner}</div>'
+        elif mode == "panel":
             inner = f'<div class="pcard"{_a("rise", 0, 0.5)}><div class="grid"></div>{_DEFS}</div>{inner}'
         elif mode == "cutaway":
             inner = f'<div class="cut"{_a("fade", 0, 0.3)}><div class="grid"></div>{_DEFS}</div>{inner}'
@@ -1122,9 +1141,10 @@ def page_html(spec: dict, images: dict | None = None, mode: str = "full") -> str
                      f'<div class="inner">{inner}</div></div>')
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Studio explainer</title>'
             '<link rel="stylesheet" href="motion.css">'
-            f'<style>:root{{--sx:{sx}px;--sy:{sy}px;--sw:{sw}px;--sh:{sh}px;--figmax:{FIG_MAX[mode]}px}}</style>'
+            f'<style>{_font_faces("site" if site else "paper")}'
+            f':root{{--sx:{sx}px;--sy:{sy}px;--sw:{sw}px;--sh:{sh}px;--figmax:{FIG_MAX[mode]}px}}</style>'
             '<script src="gsap.min.js"></script></head>'
-            f'<body class="mode-{mode}"><div id="main" data-composition-id="main" data-start="0" '
+            f'<body class="mode-{mode}{" theme-site" if site else ""}"><div id="main" data-composition-id="main" data-start="0" '
             f'data-duration="{total:.3f}" data-width="{W}" data-height="{H}" data-fps="{FPS}">{"".join(clips)}</div>'
             '<script src="motion.js"></script></body></html>')
 
@@ -1163,17 +1183,19 @@ def _images(spec: dict, project: Path, resolve_image=None, conn=None) -> dict:
     return found
 
 
-def build_project(spec: dict, project: Path, mode: str = "full", resolve_image=None, conn=None) -> Path:
-    """The HyperFrames project for a cleaned spec: the page, the library, GSAP and the fonts."""
+def build_project(spec: dict, project: Path, mode: str = "full", resolve_image=None, conn=None,
+                  theme: str = "paper") -> Path:
+    """The HyperFrames project for a cleaned spec: the page, the library, GSAP and the theme's fonts."""
     project.mkdir(parents=True, exist_ok=True)
     (project / "fonts").mkdir(exist_ok=True)
-    for f in FONT_FILES:
-        shutil.copy(THEME_FONTS / f, project / "fonts" / f)
+    theme = "site" if theme == "site" and mode != "full" else "paper"
+    for _, _, f, folder in THEMES[theme]:
+        shutil.copy(folder / f, project / "fonts" / f)
     for f in ("motion.css", "motion.js"):
         shutil.copy(HERE / f, project / f)
     shutil.copy(render.RENDER_DIR / "node_modules" / "gsap" / "dist" / "gsap.min.js", project)
     images = _images(spec, project, resolve_image, conn)
-    (project / "index.html").write_text(page_html(spec, images, mode), encoding="utf-8")
+    (project / "index.html").write_text(page_html(spec, images, mode, theme), encoding="utf-8")
     (project / "meta.json").write_text(json.dumps({"id": "main", "name": spec.get("title") or "explainer",
                                                    "width": W, "height": H, "fps": FPS}), encoding="utf-8")
     return project
@@ -1188,7 +1210,7 @@ def check_times(spec: dict) -> list[dict]:
     return out
 
 
-def check(project: Path, spec: dict, shots: Path | None = None) -> dict:
+def check(project: Path, spec: dict, shots: Path | None = None, theme: str = "paper") -> dict:
     """The render check (render/motion/check.mjs) on a built project: fonts, network, safe area,
     overlaps, fit. Returns its report; report["problems"] is empty when all is well. With
     `shots`, a PNG of each moment measured is saved there (a quick look without rendering)."""
@@ -1206,7 +1228,7 @@ def check(project: Path, spec: dict, shots: Path | None = None) -> dict:
         raise RuntimeError("the render check failed to run: " + (result.stderr or result.stdout).strip()[-400:])
     report = json.loads(result.stdout)
     families = {f["family"] for f in report["fonts"] if f["status"] == "loaded"}
-    for fam in FAMILIES:
+    for fam in sorted({f for f, *_ in THEMES["site" if theme == "site" else "paper"]}):
         if fam not in families:
             report["problems"].append(f"the font {fam} didn't load")
     for f in report["fonts"]:
@@ -1282,17 +1304,17 @@ def render_video(spec, out: Path, music: Path | None = None, offers: list[dict] 
 
 
 def render_insert(scene: dict, duration: float, out: Path, style: str = "cutaway", offers: list[dict] | None = None,
-                  allow_files: bool = False) -> dict:
+                  allow_files: bool = False, theme: str = "paper") -> dict:
     """One library scene as a transparent WebM (VP9 with alpha) to lay over a talking-head Reel
     while Bryan explains it; his voice and the captions carry on. style "cutaway" fills the frame
     (dissolves in and out), "panel" is a card over the top of the footage; either way the scene
-    stays above the caption band."""
+    stays above the caption band. theme "site": Site Notes' dark panel in Archivo (page_html)."""
     if style not in ("cutaway", "panel"):
         raise ValueError("style must be cutaway or panel")
     clean = validate({"scenes": [{**scene, "duration": duration}]}, offers, allow_files, insert=True)
     with tempfile.TemporaryDirectory(prefix="studio-insert-") as tmp:
-        project = build_project(clean, Path(tmp) / "insert", style)
-        report = check(project, clean)
+        project = build_project(clean, Path(tmp) / "insert", style, theme=theme)
+        report = check(project, clean, theme=theme)
         if report["problems"]:
             raise RuntimeError("the insert didn't pass its check: " + "; ".join(report["problems"][:6]))
         result = render.hyperframes(["render", str(project), "--format", "webm", "--quality", "standard",

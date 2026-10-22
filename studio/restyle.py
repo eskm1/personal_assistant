@@ -7,7 +7,8 @@ Once per RELEASE (Studio/style_release.txt remembers the last one): every Reel a
 To review is made again as its next version. A Reel gets a fresh edit (today's titles, captions and
 music taste); a carousel's slides are rewritten in the current style guide and voice and laid out
 again. The idea, Bryan's notes and the earlier versions stay. Review's "Edit it again" does the same
-for one draft or all of them.
+for one draft or all of them. A release that only changes how Reels look (RELEASE_REELS_ONLY, e.g. the
+Site Notes graphics of 2026-10-22) leaves the carousels waiting as they are.
 
 Start over (restyle = FRESH; Review's "Start over", or a RELEASE with RELEASE_FRESH, which also rejects
 each waiting draft into Done > Archived and starts its idea over as a new production: restart): a fresh
@@ -26,8 +27,13 @@ log = logging.getLogger("studio.restyle")
 
 # Bump when the look changes enough that drafts waiting for review should be made again.
 # RELEASE_FRESH: this release starts them over (a fresh edit from the footage) instead of revising them.
-RELEASE = "2026-10-21 gentle cuts, a proper ending, listen-back and watch-through, started over"
-RELEASE_FRESH = True
+RELEASE = "2026-10-22 Site Notes graphics"
+RELEASE_FRESH = False
+# What the release's Telegram says (a revision release: the waiting drafts are made again in the new look).
+RELEASE_NEWS = "Studio's new graphics look (Site Notes) is in"
+# RELEASE_REELS_ONLY: the release changes how Reels look (titles, captions, graphics, the end card), not carousels'
+# slides, so a carousel waiting for review is left as it is (a slideshow Reel is a Reel: made again).
+RELEASE_REELS_ONLY = True
 # The productions.restyle values: made again in today's look (a revision), or started over.
 AGAIN, FRESH = 1, 2
 # A fresh release rejects each waiting draft (it stays in Done > Archived with this note) and starts
@@ -104,14 +110,18 @@ def restart(conn, ids: list[int], note: str = REJECT_NOTE) -> list[tuple[int, in
 
 
 def run_once(conn) -> int:
-    """On the first start after a new RELEASE: queue every draft waiting for review. Returns how many."""
+    """On the first start after a new RELEASE: queue every draft waiting for review (every Reel, with
+    RELEASE_REELS_ONLY). Returns how many."""
     path = _mark_file()
     try:
         if path.read_text(encoding="utf-8").strip() == RELEASE:
             return 0
     except OSError:
         pass
-    n = len(restart(conn, waiting(conn))) if RELEASE_FRESH else mark(conn, waiting(conn))
+    ids = waiting(conn)
+    if RELEASE_REELS_ONLY:
+        ids = [i for i in ids if conn.execute("SELECT format FROM productions WHERE id = ?", (i,)).fetchone()[0] != "carousel"]
+    n = len(restart(conn, ids)) if RELEASE_FRESH else mark(conn, ids)
     path.write_text(RELEASE + "\n", encoding="utf-8")
     if n:
         import notify
@@ -122,6 +132,6 @@ def run_once(conn) -> int:
                      "kept in Done > Archived) and started them over from your footage, one at a time; the new edits "
                      "come back to To review."
                      if RELEASE_FRESH else
-                     f"Studio's new look is in. It's making {drafts} again in it, one at a time; they come back "
+                     f"{RELEASE_NEWS}. It's making {drafts} again in it, one at a time; they come back "
                      "to To review.") + f"\n{notify.dashboard_link('review')}")
     return n

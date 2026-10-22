@@ -284,9 +284,10 @@ w_in, rgb_in = warm(inside)
 w_before, rgb_before = warm(before)
 ok(w_in and not w_before, f"a frame in the middle shows the picture (rgb {rgb_in.round()}), a frame before it the footage "
                           f"(rgb {rgb_before.round()})")
-lab = pictures.label_image()
-tag = inside[236:236 + lab.height, 92:92 + lab.width]
-beside_tag = inside[236:236 + lab.height, 92 + lab.width + 40:92 + 2 * lab.width + 40]
+lab = pictures.label_image(titles=g.get("titles"))  # the draft's look (Site Notes' label since 2026-10-22)
+lx, ly = pictures.label_at(g.get("titles"))
+tag = inside[ly:ly + lab.height, lx:lx + lab.width]
+beside_tag = inside[ly:ly + lab.height, lx + lab.width + 40:lx + 2 * lab.width + 40]
 ok(tag.mean() < beside_tag.mean() - 40 and tag.max() > 200,
    f"the Concept mark is on it, top left (its tag {tag.mean():.0f}, the picture beside it {beside_tag.mean():.0f})")
 early = frame(final, g["start"] + 0.5, SHOTS / "early.png")

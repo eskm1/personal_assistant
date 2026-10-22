@@ -386,10 +386,11 @@ html,body{margin:0;width:1080px;height:1920px;overflow:hidden;background:var(--c
 """ % {"x": SLIDE_X, "y": SLIDE_Y, "w": SLIDE_W, "h": SLIDE_H}
 
 
-def page(shown: list[dict], total: float, end: dict | None, push: bool) -> tuple[list[str], list[str]]:
+def page(shown: list[dict], total: float, end: dict | None, push: bool, style: str | None = None
+         ) -> tuple[list[str], list[str]]:
     """The composition's clips and GSAP lines: the backdrop, each slide (the first one up from the first frame,
     the rest crossfading in over the one before; slowly pushed in, the next eased back out, and so on), and the
-    end card."""
+    end card (in the Reel's look, style)."""
     clips = [(f'<div id="bd" class="backdrop clip" data-start="0" data-duration="{total:.3f}" data-track-index="0">'
               '<div class="bg"></div></div>')]
     anims = []
@@ -406,25 +407,28 @@ def page(shown: list[dict], total: float, end: dict | None, push: bool) -> tuple
             anims.append(f"tl.fromTo('#s{k} .frame',{{scale:{a}}},{{scale:{b},duration:{span:.3f},"
                          f"ease:'none'}},{start:.3f});")
     if end:
-        markup, anim = editor._end_card_html(end)
+        markup, anim = editor.end_card_html(end, style)
         clips.append(markup)
         anims.append(anim)
     return clips, anims
 
 
 def compose(shown: list[dict], total: float, end: dict | None, out: Path, accent: str, font: str | None = None,
-            push: bool = True) -> None:
-    """The slides and the end card as one 1080x1920 video (HyperFrames, headless Chrome), no sound."""
+            push: bool = True, style: str | None = None) -> None:
+    """The slides and the end card as one 1080x1920 video (HyperFrames, headless Chrome), no sound. style: the
+    Reel's look (editor.title_style), for its end card (Site Notes': over the last slide, Archivo)."""
+    style = editor.title_style(style)
+    site = style == "site"
     with tempfile.TemporaryDirectory(prefix="studio-slideshow-") as tmp:
         project = Path(tmp) / "slideshow"
         project.mkdir()
-        css = editor._overlay_assets(project, font, serif=bool(end))
+        css = editor._overlay_assets(project, font, serif=bool(end) and not site, site=site and bool(end))
         for k, s in enumerate(shown):
             shutil.copy(s["file"], project / f"s{k:02d}.png")
-        clips, anims = page(shown, total, end, push)
+        clips, anims = page(shown, total, end, push, style)
         (project / "index.html").write_text(
             '<!doctype html><html><head><meta charset="utf-8"><script src="gsap.min.js"></script>'
-            f"<style>{''.join(css)}{editor._theme_css(accent)}{_CSS}{editor._END_CSS if end else ''}</style>"
+            f"<style>{''.join(css)}{editor._theme_css(accent, style)}{_CSS}{editor.end_css(style) if end else ''}</style>"
             f'</head><body><div id="slideshow" data-composition-id="slideshow" data-start="0" '
             f'data-duration="{total:.3f}" data-width="{W}" data-height="{H}">' + "".join(clips) + "</div>"
             "<script>const tl=gsap.timeline({paused:true});" + "".join(anims) +
@@ -528,7 +532,7 @@ def _render(conn, production: dict, plan: dict, slides: list[dict], state: dict,
     with tempfile.TemporaryDirectory(prefix="studio-slides-") as tmp:
         work = Path(tmp)
         compose(shown, total, end, work / "slides.mp4", editor.ACCENT.get(production["brand"], editor.ACCENT["urban_makers"]),
-                font=look["caption_font"], push=push)
+                font=look["caption_font"], push=push, style=look["titles"])
         _with_silence(work / "slides.mp4", work / "cut.mp4", total)
         if music_file:
             sound = editor.mix_final(work / "cut.mp4", None, music_file, state["music"]["volume_db"], total, final)

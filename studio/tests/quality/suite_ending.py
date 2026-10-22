@@ -363,6 +363,9 @@ idea_of = {i: conn.execute("select id from ideas where production_id=?", (i,)).f
 sent = []
 import notify
 notify.send = lambda text, *a, **k: sent.append(text)
+# A fresh release (the endings fix of 2026-10-21) is what this holds; today's RELEASE is a look release, made again
+# rather than started over (suite_look.py), so the fresh kind is set here as it was.
+restyle.RELEASE, restyle.RELEASE_FRESH = "2026-10-21 gentle cuts, a proper ending, listen-back and watch-through, started over", True
 n = restyle.run_once(conn)
 rows = {r["id"]: dict(r) for r in conn.execute("select * from productions")}
 ok(n == len(waiting) == 3, f"the three drafts waiting for review are handled ({n})")

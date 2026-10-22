@@ -1027,8 +1027,8 @@ def render_picture(edl: dict, cuts: list[dict], clips: dict[int, dict], words: l
 
 
 def lit_beside(chunks: list[dict], pip: dict | None) -> list[dict]:
-    """Captions beside the window sit on site footage, busy and often bright: they get the gallery look's stronger
-    glow and the soft shade that hugs their words ("lit") while the window is up."""
+    """Captions beside the window sit on site footage, busy and often bright: they get the stronger glow and the soft
+    shade that hugs their words ("lit", in the gallery and Site Notes looks) while the window is up."""
     spans = (pip or {}).get("spans") or []
     return [{**c, "lit": True} if any(c["start"] < b and c["end"] > a for a, b in spans) else c for c in chunks]
 

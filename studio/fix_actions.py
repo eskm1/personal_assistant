@@ -15,7 +15,7 @@ draft is rendered again with every code check (voice edges, the clipped-word che
   move_cut        a cut point moved by some seconds, to the edge of a word
   graphic         a card, callout, drawn animation or picture (by its number in the read) moved, retimed,
                   reworded or removed, or made a picture ("picture": an AI picture of what it shows, pictures.py)
-  hook_text       the hook reworded (its *italic* word as the gallery look wants)
+  hook_text       the hook reworded (its *marked* word, set in the look's accent: brass, or the gallery's italic)
   music_level     the music turned down or up by some dB
   layout          a voice-over's picture (voiceover.py): Bryan full screen for a stretch ("full"), the site
                   footage and his window back there ("window"), or his window moved "left" or "right"
@@ -473,7 +473,7 @@ def _caption(draft: Draft, edl: dict, a: dict) -> str:
     if not found_c:
         raise NotApplied("those words run across two shots")
     spelling.merge(edl, found_c)
-    # A caption key word (the gallery look's serif italic) follows its word.
+    # A caption key word (Site Notes' brass, the gallery look's serif italic) follows its word.
     old = {editor._core(w["word"]).lower() for w in draft.words[i:j + 1]}
     if edl.get("key_words") and old & {k.lower() for k in edl["key_words"]}:
         new_core = editor._core(to.split()[-1])

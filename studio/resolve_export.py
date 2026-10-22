@@ -309,7 +309,7 @@ def build(conn, production_id: int) -> Path:
         chunks = editor.caption_chunks(editor.timeline(cuts, clips), close_at)
         accent = editor.ACCENT.get(production["brand"], "#ff4d6d")
         look = editor.draft_look(edl)  # the draft's own titles and caption font
-        if look["titles"] == "gallery":
+        if look["titles"] in ("gallery", "site"):
             chunks = editor.lit_captions(editor.key_word_captions(chunks, edl.get("key_words") or []), edl.get("bright"))
             if pip.get("spans"):
                 import voiceover

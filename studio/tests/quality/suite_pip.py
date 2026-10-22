@@ -484,16 +484,35 @@ def old_render(cuts, clips, out):
 
 
 old.render_cut = old_render
+# In the look the editor before made (gallery): Site Notes (2026-10-22, suite_look.py) changed the look on purpose
+# since, and the prompt's three lines on titles, key words and cards with it (LOOK_WORDING); nothing else.
+settings.TITLE_STYLE = "gallery"
 pid_o, fake_o = production([SITE], "On site (before)", SITE_CUTS, picture=False)
 anthropic.Anthropic = lambda **kw: fake_o
 final_o = old.edit(conn, pid_o, client=fake_o, find_track=fake_track)
 pid_n, fake_n = production([SITE], "On site (now)", SITE_CUTS, picture=False)
 anthropic.Anthropic = lambda **kw: fake_n
 final_n = editor.edit(conn, pid_n, client=fake_n, find_track=fake_track)
+settings.TITLE_STYLE = "site"
 eo, en = json.loads(row(pid_o)["edl"]), json.loads(row(pid_n)["edl"])
 ok(eo == en, "on site, talking head only: the edit plan is exactly what the editor before made"
    + ("" if eo == en else f" (differs in {sorted(k for k in set(eo) | set(en) if eo.get(k) != en.get(k))})"))
-ok(fake_o.calls[0]["system"] == fake_n.calls[0]["system"], "the same prompt")
+LOOK_WORDING = [
+    ('are set in a serif with at most one word in italic: mark that word with *asterisks*, e.g. "Floors *stripped*", '
+     '"The *screed* goes first". Only a real key word',
+     "pick out at most one word (Studio sets it apart in the look's accent: brass, or a serif italic): mark that word "
+     'with *asterisks*, e.g. "Floors *stripped*", "The *screed* goes first". Only a real key word'),
+    ("the captions set in italic for emphasis", "the captions pick out for emphasis (in the accent)"),
+    ('style "card" fills the screen with a headline and up to 3 short points (good for steps, lists or the key '
+     'takeaway); style',
+     'style "card" shows a headline and up to 3 short points (good for steps, lists, numbers or the key takeaway: a '
+     'point with one number, as "Older HDB 30A", is drawn as a bar; "Now: ..." and "The plan: ..." as labelled pairs); '
+     'style'),
+]
+before_prompt = fake_o.calls[0]["system"]
+for was, now in LOOK_WORDING:
+    before_prompt = before_prompt.replace(was, now)
+ok(before_prompt == fake_n.calls[0]["system"], "the same prompt (but for Site Notes' three lines on titles, key words, cards)")
 diffs = []
 for t in (0.8, 5.0, 10.0, row(pid_n)["duration"] - 0.5):
     a1 = frame(final_o, t, SHOTS / f"old_{t:.1f}.png")

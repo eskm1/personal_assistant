@@ -207,7 +207,8 @@ previous, Space to play, Esc to go back, Enter to add a note.
 version: a Reel gets a fresh edit (titles, captions, music taste), a carousel's slides are rewritten in the current
 style guide and laid out again. **Edit all N waiting again** does every draft in To review. Notes and earlier versions
 stay. When Studio's look changes (`restyle.RELEASE`), it does this by itself once, on its first start after the
-update, and says so on Telegram.
+update, and says so on Telegram (2026-10-22, the Site Notes graphics: every Reel waiting for review is made again in
+the new look; carousels, whose slides didn't change, are left as they are).
 
 **Ideas** (this tab is for when planning isn't online; with the online planner, ideas live only
 there and come from new footage by themselves, section 12): on the Ideas tab, press **Suggest posts** (optionally with a focus such as "kitchen
@@ -327,19 +328,33 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    where it meets another shot gets the rest of that sentence back the same way.
    **The close**: every Reel ends on a complete sentence, then a short beat (about 0.8 s) on the last
    shot (its own footage after your last word; when the clip ends there, its last frame is held), then
-   the Urban Makers end card for 1.8 s: the mark, the post's ask in the serif (the plan's call to action,
-   short, never a price or an offer it doesn't have) and @urbanmakers_sg (or the connected account's
-   handle). The picture dissolves into it, captions are off while it's up, your shot's sound fades and
+   the Urban Makers end card for 1.8 s: the mark, the post's ask (the plan's call to action, short, never
+   a price or an offer it doesn't have) and @urbanmakers_sg (or the connected account's handle); in Site
+   Notes over the last frame under a dark shade, the ask big with one word in brass and the handle on a brass
+   label, in the gallery look on the account's green with the ask in the serif. The picture dissolves into it, captions are off while it's up, your shot's sound fades and
    the music fades out over the last 1.2 s. No card, callout or drawn animation runs into the close (one
    that would is shortened, moved earlier or left out). `STUDIO_END_CARD=0` ends after the beat with no
    card; personal posts get no card. The Resolve project gets it too (the card on the graphics layer).
 4. HyperFrames renders the captions (1 to 3 words in sentence case, timed to each word) and the
    hook as a transparent layer over the footage, in fonts bundled in `studio/render/captions/fonts`
-   (`STUDIO_CAPTION_FONT`: `inter`, the default, `figtree`, `nunito`, `dm_sans` or `outfit`; nothing
-   depends on the machine's fonts or the network). Cards stay above the caption line, and a caption that
-   repeats a card's words is hidden while the card is up.
-   **The look** (`STUDIO_TITLE_STYLE`, your pick of 2026-10-20: "A with C's italic key word in captions"):
-   `gallery`, the default: the hook, callouts and cards are a large serif title (Instrument Serif) in
+   (Archivo in Site Notes; in the gallery and classic looks `STUDIO_CAPTION_FONT`: `inter`, the default,
+   `figtree`, `nunito`, `dm_sans` or `outfit`; nothing depends on the machine's fonts or the network).
+   Cards stay above the caption line, and a caption that repeats a card's words is hidden while the card is up.
+   **The look** (`STUDIO_TITLE_STYLE`): `site`, **Site Notes**, the default (your pick of 2026-10-22, "go
+   with A for now", from the proposal https://claude.ai/artifact/TwCheZsi7ywNKNEAEJ3FcM): one font, Archivo
+   (bold, bundled with its licence), for every word in the Reel: captions, hook, callouts, cards, the drawn
+   animations, the Concept label on a picture and the end card. Captions are 74 px bold white in sentence
+   case with a soft shadow (beside a voice-over's window a little smaller, 60 px, so a long word fits); a key
+   word now and then is in **brass** instead of italic (the same rules as below). The hook is stacked on tight
+   dark labels from the top left (104 px, its key word in brass), with no shade over the top of the frame; a
+   callout is a brass label (and its line on a dark one), pointing at the thing with a brass line and dot
+   when the plan says where it is. Cards never fill the screen: a dark panel over the top of the footage (a
+   headline and its points; points with one number each, "Older HDB 30A", as big digits and bars; "Now: ..."
+   / "The plan: ..." as labelled pairs). Drawn animations are the same drawings in white on a dark panel over
+   the footage (a "cutaway" dims the footage under it instead of covering it); a picture stays full screen
+   with one small "Concept · not a photo" label. Brass is the only accent colour on screen. The only
+   full-screen card is the end card. Going back is one setting: `STUDIO_TITLE_STYLE=gallery`.
+   `gallery`, the look before (your pick of 2026-10-20: "A with C's italic key word in captions"): the hook, callouts and cards are a large serif title (Instrument Serif) in
    sentence case with one word in italic ("Floors *stripped*"), a short hairline and a quiet line under
    it; no box, no side bar, no orange. A soft shade comes down from the top while a title is up; the
    words rise into place one after another, the hairline draws, the line under it fades up. Captions
@@ -434,7 +449,7 @@ sentences only), `STUDIO_END_CARD` (default on),
 `STUDIO_REEL_PICTURES_MAX` (default 4). The fix rounds,
 learning, caption font and music gap are too: `STUDIO_SELF_FIX_ROUNDS`, `STUDIO_SELF_FIX_MAX_USD`, `STUDIO_FINAL_CHECK`,
 `STUDIO_SPELL_CHECK`, `STUDIO_SPELL_MODEL`, `STUDIO_LEARN_RULES`,
-`STUDIO_LEARNED_RULES_MAX`, `STUDIO_CAPTION_FONT`, `STUDIO_TITLE_STYLE` (`gallery` or `classic`),
+`STUDIO_LEARNED_RULES_MAX`, `STUDIO_CAPTION_FONT`, `STUDIO_TITLE_STYLE` (`site`, the default, `gallery` or `classic`),
 `STUDIO_MUSIC_GAP_DB`. Older drafts keep their look until they're revised. A draft
 remembers its pieces and framing, so a re-render (after a subtitle fix, say) and the Resolve
 project match it.
@@ -445,7 +460,8 @@ the last cut, its cards and Studio's read of it are set aside (cutting a cut aga
 open notes still go in, and the version number carries on. A carousel's Start over rewrites the slides from the
 plan. When Studio's editing changes enough (2026-10-21: gentler cuts and the close), the drafts waiting for review
 are rejected on the next start (kept in Done > Archived, noted "Rejected for a fresh edit after the endings fix")
-and each idea starts over as a new edit, once; Telegram says so.
+and each idea starts over as a new edit, once; Telegram says so. When only the look changes (2026-10-22: the Site
+Notes graphics), the Reels waiting are made again in it instead (Edit it again), once.
 
 Drafts are saved in `Studio\Renders`. If an edit fails, the draft shows the reason and a
 **Retry edit** button. To edit one production by hand: `worker.py --edit <id>`. To run the

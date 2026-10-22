@@ -212,7 +212,7 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   (voice cleaned and levelled, music `STUDIO_MUSIC_GAP_DB` under it) and bundled caption fonts
   (`render/captions/fonts`, `STUDIO_CAPTION_FONT`).
 - Titles and captions, Bryan's pick 2026-10-20 ("A with C's italic key word in captions"), built 2026-10-20, not yet
-  seen on a real draft: `STUDIO_TITLE_STYLE=gallery` (default; `classic` = the first look) in `editor.py`
+  seen on a real draft: `STUDIO_TITLE_STYLE=gallery` (the default until 2026-10-22; `classic` = the first look) in `editor.py`
   (`_GALLERY_CSS`, `_gallery_title`): Instrument Serif titles with one italic word (Claude marks it `*word*`;
   `tidy_plan` strips every asterisk and keeps the word as `hook_italic` / a graphic's `italic`), hairline, top shade;
   captions Inter (now the `STUDIO_CAPTION_FONT` default) with a glow, a stronger glow + hugging shade over bright
@@ -220,6 +220,15 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   italic (`key_word_captions`, at most one per caption and per ~4 s, none in Chinese). A draft keeps its look
   (`edl["look"]`, `draft_look`; drafts from before stay classic/Figtree until revised); Resolve uses the same. The
   caption font is now settled (Inter); the taste report may still suggest changes.
+- Site Notes graphics, Bryan's pick 2026-10-22 ("go with A for now", https://claude.ai/artifact/TwCheZsi7ywNKNEAEJ3FcM),
+  built 2026-10-22, not yet seen on a real draft: `STUDIO_TITLE_STYLE=site` (now the default; `gallery` is the way back)
+  in `editor.py` (`_SITE_CSS`, `site_layout`, `_site_title`, `_site_card`, `_site_end_html`): Archivo only (bundled
+  700/750/800 at 88% width + OFL in `render/captions/fonts`), captions 74 px 750 with the key word in brass, hook and
+  callouts on dark labels (a callout's leader only when a graphic carries `point`, which the plan schema doesn't ask for
+  yet), cards as a dark panel over the footage (numbers as bars, "Now:"/"The plan:" pairs), drawn inserts in Archivo on
+  a dark panel (`motion.py` theme "site", `.theme-site` in motion.css), the picture's "Concept · not a photo" label
+  (`pictures.label_image`), the end card over the last frame; `final_check` measures its boxes (a card can now be flagged
+  over the face). `restyle.RELEASE` "2026-10-22 Site Notes graphics", a revision release, Reels only. `suite_look.py`.
 - Restyle (Bryan, 2026-10-20: "as soon as the style guide is re-released, just refresh all of the work in progress
   posts"): `restyle.py` runs once per `RELEASE` on the editor's start (Studio/style_release.txt): every draft in To
   review goes back to `revising` with `restyle = 1` (a Reel gets a fresh edit; a carousel is rewritten from

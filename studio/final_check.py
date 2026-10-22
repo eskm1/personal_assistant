@@ -18,8 +18,9 @@ Listen back: the finished sound against the words the cut list meant to keep.
                doesn't carry on (a join Claude already judged reads complete stays as it is)
   ends_mid     the voice ends partway through a sentence
 Watch through: the picture at SAMPLE_FPS against the edit plan's hook, cards, drawings and pictures.
-  covers_face  the hook, a callout or a panel (drawn or a picture) over the face (framing.find_faces) for
-               more than COVER_SECONDS; full-screen cards, drawings and pictures replace the picture on purpose
+  covers_face  the hook, a callout or a panel (drawn or a picture; in Site Notes a card too, a panel over the
+               footage) over the face (framing.find_faces) for more than COVER_SECONDS; full-screen cards,
+               drawings and pictures replace the picture on purpose
   flash        a graphic up for less than FLASH seconds
   too_fast     words that leave before they can be read: READ_BASE + READ_PER_CHAR a character,
                at least READ_MIN (the end card is deliberate and not held to it); a picture (pictures.py)
@@ -549,9 +550,12 @@ def frames(video: Path) -> np.ndarray:
 
 def _text_box(text: str, sub: str, look: str, kind: str) -> tuple[float, float, float, float]:
     """Where a title's words sit on the Reel (x0, y0, x1, y1 in its pixels), from the overlay's
-    layout (editor._GALLERY_CSS / _OVERLAY_CSS): the serif title at top 318 (gallery), the boxed
-    hook at 250 or the callout at 300 (classic). An estimate from the text's length."""
+    layout (editor._SITE_CSS / _GALLERY_CSS / _OVERLAY_CSS): Site Notes' labels stacked from x 64, y 300,
+    measured as the overlay sets them (editor.site_layout); the serif title at top 318 (gallery), the boxed
+    hook at 250 or the callout at 300 (classic), an estimate from the text's length."""
     n = max(len(text), 1)
+    if look == "site":
+        return editor.site_layout(kind, text, "", [sub] if sub else [])["box"]
     if look == "gallery":
         px = editor._title_px(text)
         width = 848.0
@@ -568,7 +572,8 @@ def _text_box(text: str, sub: str, look: str, kind: str) -> tuple[float, float, 
 def shown(edl: dict, total: float) -> list[dict]:
     """What the draft shows over the footage, in time order: the hook and every graphic, each with
     {n (its number in the read, None for the hook), kind, style, start, end, text, box (None when
-    it fills the screen: a card, a full-screen drawing, the end card), g (the graphic)}; on a slideshow
+    it fills the screen: a card, a full-screen drawing, the end card; Site Notes' card is a panel or labels over
+    the footage, so it has its box), g (the graphic)}; on a slideshow
     Reel each slide too (kind "slide", n None, slide: its number)."""
     look = editor.draft_look(edl)["titles"]
     close = edl.get("close") or {}
@@ -594,8 +599,9 @@ def shown(edl: dict, total: float) -> list[dict]:
             out.append({"n": n, "kind": "drawing" if style == "scene" else "picture", "style": style, "start": s, "end": e,
                         "text": title, "box": box, "g": g})
         elif style == "card":
+            box = editor.site_layout("card", title, g.get("italic") or "", lines)["box"] if look == "site" else None
             out.append({"n": n, "kind": "card", "style": style, "start": s, "end": e,
-                        "text": " ".join([title] + lines), "box": None, "g": g})
+                        "text": " ".join([title] + lines), "box": box, "g": g})
         else:
             sub = lines[0] if lines else ""
             out.append({"n": n, "kind": "callout", "style": style, "start": s, "end": e,
