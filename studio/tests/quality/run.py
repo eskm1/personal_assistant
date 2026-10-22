@@ -1,5 +1,5 @@
 """Run Studio's edit-quality suites: cuts, endings, listen-back and watch-through, fix rounds, slideshow
-Reels, voice-overs, Whisper's prompt. One line per suite with its pass count; exits 1 if any check fails.
+Reels, voice-overs, picture inserts, Whisper's prompt. One line per suite with its pass count; exits 1 if any check fails.
 
     python tests/quality/run.py                # from studio/, all suites, 4 at a time
     python tests/quality/run.py cuts ending    # just these
@@ -23,6 +23,7 @@ SUITES = {
     "ending": ("suite_ending.py", [], 71),
     "patches": ("suite_patches.py", [], 59),
     "slideshow": ("suite_slideshow.py", [], 97),
+    "pictures": ("suite_pictures.py", [], 63),
     "cuts": ("suite_cuts.py", [], 41),
     "edit_units": ("suite_edit_units.py", [], 77),
     "whisper_prompt": ("suite_whisper_prompt.py", [], 10),

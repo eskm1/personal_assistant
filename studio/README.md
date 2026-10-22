@@ -365,6 +365,8 @@ background, one at a time, and lands in **To review**, usually a few minutes lat
    Each is drawn once and kept (`Studio\Renders\inserts`, cleared after 45 days unused), so a fix
    round or a re-render that keeps it doesn't draw it again. Notes like "too many animations" or "more
    diagrams" change how freely the editor draws from then on (a line in Studio's playbook section).
+   Where a real-looking thing (a glass panel, a finish, a finished look) explains it better than a drawing, the
+   editor shows an AI picture instead (**Pictures instead of drawings**, below).
 5. Sound: your voice is cleaned up (a gentle high-pass and noise reduction) and brought to a steady
    level first, then the music is set against it: about 9 dB under your voice where nobody talks,
    and `STUDIO_MUSIC_GAP_DB` (default 20) dB under it while you talk, with smooth dips timed to your
@@ -428,7 +430,8 @@ The jump cuts, reframing and punch-ins are settings in `.env` (all on by default
 **Restart Studio**): `STUDIO_EDIT_JUMP_CUTS`, `STUDIO_EDIT_MAX_PAUSE` (seconds, default 0.7; pauses between
 sentences only), `STUDIO_END_CARD` (default on),
 `STUDIO_EDIT_REFRAME`, `STUDIO_EDIT_PUNCH_INS`, `STUDIO_EDIT_PUNCH_ZOOM` (default 1.12), `STUDIO_EDIT_SCENES`,
-`STUDIO_EDIT_SCENES_MAX` (default 3; `0` = none). The fix rounds,
+`STUDIO_EDIT_SCENES_MAX` (default 3; `0` = none), `STUDIO_REEL_PICTURES` (AI pictures, below; default on),
+`STUDIO_REEL_PICTURES_MAX` (default 4). The fix rounds,
 learning, caption font and music gap are too: `STUDIO_SELF_FIX_ROUNDS`, `STUDIO_SELF_FIX_MAX_USD`, `STUDIO_FINAL_CHECK`,
 `STUDIO_SPELL_CHECK`, `STUDIO_SPELL_MODEL`, `STUDIO_LEARN_RULES`,
 `STUDIO_LEARNED_RULES_MAX`, `STUDIO_CAPTION_FONT`, `STUDIO_TITLE_STYLE` (`gallery` or `classic`),
@@ -451,6 +454,37 @@ list to `Studio\logs\epidemic_tools.json`, which is useful when the music step m
 
 Each draft costs one Claude call to plan the cut plus a few short calls to pick music,
 typically tens of cents.
+
+### Pictures instead of drawings
+
+Some things a drawing can't show: what a reeded glass panel looks like, a fluted timber wall, a terrazzo floor, a
+joinery detail, a finished look. Where a real-looking thing explains what you're saying better than a diagram, the
+editor shows an **AI picture** of it over the footage instead of a drawn animation (your call of 2026-10-20: "there
+are many instances where an animation just doesn't cut it", and "Gemini OK" on 2026-10-22). Processes, steps,
+layers, measurements, comparisons and numbers stay drawings.
+
+- **How it looks**: full screen (or a card over the top of the picture when that keeps your face clear), a slow
+  push-in, a soft dissolve in and out, and a small **Concept** mark top left, as on the carousels' concept slides,
+  so nobody takes it for a finished project. Your voice and the captions carry on over it. Each is on screen 2.5 to
+  6 seconds, timed to your words; never in the first 2 seconds (the hook stays on you), never within a second of the
+  close, and together with the drawings about one every 10 seconds.
+- **Asking for one**: a note like "**use an image of a decorative glass panel here instead of the animation**" (or
+  "a photo of fluted glass here") makes that moment a picture of what you named when you send it back, whatever the
+  editor plans. Studio's own read can do the same before you see a draft when a drawing shows a real thing badly.
+- **How it's made**: the editor writes a short picture brief (the thing, its material and light, the Urban Makers
+  look); Google's Gemini draws **one** picture (9:16), the same way as the carousels' concept pictures; Claude checks
+  it (a warped panel, lettering, a face, not the thing asked for) and it's drawn once more with the problem named
+  only when the check finds it wrong. Never words, logos, people, faces or real places; never a client's home or
+  real work, and never in a **Finished homes** post.
+- **Cost**: about US$0.03 to 0.04 a picture (`STUDIO_IMAGE_COST_USD`), at most `STUDIO_REEL_PICTURES_MAX` (default
+  4) new pictures a draft, Studio's own fix rounds included. Every picture is kept (`Studio\Concepts`), so a
+  re-render, a fix round or a new version that keeps it pays nothing. The draft's cost line says how many were shown
+  and drawn, and what they cost; they count in the month's pictures with the carousels'.
+- **When there's no picture**: with no image key (see "AI concept pictures" in section 12), `STUDIO_REEL_PICTURES=0`,
+  or when Gemini is down or the picture comes out wrong twice, the insert is drawn instead (the editor's own drawing
+  for it, or its words as a headline), and "What the editor did" says so once. A draft is never held up by a picture.
+- Studio's read and its watch-through treat a picture like a drawing (long enough to see, clear of your face, gone
+  before the close). The DaVinci Resolve project has the pictures on the drawn animations' track.
 
 ### Voice-overs: film on site, talk in the studio
 
@@ -1158,8 +1192,9 @@ Files the worker can't use are moved out of the inbox, not deleted. They go to
 ## Cost
 
 Whisper runs locally for free. Each clip is one Claude call with up to 20 small frames
-plus the transcript. AI concept pictures for carousels are Google Gemini's, about US$0.03 each
-(`STUDIO_IMAGE_COST_USD`); the dashboard shows them next to the Claude cost. Suggested topics are one Claude
+plus the transcript. AI concept pictures for carousels, and the pictures a Reel shows instead of a drawing, are Google
+Gemini's, about US$0.03 each (`STUDIO_IMAGE_COST_USD`; a Reel at most 4 new ones, `STUDIO_REEL_PICTURES_MAX`); the
+dashboard shows them next to the Claude cost. Suggested topics are one Claude
 call a week (plus any when the month falls behind or someone presses Suggest topics), a few cents each. Check the first week's usage in the Anthropic console before you
 send it a backlog of hundreds of clips. The words filter (section 17) adds about a cent per draft or idea run when a
 rewrite is needed, and the voice file about 10 cents each time it's written. To spend less, set `STUDIO_CLAUDE_EFFORT=low` or

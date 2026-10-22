@@ -34,6 +34,10 @@ try {
   await page.waitForFunction(() => window.__motionReady === true, { timeout: 60000 });
   const fonts = await page.evaluate(async () => {
     await document.fonts.ready;
+    // A face the page doesn't use yet stays "unloaded" (Chrome loads fonts lazily), which made an insert that
+    // only shows a headline fail as "didn't load": load every bundled face, so the check is about the files
+    // (a missing or broken one still ends up "error").
+    await Promise.all([...document.fonts].map((f) => f.load().catch(() => null)));
     return [...document.fonts].map((f) => ({ family: f.family.replace(/"/g, ""), weight: f.weight, status: f.status }));
   });
   const fit = await page.evaluate(() => [...document.querySelectorAll(".scene")].map((s) => {

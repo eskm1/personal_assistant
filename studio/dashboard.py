@@ -811,6 +811,7 @@ def production_detail(production_id: int):
                  "graphics": len((edl or {}).get("graphics", [])),
                  "wishlist": json.loads(row["plan"] or "{}").get("wishlist", []),
                  "cost": usage.total_for(db(), f"production:{production_id}") if is_owner() else None,
+                 "cost_parts": usage.parts_for(db(), f"production:{production_id}") if is_owner() else None,
                  **_learning_detail(row, "reel"),
                  "music": json.loads(row["music"]) if row["music"] else None,
                  "qa": {k: v for k, v in json.loads(row["qa"]).items() if k != "heard"} if row["qa"] else None,

@@ -17,14 +17,15 @@ Listen back: the finished sound against the words the cut list meant to keep.
                stutters), or a shot that stops partway through a sentence where the next shot
                doesn't carry on (a join Claude already judged reads complete stays as it is)
   ends_mid     the voice ends partway through a sentence
-Watch through: the picture at SAMPLE_FPS against the edit plan's hook, cards and drawings.
-  covers_face  the hook, a callout or a panel over the face (framing.find_faces) for more than
-               COVER_SECONDS; full-screen cards and drawings replace the picture on purpose
+Watch through: the picture at SAMPLE_FPS against the edit plan's hook, cards, drawings and pictures.
+  covers_face  the hook, a callout or a panel (drawn or a picture) over the face (framing.find_faces) for
+               more than COVER_SECONDS; full-screen cards, drawings and pictures replace the picture on purpose
   flash        a graphic up for less than FLASH seconds
   too_fast     words that leave before they can be read: READ_BASE + READ_PER_CHAR a character,
-               at least READ_MIN (the end card is deliberate and not held to it)
+               at least READ_MIN (the end card is deliberate and not held to it); a picture (pictures.py)
+               gone before it can be seen (pictures.SEE_SECONDS)
   repeat       the same animation twice back to back
-  late         a card or drawing still on within editor.END_CLEAR of the close, or the end card
+  late         a card, drawing or picture still on within editor.END_CLEAR of the close, or the end card
                still moving in the draft's last moments (the video ending mid-animation)
 
 Each flag becomes a fix in Studio's read, in the read's own shape (what, why, start, end, area,
@@ -588,9 +589,10 @@ def shown(edl: dict, total: float) -> list[dict]:
         s, e = float(g["start"]), float(g["start"]) + float(g["duration"])
         lines = [editor.unmark(x) for x in g.get("lines") or [] if editor.unmark(x)]
         title = editor.unmark(g.get("title") or "")
-        if style == "scene":
+        if style in ("scene", "picture"):
             box = (40.0, float(editor.PANEL_TOP), editor.W - 40.0, float(editor.PANEL_BOTTOM)) if g.get("look") == "panel" else None
-            out.append({"n": n, "kind": "drawing", "style": style, "start": s, "end": e, "text": title, "box": box, "g": g})
+            out.append({"n": n, "kind": "drawing" if style == "scene" else "picture", "style": style, "start": s, "end": e,
+                        "text": title, "box": box, "g": g})
         elif style == "card":
             out.append({"n": n, "kind": "card", "style": style, "start": s, "end": e,
                         "text": " ".join([title] + lines), "box": None, "g": g})
@@ -701,7 +703,10 @@ def watch(job: dict) -> tuple[list[dict], int]:
                                 x["end"], _action("replan", start=x["start"], end=x["end"],
                                                   reason=f"slide {x['slide']} up {need:.1f}s"), x["text"], area="captions"))
         elif x["kind"] != "hook" or x.get("cut_by"):
-            need = _need(x["text"]) if x["text"] else FLASH
+            need = _need(x["text"]) if x["text"] and x["kind"] != "picture" else FLASH
+            if x["kind"] == "picture":  # nothing to read (but its mark): long enough to see what it shows
+                import pictures
+                need = pictures.SEE_SECONDS
             if length < FLASH or length < need - 0.05:
                 out.append(_time_fix(x, name, length, need, graphics, clear_by))
         # Still on at the close
@@ -733,6 +738,8 @@ def _same(a: dict, b: dict, grey: np.ndarray) -> bool:
     if a["text"] and norm(a["text"]) == norm(b["text"]):
         return True
     ga, gb = a["g"] or {}, b["g"] or {}
+    if a["kind"] == "picture" and b["kind"] == "picture":
+        return bool(ga.get("picture")) and ga.get("picture") == gb.get("picture")
     if a["kind"] != "drawing" or b["kind"] != "drawing":
         return False
     if ga.get("scene") and json.dumps(ga.get("scene"), sort_keys=True) == json.dumps(gb.get("scene"), sort_keys=True):
@@ -765,7 +772,7 @@ def _cover_fix(x: dict, name: str, faces: _Faces, graphics: list[dict], clear_by
         return _fix("covers_face", f"Keep the hook clear of the face at {_mmss(t)}", why, t, x["end"],
                     _action("replan", start=t, end=x["end"], reason="the hook title covers the face: a shorter hook"),
                     x["text"], area="hook")
-    if x["kind"] == "drawing":
+    if x["kind"] in ("drawing", "picture"):
         return _fix("covers_face", f"Show {name} full screen at {_mmss(t)}", "As a panel it covers the face.",
                     t, x["end"], _action("replan", start=t, end=x["end"], reason="the panel covers the face: full screen"),
                     x["text"])
@@ -792,7 +799,7 @@ def _time_fix(x: dict, name: str, length: float, need: float, graphics: list[dic
         return _fix(kind, f"Give the hook its time: start the next title at {_mmss(need + 0.1)}", why, t, x["end"],
                     _action("graphic", start=round(need + 0.1, 2), item=nxt["n"], field="time",
                             amount=round(nxt["end"] - nxt["start"], 2)), x["text"], area="hook")
-    longest = editor.SCENE_LONGEST if x["kind"] == "drawing" else CARD_LONGEST
+    longest = editor.SCENE_LONGEST if x["kind"] in ("drawing", "picture") else CARD_LONGEST
     start = min(t, clear_by - need)
     if need > longest + 0.05 or start < editor.HOOK_SECONDS_SHOWN:
         return _fix(kind, f"Put fewer words on {name} at {_mmss(t)}", why, t, x["end"],
@@ -806,7 +813,7 @@ def _late_fix(x: dict, name: str, clear_by: float, graphics: list[dict]) -> dict
     """A graphic still on at the close: shortened, moved earlier (clear of the others), or (no room)
     taken off, as editor.clear_of_end does."""
     t, length = x["start"], x["end"] - x["start"]
-    shortest = editor.SCENE_MIN if x["kind"] == "drawing" else max(READ_MIN, _need(x["text"]) if x["text"] else 1.0)
+    shortest = editor.SCENE_MIN if x["kind"] in ("drawing", "picture") else max(READ_MIN, _need(x["text"]) if x["text"] else 1.0)
     why = "It's still on as the video closes, so it ends mid-animation."
     if clear_by - t >= shortest:
         action = _action("graphic", start=t, item=x["n"], field="time", amount=round(clear_by - t, 2))

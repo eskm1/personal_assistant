@@ -234,7 +234,7 @@ number, price, duration or key term (title is the big text, lines one short labe
 own words and facts; never invent numbers. Title at most 5 words, each line at most 4 words. \
 Leave the first 2.5 seconds clear for the hook. Use none if nothing in the speech suits a graphic. \
 For a card or callout, scene and why are "", look "cutaway" and role "explain".
-{scene_rule}{voiceover_rule}- missing_shots: footage you wished you had while cutting this post, specific enough to film \
+{scene_rule}{picture_rule}{voiceover_rule}- missing_shots: footage you wished you had while cutting this post, specific enough to film \
 (what, framing, roughly how long), each with why it would make the post better. Empty if none.
 - summary: two sentences on what you did, for Bryan.
 - On a revision, address every note and say how in notes_addressed. Notes are pinned to times \
@@ -305,12 +305,16 @@ def _scene_rule() -> str:
                               lean=f"\n  - {lean}" if lean else "")
 
 
-def _schema() -> dict:
-    """The edit plan's schema; without the scene style when drawn inserts are off."""
-    if _scene_rule():
-        return EDL_SCHEMA
-    schema = json.loads(json.dumps(EDL_SCHEMA))
-    schema["properties"]["graphics"]["items"]["properties"]["style"]["enum"] = ["card", "callout"]
+def _schema(pictures_on: bool = False) -> dict:
+    """The edit plan's schema; without the scene style when drawn inserts are off, with the picture style (and
+    each graphic's image brief) when Studio can make pictures (pictures.py)."""
+    schema = EDL_SCHEMA
+    if not _scene_rule():
+        schema = json.loads(json.dumps(EDL_SCHEMA))
+        schema["properties"]["graphics"]["items"]["properties"]["style"]["enum"] = ["card", "callout"]
+    if pictures_on:
+        import pictures
+        schema = pictures.schema(schema)
     return schema
 
 
@@ -362,7 +366,7 @@ def _revision_block(conn, production: dict, fixes: list[dict] | None = None) -> 
                           a["end"] < b["start"] - 0.001 for a, b in zip(group, group[1:])) else ""))
         offset += length
     graphics = previous.get("graphics") or []
-    cards = [g for g in graphics if "start" in g and g.get("style") != "scene"]
+    cards = [g for g in graphics if "start" in g and g.get("style") not in ("scene", "picture")]
     shown = ("\nPrevious graphics: " + "; ".join(
         f"{g['start']:.1f}-{g['start'] + g['duration']:.1f}s {g['style']} \"{_with_mark(g['title'], g.get('italic', ''))}\""
         + (f" ({' / '.join(g['lines'])})" if g.get("lines") else "") for g in cards) if cards else "")
@@ -372,6 +376,12 @@ def _revision_block(conn, production: dict, fixes: list[dict] | None = None) -> 
             f"  {g['start']:.1f}-{g['start'] + g['duration']:.1f}s in the draft: clip {g['clip_id']} at {g['at']:.2f}s, "
             f"{g['duration']:.1f}s, {g.get('look', 'cutaway')}, {g.get('role', 'explain')}, why: {g.get('why') or '-'}, "
             f"scene: {json.dumps(g['scene'], ensure_ascii=False)}" for g in scenes)
+    pics = [g for g in graphics if g.get("style") == "picture" and "start" in g]
+    if pics:
+        shown += "\nPrevious pictures (AI, marked Concept; clip, at, duration, look, role, why, title, image brief):\n" + "\n".join(
+            f"  {g['start']:.1f}-{g['start'] + g['duration']:.1f}s in the draft: clip {g['clip_id']} at {g['at']:.2f}s, "
+            f"{g['duration']:.1f}s, {g.get('look', 'cutaway')}, {g.get('role', 'explain')}, why: {g.get('why') or '-'}, "
+            f"title: {g.get('title', '')}, image: {g.get('image', '')}" for g in pics)
     import voiceover
     picture = voiceover.describe(previous.get("pip"))
     if picture:
@@ -455,9 +465,11 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes
     (_fresh_block), nothing of the previous edit in the prompt. A voice-over (voiceover.mode: a studio
     talking head and site B-roll) is planned with the B-roll before the words it shows, and comes back
     split: edl["cuts"] his voice, edl["broll"] what's laid over it (voiceover.split_plan)."""
+    import pictures
     import voiceover
     plan = json.loads(production["plan"] or "{}")
     segments = plan.get("segments", [])
+    picture_rule = pictures.rule(pictures.post_type(conn, production))
     vo = voiceover.mode(clips) if settings.EDIT_VOICEOVER else {"on": False, "why": "voice-overs are turned off"}
     names = voiceover.labels(vo) if vo["on"] else {}
     music_rule = ("This account uses an Epidemic Sound track; your music brief is used to search for it."
@@ -487,10 +499,10 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes
     response = llm.final_message(
         client, model=CLAUDE_MODEL, max_tokens=32000,
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
-        output_config={"effort": "high", "format": {"type": "json_schema", "schema": voiceover.schema(_schema())
-                                                                       if vo["on"] else _schema()}},
+        output_config={"effort": "high", "format": {"type": "json_schema", "schema": voiceover.schema(_schema(bool(picture_rule)))
+                                                                       if vo["on"] else _schema(bool(picture_rule))}},
         system=_SYSTEM.replace("{playbook}", playbook.text()).replace("{music_rule}", music_rule)
-        .replace("{pause_rule}", pause_rule).replace("{scene_rule}", _scene_rule())
+        .replace("{pause_rule}", pause_rule).replace("{scene_rule}", _scene_rule()).replace("{picture_rule}", picture_rule)
         .replace("{voiceover_rule}", voiceover.plan_rule(vo) + "\n" if vo["on"] else "") + "\n\n" + wording.guide(),
         messages=[{"role": "user", "content": user}],
     )
@@ -528,6 +540,8 @@ def polish_plan(edl: dict, ref: str, client=None) -> dict:
             if isinstance(scene, dict):
                 scenes[i] = scene
                 fields.update({f"g{i}.scene.{k}": v for k, v in wording.scene_texts(scene).items()})
+        elif g.get("style") == "picture":  # its title and brief aren't on screen (only the Concept mark is)
+            continue
         else:
             fields[f"g{i}.title"] = g.get("title") or ""
             fields.update({f"g{i}.lines.{n}": x for n, x in enumerate(g.get("lines") or []) if isinstance(x, str)})
@@ -1188,7 +1202,7 @@ def place_graphics(graphics: list[dict], cuts: list[dict], total: float) -> list
     for c in cuts:
         offset_of.append(offset)
         offset += c["end"] - c["start"]
-    for g in (g for g in graphics if g.get("style") != "scene"):  # drawn inserts: place_scenes
+    for g in (g for g in graphics if g.get("style") not in ("scene", "picture")):  # inserts: place_scenes, pictures.place
         start = next((offset_of[i] + g["at"] - c["start"] for i, c in enumerate(cuts)
                       if c["clip_id"] == g["clip_id"] and c["start"] <= g["at"] < c["end"]), None)
         if start is None:
@@ -1504,12 +1518,16 @@ def insert_file(g: dict) -> Path:
 
 
 def scenes_layer(scenes: list[dict], total: float, out: Path) -> int:
-    """The drawn inserts as one transparent ProRes 4444 layer the length of the draft, for the
-    DaVinci Resolve project (an insert no longer in the cache is drawn again). Returns how many
-    it holds."""
-    missing = [g for g in scenes if not insert_file(g).exists()]
+    """The drawn inserts and the pictures as one transparent ProRes 4444 layer the length of the draft, for
+    the DaVinci Resolve project (an insert no longer in the cache is drawn again; a picture is rendered again
+    from the kept picture). Returns how many it holds."""
+    import pictures
+    missing = [g for g in scenes if not insert_file(g).exists() and g.get("style") != "picture"]
     if missing:
         render_scenes(missing)
+    for g in scenes:
+        if g.get("style") == "picture":
+            pictures.ensure_file(g)  # from the kept picture: never drawn again
     ready = [g for g in scenes if insert_file(g).exists()]
     if not ready:
         return 0
@@ -1779,8 +1797,10 @@ def tidy_plan(edl: dict) -> dict:
     words cleaned (one word each). Asterisks anywhere else (a summary, a line, a drawing) go too."""
     edl["hook_text"], edl["hook_italic"] = title_parts(edl.get("hook_text", ""))
     for g in edl.get("graphics") or []:
-        if g.get("style") == "scene":
+        if g.get("style") in ("scene", "picture"):
             g["title"] = unmark(g.get("title"))
+            if g.get("image"):
+                g["image"] = unmark(g["image"])
             if isinstance(g.get("scene"), str):
                 g["scene"] = g["scene"].replace("*", "")
             elif isinstance(g.get("scene"), dict):
@@ -2642,6 +2662,12 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
     edl["cuts"] = _cut(edl, clips, client, f"production:{production_id}", [n["body"] for n in notes])
     _keep_corrections(edl, production, clips if fresh else None)
     _keep_picture(edl, production, clips, notes, fresh)
+    # A note asking for an image, picture or photo of something makes that insert a picture at that moment,
+    # whatever the plan did (pictures.py; a drawing still stands in if the picture can't be made).
+    import pictures
+    previous = json.loads(production.get("edl") or "{}")
+    if notes and previous.get("cuts"):
+        edl["picture_asks"] = pictures.apply_asks(edl, pictures.asks_from_notes(notes, previous))
     if fresh:
         edl["fresh"] = True
     _render(conn, production, clips, edl, plan, version, find_track, client=client)
@@ -2837,9 +2863,10 @@ def clear_of_end(graphics: list[dict], limit: float) -> tuple[list[dict], list[s
         if "start" not in g or g["start"] + g["duration"] <= limit + 0.001:
             out.append(g)
             continue
-        scene = g.get("style") == "scene"
+        scene = g.get("style") in ("scene", "picture")
         shortest, earliest = (SCENE_MIN, SCENE_CLEAR) if scene else (1.0, 2.5)
-        name = f"the {'drawn animation' if scene else g.get('style', 'card')} \"{g.get('title', '')}\""
+        kind = {"scene": "drawn animation", "picture": "picture"}.get(g.get("style"), g.get("style", "card"))
+        name = f"the {kind} \"{g.get('title', '')}\""
         if limit - g["start"] >= shortest:
             out.append({**g, "duration": round(limit - g["start"], 3)})
             notes.append(f"ended {name} before the close")
@@ -3008,6 +3035,7 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
     # What Studio's own checks changed: editing problems (counted in Review's "caught" line) and
     # sound fixes (the recording's level, not an editing mistake).
     checks = [{"did": c, "counted": True} for c in edl.get("checks") or []]
+    checks += [{"did": c, "counted": False} for c in edl.pop("picture_asks", None) or []]  # Bryan's asks, not slips
     # Captions say what Bryan meant: the draft's corrections, and the spell-check's (words it
     # already checked in this draft aren't sent again).
     import spelling
@@ -3084,10 +3112,12 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
             if (edl.get("voiceover") or {}).get("on"):
                 edl["pip_notes"] = notes or ["kept you full screen all through"]
         window = {"side": pip["side"], "spans": pip["spans"]} if pip and pip["spans"] else None
+        import pictures
         if placed:  # a re-render: the graphics are where the draft had them
-            cards = [g for g in edl.get("graphics", []) if g.get("style") != "scene"]
+            cards = [g for g in edl.get("graphics", []) if g.get("style") not in ("scene", "picture")]
             scenes = [g for g in edl.get("graphics", []) if g.get("style") == "scene"]
-            scene_notes = []
+            pics = [g for g in edl.get("graphics", []) if g.get("style") == "picture"]
+            scene_notes, pic_notes = [], []
             if scenes and scene_cap(total) <= 0:
                 scene_notes = [f"left out {len(scenes)} drawn animation{'s' if len(scenes) != 1 else ''} "
                                "(they're turned off)"]
@@ -3096,24 +3126,45 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
             cards = place_graphics(edl.get("graphics", []), cuts, clear_by)
             scenes, scene_notes = place_scenes(edl.get("graphics", []), cuts, clips, clear_by + 0.2, words,
                                                edl.get("hook_text", ""), cards)
+            # Pictures (pictures.py) where a real-looking thing explains it better; with the drawings, about one
+            # insert per pictures.INSERTS_EVERY seconds.
+            pics, pic_notes = pictures.place(edl.get("graphics", []), cuts, clips, clear_by + 0.2, words,
+                                             edl.get("hook_text", ""), cards, scenes,
+                                             pictures.inserts_cap(clear_by + 0.2) - len(scenes))
         cards, moved = clear_of_end(cards, clear_by)
         scenes, more = clear_of_end(scenes, clear_by)
-        checks += [{"did": n, "counted": False} for n in moved + more]
+        pics, also = clear_of_end(pics, clear_by)
+        checks += [{"did": n, "counted": False} for n in moved + more + also]
         if window:  # a panel over the top of the picture would cover the top of his window: full screen instead
-            for g in scenes:
+            for g in scenes + pics:
                 if g.get("look") == "panel" and any(g["start"] < b and g["start"] + g["duration"] > a
                                                     for a, b in window["spans"]):
                     g["look"], g["look_changed"] = "cutaway", "a panel would have covered your window"
+        # A picture Studio can't show (turned off, no key, Gemini down, wrong twice) is drawn instead.
+        pics, instead, more, pic_tally = pictures.make(pics, conn, production, version,
+                                                       ref or f"production:{production_id}", client)
+        pic_notes += more
+        scenes = sorted(scenes + instead, key=lambda g: g["start"])
         tally = {"drawn": 0, "reused": 0}
         if scenes:
             scenes, more, tally = render_scenes(scenes)
             scene_notes += more
-        graphics = sorted(cards + scenes, key=lambda g: g["start"])
+        graphics = sorted(cards + scenes + pics, key=lambda g: g["start"])
         edl["graphics"] = graphics
         edl["inserts"] = {**tally, "placed": len(scenes), "left_out": scene_notes}
-        checks += [{"did": n, "counted": False} for n in scene_notes]
+        if pics or pic_tally["instead"] or pic_notes or pic_tally["paid"]:  # a draft with no pictures stays as it was
+            edl["pictures"] = {**pic_tally, "left_out": pic_notes}
+        else:
+            edl.pop("pictures", None)
+        checks += [{"did": n, "counted": False} for n in scene_notes + pic_notes]
         if scenes and not placed:
-            edl["summary"] = (edl.get("summary", "").rstrip() + " " + scene_summary(scenes)).strip()
+            edl["summary"] = (edl.get("summary", "").rstrip() + " " + scene_summary(
+                [g for g in scenes if not g.get("instead_of_picture")])).strip()
+        if (pics or pic_tally["instead"]) and not placed:
+            edl["summary"] = (edl.get("summary", "").rstrip() + " " + pictures.summary(
+                pics, pic_tally["instead"])).strip()
+        elif scenes and not placed:  # drawn because pictures can't be made at all: said once
+            edl["summary"] = (edl.get("summary", "").rstrip() + " " + pictures.off_note(conn, production)).strip()
         if pip and not placed:
             edl["summary"] = (edl.get("summary", "").rstrip() + " " + voiceover.summary(pip)).strip()
         chunks, doubled = clear_of_cards(chunks, graphics)
@@ -3124,7 +3175,8 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         look = edl["look"] = draft_look(edl) if placed or edl.get("look") else look_now()
         if look["titles"] == "gallery":
             chunks = key_word_captions(chunks, edl.get("key_words") or [])
-            edl["bright"] = bright_spans(picture)  # kept for the Resolve project's captions
+            # Kept for the Resolve project's captions; a full-screen picture is a photo under them too.
+            edl["bright"] = sorted(bright_spans(picture) + pictures.bright(pics))
             chunks = lit_captions(chunks, edl["bright"])
             if window:
                 chunks = voiceover.lit_beside(chunks, window)
@@ -3154,7 +3206,8 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
                               note=f"Add music in the Instagram app: {edl['music']['mood']}, around "
                                    f"{edl['music']['tempo_bpm']:.0f} BPM, kept low under your voice.")
 
-        layers = {"inserts": [(insert_file(g), g["start"]) for g in scenes]} if scenes else {}
+        layers = {"inserts": [(insert_file(g), g["start"]) for g in sorted(scenes + pics, key=lambda g: g["start"])]} \
+            if scenes or pics else {}
         # The shot's own sound fades out at the end of the footage, after the last word (never over it).
         speech_end = close.get("speech_end")
         fade = min(0.3, footage - speech_end - 0.05) if speech_end is not None else 0.0

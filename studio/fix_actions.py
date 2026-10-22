@@ -13,8 +13,8 @@ draft is rendered again with every code check (voice edges, the clipped-word che
   restore_words   words cut at a join (or the draft's start or end) come back
   trim_pause      a dead pause cut down to a breath
   move_cut        a cut point moved by some seconds, to the edge of a word
-  graphic         a card, callout or drawn animation (by its number in the read) moved, retimed,
-                  reworded or removed
+  graphic         a card, callout, drawn animation or picture (by its number in the read) moved, retimed,
+                  reworded or removed, or made a picture ("picture": an AI picture of what it shows, pictures.py)
   hook_text       the hook reworded (its *italic* word as the gallery look wants)
   music_level     the music turned down or up by some dB
   layout          a voice-over's picture (voiceover.py): Bryan full screen for a stretch ("full"), the site
@@ -487,9 +487,12 @@ def _graphic(draft: Draft, edl: dict, a: dict) -> str:
     if not isinstance(n, int) or not 1 <= n <= len(graphics):
         raise NotApplied("the read named a graphic the draft doesn't have")
     g = graphics[n - 1]
-    scene = g.get("style") == "scene"
+    scene = g.get("style") in ("scene", "picture")
     field = a.get("field") or ""
-    name = f"the {'drawn animation' if scene else g.get('style', 'card')} \"{g.get('title', '')}\""
+    kind = {"scene": "drawn animation", "picture": "picture"}.get(g.get("style"), g.get("style", "card"))
+    name = f"the {kind} \"{g.get('title', '')}\""
+    if field == "picture":
+        return _to_picture(draft, g, a, name)
     if field == "remove":
         graphics.pop(n - 1)
         return f"removed {name}"
@@ -498,7 +501,7 @@ def _graphic(draft: Draft, edl: dict, a: dict) -> str:
         start = g["start"] if start is None else start
         length = _num(a.get("amount"))
         length = g["duration"] if length is None else length
-        lo, hi = (editor.SCENE_MIN, editor.SCENE_LONGEST) if scene else (1.2, 4.0)
+        lo, hi = (editor.SCENE_MIN, editor.SCENE_LONGEST) if scene else (1.2, 4.0)  # an insert, a card
         start = max(start, editor.SCENE_CLEAR if scene else CARD_FIRST)
         length = min(max(length, lo), hi, draft.total - start)
         if length < 1.0:
@@ -514,7 +517,8 @@ def _graphic(draft: Draft, edl: dict, a: dict) -> str:
             g["clip_id"], g["at"] = src[0], round(src[1], 3)
         return f"moved {name} to {_mmss(start)} for {length:.1f}s"
     if scene:
-        raise NotApplied("a drawn animation's words need it drawn again")
+        raise NotApplied("a drawn animation's words need it drawn again" if g.get("style") == "scene"
+                         else "a picture shows no words: what it shows needs it drawn again (field picture)")
     if field == "title":
         title, italic = editor.title_parts(a.get("to") or "")
         if not title or len(title.split()) > 7:
@@ -528,6 +532,31 @@ def _graphic(draft: Draft, edl: dict, a: dict) -> str:
         g["lines"] = lines[:3]
         return f"reworded the lines of {name}"
     raise NotApplied("the read didn't say what to change on the graphic")
+
+
+def _to_picture(draft: Draft, g: dict, a: dict, name: str) -> str:
+    """A card, callout or drawn animation becomes an AI picture of what it shows (a, "to": what the picture
+    shows, else its own title), at the same moment, at least SCENE_MIN long; its drawing stays as the one shown
+    if the picture can't be made. A picture with a new "to" shows that instead."""
+    import pictures
+    subject = editor.unmark(a.get("to") or "")[:80] or editor.unmark(g.get("title") or "")
+    if not subject:
+        raise NotApplied("the read didn't say what the picture should show")
+    if g.get("style") == "picture" and subject.lower() == (g.get("title") or "").lower():
+        raise NotApplied(f"{name} is a picture already")
+    why = pictures.available()
+    if why:
+        raise NotApplied(why)
+    length = min(max(g["duration"], editor.SCENE_MIN), editor.SCENE_LONGEST, draft.total - g["start"])
+    if length < editor.SCENE_MIN - 0.01:
+        raise NotApplied(f"{name} is too close to the end for a picture")
+    was = g.get("style")
+    g.update(style="picture", title=subject, image=pictures.brief_for(subject), lines=[], duration=round(length, 3),
+             look=g.get("look") if g.get("look") in ("cutaway", "panel") else "cutaway",
+             scene=g.get("scene") if was == "scene" else g.get("scene") or "", why="a picture shows it better")
+    g.pop("italic", None)
+    g.pop("file", None)
+    return f"showed a picture of {subject} instead of {name}" if was != "picture" else f"the picture now shows {subject}"
 
 
 def _hook(edl: dict, a: dict) -> str:

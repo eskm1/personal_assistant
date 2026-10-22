@@ -43,7 +43,7 @@ REEL_ACTIONS = ("caption_word", "drop_words", "restore_words", "trim_pause", "mo
                 "music_level", "layout", "replan", "none")
 CAROUSEL_ACTIONS = ("slide_text", "replan", "none")
 ACTION_FIELDS = ("", "before", "after", "time", "title", "lines", "remove", "heading", "body", "caption", "full", "window",
-                 "left", "right")
+                 "left", "right", "picture")
 # Why a fix is Bryan's, not the editor's (Review says it in plain words: self_fix.left_because).
 FOR_BRYAN = ("", "footage", "taste", "message", "spending")
 
@@ -125,7 +125,7 @@ next_shoot fix (talking, broll, detail, before_after, reaction, screen), otherwi
 {fixable}
 {actions}
 {illustrate}
-- works: 2 to 4 short points on what already works, so it's kept in the next version.
+{pictures}- works: 2 to 4 short points on what already works, so it's kept in the next version.
 - Place names stay internal: if an estate, condo, street or building name, an address or a \
 client's name appears in the on-screen text, captions or hook, that is always a this_draft fix \
 (area captions) to remove it.
@@ -163,9 +163,11 @@ start = that join (0 for the draft's start, its length for its end), from = the 
   - move_cut: a cut too early or too late: start = the cut point (a join from the cut list, 0 or the \
 draft's length), field "before" (moves the end of the shot before it) or "after" (the start of the \
 shot after it), amount = seconds (positive keeps more footage, negative cuts more).
-  - graphic: a card, callout or drawn animation by its number (G2 = item 2): field "time" (start = its \
+  - graphic: a card, callout, drawn animation or picture by its number (G2 = item 2): field "time" (start = its \
 new start, amount = its new length in seconds or null), "title" (to = the new title, its one italic \
-word in *asterisks*), "lines" (to = the new lines joined with " / ") or "remove".
+word in *asterisks*), "lines" (to = the new lines joined with " / "), "remove", or (only when the material \
+says Studio can make pictures) "picture" (to = what the picture shows in a few words: the card or drawn \
+animation becomes an AI picture of it, for a real-looking thing a drawing doesn't show well).
   - hook_text: to = the new on-screen hook (at most 6 words, sentence case, one *italic* word or none), \
 or "" to take it off.
   - music_level: amount = how many dB to change it by (negative = quieter).
@@ -202,6 +204,16 @@ draws it for now in this draft and your next_shoot fix stays so Bryan still film
 person, a client's home, a finished result or real workmanship: those must be filmed. Otherwise "", \
 and "" on every other fix."""
 _NO_ILLUSTRATE = '- illustrate: always "".'
+# Picture inserts (pictures.py): AI pictures Studio laid over the footage.
+_PICTURES = """\
+- Pictures: the material lists any AI picture Studio showed over the footage (marked "Concept" on \
+screen; not filmed, never a finished project). Judge them like the drawn animations: does each show \
+what Bryan says while he says it, is it up long enough to see (about 2 seconds or more), does a panel \
+cover his face, is it clear of the last second? Removing or retiming one is an editor_can_fix fix. \
+Where a drawn animation or card shows a real-looking thing (a material, a finish, a fitting, a finished \
+look) a drawing can't show well, a graphic fix with field "picture" makes it a picture (editor_can_fix: \
+Studio may make up to {max} a draft). Never a picture for a person, a client's home or real workmanship.
+"""
 ILLUSTRATE_PREFIX = "Draw it for now: "
 _CAROUSEL_FIXABLE = ("slide wording, spelling, length, order, the cover's words, the ask's wording (within the listed "
                      "offers), removing a place name, the caption, swapping a slide to text only")
@@ -547,7 +559,7 @@ def _context(conn, production: dict) -> str:
                f"(the mark, {card.get('handle') or 'no handle'}" + (f", \"{card['ask']}\"" if card.get("ask") else "") + ")"
                if card else "") + ", while the music fades out.")
     numbered = [(n, g) for n, g in enumerate(edl.get("graphics", []), 1) if "start" in g]
-    graphics = [(n, g) for n, g in numbered if g.get("style") != "scene"]
+    graphics = [(n, g) for n, g in numbered if g.get("style") not in ("scene", "picture")]
     lines.append("Graphics (numbered: G1 is item 1): " + ("; ".join(
         f"G{n} {g['start']:.1f}-{g['start'] + g['duration']:.1f}s {g['style']} \"{g['title']}\""
         + (f" ({' / '.join(g['lines'])})" if g.get("lines") else "") for n, g in graphics) or "none"))
@@ -558,6 +570,16 @@ def _context(conn, production: dict) -> str:
                      + "\n".join(f"  G{n} {d['start']:.1f}-{d['end']:.1f}s {d['look']} {d['type']} \"{d['title']}\""
                                  + (f" ({d['why']})" if d.get("why") else "")
                                  + f": shows \"{motion.scene_text(d['scene'])[:200]}\"" for n, d in drawn))
+    import pictures
+    shown = list(zip([n for n, g in numbered if g.get("style") == "picture"], pictures.listed(edl)))
+    if shown:
+        lines.append("Pictures over the footage (AI pictures Studio showed, marked Concept on screen, not filmed; Bryan "
+                     "keeps talking under them):\n"
+                     + "\n".join(f"  G{n} {d['start']:.1f}-{d['end']:.1f}s {d['look']} \"{d['title']}\""
+                                 + (f" ({d['why']})" if d.get("why") else "") + (" (Bryan asked for it)" if d["asked"] else "")
+                                 for n, d in shown))
+    if pictures.available():
+        lines.append(f"Studio can't make pictures for this draft ({pictures.available()}): no \"picture\" fixes.")
     lines.append("Captions on screen (start-end seconds: text):\n"
                  + ("\n".join(f"  {c['start']:.2f}-{c['end']:.2f}: {c['text']}" for c in chunks) or "  (none)"))
     lines.append("Words spoken in the draft (start seconds, word):\n"
@@ -765,9 +787,11 @@ def _clean(result: dict, total: float, edl: dict | None = None) -> dict:
     if added and re.match(r"(?i)\s*(ready to post|nearly ready)", verdict):
         k = sum(1 for f in fixes if f.get("when") == "this_draft")
         verdict = f"Nearly ready: {k} thing{'s' if k != 1 else ''} to fix"
+    import pictures
     return {"verdict": verdict, "scores": result.get("scores", {}),
             "fixes": fixes, "works": works,
-            "inserts": [{k: v for k, v in d.items() if k != "scene"} for d in drawn]}
+            "inserts": [{k: v for k, v in d.items() if k != "scene"} for d in drawn],
+            **({"pictures": pictures.listed(edl)} if pictures.listed(edl or {}) else {})}
 
 
 # ── Running it ────────────────────────────────────────────────────────────────
@@ -803,7 +827,8 @@ def run(conn, production_id: int, client=None, ref: str | None = None) -> dict:
     edl = json.loads(production["edl"])
     text = _slideshow_context(conn, production) if edl.get("slideshow") else _context(conn, production)
     grid = [total * (i + 0.5) / STILLS for i in range(STILLS)]
-    extra = [round((d["start"] + d["end"]) / 2, 2) for d in inserts(edl)
+    import pictures
+    extra = [round((d["start"] + d["end"]) / 2, 2) for d in inserts(edl) + pictures.listed(edl)
              if not any(d["start"] <= t <= d["end"] for t in grid)]
     with tempfile.TemporaryDirectory(prefix="studio-review-") as tmp:
         content = []
@@ -819,7 +844,9 @@ def run(conn, production_id: int, client=None, ref: str | None = None) -> dict:
         output_config={"effort": settings.READ_EFFORT, "format": {"type": "json_schema", "schema": SCHEMA}},
         system=_SYSTEM.replace("{playbook}", playbook.text())
         .replace("{fixable}", _FIXABLE.replace("{examples}", _REEL_FIXABLE)).replace("{actions}", _REEL_ACTIONS)
-        .replace("{illustrate}", _ILLUSTRATE if settings.EDIT_SCENES and settings.EDIT_SCENES_MAX > 0 else _NO_ILLUSTRATE),
+        .replace("{illustrate}", _ILLUSTRATE if settings.EDIT_SCENES and settings.EDIT_SCENES_MAX > 0 else _NO_ILLUSTRATE)
+        .replace("{pictures}", "" if pictures.available() and not pictures.listed(edl)
+                 else _PICTURES.replace("{max}", str(settings.REEL_PICTURES_MAX))),
         messages=[{"role": "user", "content": content}],
     )
     usage.record("review", ref or f"production:{production_id}", response)

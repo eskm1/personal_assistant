@@ -463,6 +463,14 @@ def summary(row) -> dict | None:
     line += f" (its limit is US${cap:.2f})." if cap else "."
     if data.get("stopped") == "cap":
         line += " It stopped fixing at that limit."
+    try:  # the draft's AI pictures (pictures.py): new ones are Gemini's, reused ones cost nothing
+        pics = json.loads(row["edl"] or "{}").get("pictures") or {}
+    except (ValueError, KeyError, IndexError, TypeError):
+        pics = {}
+    if pics.get("placed") or pics.get("drawn"):
+        drawn, shown = int(pics.get("drawn") or 0), int(pics.get("placed") or 0)
+        line += (f" Pictures: {shown} shown, {drawn} drawn by Gemini (US${float(pics.get('usd') or 0):.2f})."
+                 if drawn else f" Pictures: {shown} shown, all already drawn (no new cost).")
     return {"fixed": fixed, "caught": data.get("caught", 0),
             "rounds": sum(1 for r in data.get("rounds", []) if not r.get("skipped")),
             "usd": usd, "cap": cap, "stopped": data.get("stopped"), "cost_line": line}

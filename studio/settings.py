@@ -149,6 +149,12 @@ EDIT_PUNCH_ZOOM = float(_env("STUDIO_EDIT_PUNCH_ZOOM", "1.12"))
 # one per 15 seconds). Off (or a max of 0) = no inserts.
 EDIT_SCENES = _flag("STUDIO_EDIT_SCENES", True)
 EDIT_SCENES_MAX = min(max(int(_env("STUDIO_EDIT_SCENES_MAX", "3") or 3), 0), 6)
+# Picture inserts (pictures.py; Bryan, 2026-10-22: "Gemini OK"): where a real-looking thing (a glass panel, a
+# fluted panel, a terrazzo finish, a finished look) explains it better than a drawing, the editor may lay an AI
+# picture (Gemini, concepts.py, marked "Concept") over the footage instead. At most REEL_PICTURES_MAX new ones a
+# draft (one picture each, a second only when the check finds it wrong). Needs GEMINI_API_KEY; off = drawings.
+REEL_PICTURES = _flag("STUDIO_REEL_PICTURES", True)
+REEL_PICTURES_MAX = min(max(int(_env("STUDIO_REEL_PICTURES_MAX", "4") or 4), 0), 8)
 # Studio fixes its own list (self_fix.py): after a draft renders and Studio's read runs, the
 # fixes the editor can make itself are made, up to this many rounds, before Bryan sees the draft.
 # Most are made directly (a caption word, a stutter, a pause, a cut point, a card, the hook, the

@@ -2232,7 +2232,7 @@ function checksBody(d) {
       : `Spoken hook: about <strong>${esc(qa.hook.seconds.toFixed(1))} s</strong> (inside 3 seconds)`);
   }
   if (d.graphics) items.push(`Graphics: ${esc(d.graphics)}`);
-  if (d.cost) items.push(`API cost so far: ${esc(money(d.cost))}${d.self_fix_cost ? ` (Studio's own fixes ${esc(money(d.self_fix_cost))})` : ""}`);
+  if (d.cost) items.push(`API cost so far: ${esc(money(d.cost))}${d.self_fix_cost ? ` (Studio's own fixes ${esc(money(d.self_fix_cost))})` : ""}${d.cost_parts?.image_count ? `, AI pictures ${esc(money(d.cost_parts.images))} (${esc(d.cost_parts.image_count)} drawn)` : ""}`);
   return bullets(items) || `<p class="muted small">No checks ran on this draft.</p>`;
 }
 

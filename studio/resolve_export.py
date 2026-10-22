@@ -6,7 +6,7 @@ by hand in the free DaVinci Resolve, with every layer still editable.
         timeline.fcpxml   the cut, pointing at the ORIGINAL clips (full quality,
                           every cut can be trimmed back out), plus the layers below
         captions.mov      the styled captions on a transparent layer (ProRes 4444)
-        animations.mov    the drawn animations (motion library inserts), same, on their own track
+        animations.mov    the drawn animations (motion library inserts) and AI pictures (pictures.py), same, on their own track
         window.mov        a voice-over's window (Bryan over the site footage), same; the site footage itself is
                           on V2 as clips from the originals
         graphics.mov      the hook and B-roll cards, same
@@ -322,11 +322,13 @@ def build(conn, production_id: int) -> Path:
                 layers.append(("Your window over the site footage", work / "window.mov", lane))
                 lane += 1
         # The drawn animations get a track of their own, under the cards and the captions.
-        scenes = [g for g in edl.get("graphics", []) if g.get("style") == "scene" and "start" in g]
-        if scenes and editor.scenes_layer(scenes, whole, work / "animations.mov"):
-            layers.append(("Drawn animations", work / "animations.mov", lane))
+        inserts = [g for g in edl.get("graphics", []) if g.get("style") in ("scene", "picture") and "start" in g]
+        scenes = [g for g in inserts if g.get("style") == "scene"]
+        if inserts and editor.scenes_layer(inserts, whole, work / "animations.mov"):
+            pics = any(g.get("style") == "picture" for g in inserts)
+            layers.append(("Drawn animations and pictures" if pics else "Drawn animations", work / "animations.mov", lane))
             lane += 1
-        cards = [g for g in edl.get("graphics", []) if g.get("style") != "scene"]
+        cards = [g for g in edl.get("graphics", []) if g.get("style") not in ("scene", "picture")]
         if edl.get("hook_text", "").strip() or cards or end:
             editor.render_overlay([], edl.get("hook_text", ""), whole, work / "graphics.mov",
                                   cards, accent, fmt="mov", font=look["caption_font"], style=look["titles"],

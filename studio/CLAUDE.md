@@ -192,6 +192,15 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   animations" / "more diagrams" notes move `learning.insert_lean`. `STUDIO_EDIT_SCENES`, `STUDIO_EDIT_SCENES_MAX` (3).
   The explainers' end card carries the handle under the mark (`STUDIO_INSTAGRAM_HANDLE`, default urbanmakers_sg, or
   the connected account's). Stage 2(a) (explainer ideas in the planner) and 2(c) (topics) not built yet.
+- Picture inserts in Reels, built 2026-10-22 (Bryan, 2026-10-20: "an AI image instead" of an animation; 2026-10-22:
+  "Gemini OK", ~US$0.04 a picture, capped per draft; not yet proven with real Gemini or real Claude): `pictures.py`,
+  graphics style `picture` (the plan's `image` brief; prompt: real things pictures, processes/numbers drawings), drawn by
+  `concepts.reel_picture` (9:16, one picture, Claude's check, one redraw only when wrong, cached in `Studio/Concepts`),
+  rendered to a WebM in `Renders/inserts` (push-in, dissolve, Concept mark; cutaway or panel), at most
+  `STUDIO_REEL_PICTURES_MAX` (4) new a draft version (`edl["pictures"].paid`, carried across fix rounds); Bryan's
+  "image/picture/photo of X" notes (`asks_from_notes`/`apply_asks`) and the read's graphic field `picture`
+  (`fix_actions._to_picture`); any failure, no key or `STUDIO_REEL_PICTURES=0` = the drawing, said once.
+  `tests/quality/suite_pictures.py`.
 - Editor upgrades built (not yet proven on real footage): jump cuts (`editor.tighten`), face-tracked
   reframing of horizontal footage and punch-ins (`framing.py`, OpenCV), each a `STUDIO_EDIT_*` setting.
   Still offered: numbered chapter labels, screenshots floating above the speaker.

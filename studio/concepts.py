@@ -68,9 +68,9 @@ def info() -> dict:
             "options": len(OPTIONS)}
 
 
-def key_of(brief: str, round_: int = 0) -> str:
+def key_of(brief: str, round_: int = 0, aspect: str = ASPECT) -> str:
     """The cache key of a brief's pictures (the model and shape are part of it)."""
-    raw = f"{settings.IMAGE_MODEL}\n{ASPECT}\n{int(round_)}\n{brief.strip()}"
+    raw = f"{settings.IMAGE_MODEL}\n{aspect}\n{int(round_)}\n{brief.strip()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
@@ -202,14 +202,14 @@ def _jpeg(raw: bytes) -> bytes:
         raise GeminiError(f"Gemini's picture couldn't be read ({type(e).__name__})", retry=True)
 
 
-def generate(prompt: str) -> tuple[bytes, dict]:
-    """One picture from Gemini (generateContent, image only, 4:5): (JPEG bytes, usageMetadata).
-    Busy, down or no picture: one more try after a pause. Raises GeminiError."""
+def generate(prompt: str, aspect: str = ASPECT) -> tuple[bytes, dict]:
+    """One picture from Gemini (generateContent, image only, 4:5 or the aspect asked): (JPEG bytes,
+    usageMetadata). Busy, down or no picture: one more try after a pause. Raises GeminiError."""
     if available():
         raise GeminiError(available())
     url = f"{settings.GEMINI_URL}/models/{settings.IMAGE_MODEL}:generateContent"
     body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"responseModalities": ["IMAGE"], "imageConfig": {"aspectRatio": ASPECT}}}
+            "generationConfig": {"responseModalities": ["IMAGE"], "imageConfig": {"aspectRatio": aspect}}}
     headers = {"x-goog-api-key": settings.GEMINI_API_KEY, "Content-Type": "application/json"}
     for attempt in (1, 2):
         try:
@@ -310,7 +310,7 @@ def _client(client):
     return anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY or None)
 
 
-def _claude(client, ref: str, schema: dict, system: str, content, effort: str = "low") -> dict:
+def _claude(client, ref: str, schema: dict, system: str, content, effort: str = "low", kind: str = "carousel") -> dict:
     import llm
     import usage
     response = llm.final_message(
@@ -318,7 +318,7 @@ def _claude(client, ref: str, schema: dict, system: str, content, effort: str = 
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
         output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
         system=system, messages=[{"role": "user", "content": content}])
-    usage.record("carousel", ref, response)
+    usage.record(kind, ref, response)
     if response.stop_reason in ("refusal", "max_tokens"):
         raise RuntimeError(f"Claude couldn't do the concept pictures ({response.stop_reason})")
     return json.loads(next(b.text for b in response.content if b.type == "text"))
@@ -367,8 +367,9 @@ def _small(path: Path) -> str:
     return base64.standard_b64encode(buf.getvalue()).decode()
 
 
-def check(items: list[dict], ref: str, client=None) -> dict[str, str]:
-    """One Claude call over pictures [{label, path, slide, brief}]: label -> problem ("" = fine)."""
+def check(items: list[dict], ref: str, client=None, reel: bool = False) -> dict[str, str]:
+    """One Claude call over pictures [{label, path, slide, brief}]: label -> problem ("" = fine). reel:
+    pictures for a Reel's inserts (reel_picture), the slide being the thing it shows."""
     content = []
     for it in items:
         s = it["slide"]
@@ -377,7 +378,8 @@ def check(items: list[dict], ref: str, client=None) -> dict[str, str]:
         content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                     "data": _small(it["path"])}})
     content.append({"type": "text", "text": "Check each picture above."})
-    answer = _claude(_client(client), ref, CHECK_SCHEMA, CHECK_SYSTEM, content)
+    system = CHECK_SYSTEM + REEL_CHECK if reel else CHECK_SYSTEM
+    answer = _claude(_client(client), ref, CHECK_SCHEMA, system, content, kind="edit" if reel else "carousel")
     verdicts = {str(c.get("picture", "")).strip().lower(): c for c in answer.get("checks") or []}
     out = {}
     for it in items:
@@ -571,3 +573,107 @@ def prepare(conn, production_id: int, title: str, post_type, slides: list[dict],
     if drawn:
         log.info("Concept pictures for production %s: %d drawn (US$%.3f)", production_id, drawn, usd)
     return {"drawn": drawn, "usd": round(usd, 4), "notes": notes}
+
+
+# ── A Reel's picture inserts (pictures.py) ────────────────────────────────────
+# One picture each, 9:16, drawn from the brief the edit plan wrote; checked like a carousel's and drawn
+# once more with the problem named when it's wrong. Same cache (CONCEPTS: <key>_a.jpg and <key>.json), so a
+# re-render, a fix round or a new version that keeps the brief never pays twice.
+
+REEL_ASPECT = "9:16"
+REEL_RULES = ("A realistic photograph for a renovation company's Instagram Reel, showing one thing clearly: a "
+              "material, a finish, a fitting, a piece of joinery or a finished look, in a home in Singapore. Soft "
+              "natural daylight, calm and warm, real materials at real sizes, vertical 9:16 framing with the subject "
+              "filling the middle of the frame (words sit over the top and bottom). No text, letters, numbers, signs, "
+              "logos or watermarks anywhere in the picture. No people and no faces. No recognisable brands or "
+              "products. Not a real address, estate or building.")
+REEL_CHECK = ("\nThese pictures are for a Reel: each shows one thing (a material, a finish, a fitting, a detail or "
+              "a finished look) full screen while Bryan talks about it; \"slide\" is that thing. A close-up with no "
+              "room is fine. Reject it when it isn't recognisably that thing.")
+
+
+def reel_prompt(brief: str, avoid: str = "") -> str:
+    prompt = f"{brief.strip()}\n\n{REEL_RULES}"
+    if avoid:
+        prompt += f"\n\nAn earlier picture of this had a problem; make sure this one doesn't: {avoid.strip()}."
+    return prompt
+
+
+def reel_key(brief: str) -> str:
+    return key_of(brief, 0, REEL_ASPECT)
+
+
+def reel_cached(brief: str) -> Path | None:
+    """The Reel picture of this brief, when it's drawn, checked and kept (no Gemini, no Claude)."""
+    key = reel_key(brief)
+    data = meta(key) or {}
+    path = option_path(key, "a")
+    return path if data.get("done") and (data.get("options") or {}).get("a", {}).get("state") == "ok" \
+        and path.is_file() else None
+
+
+def reel_picture(brief: str, subject: str, ref: str, client=None, may_draw: bool = True) -> dict:
+    """The picture for one of a Reel's inserts: from the cache when it's there; else drawn once (9:16),
+    checked by Claude, and drawn once more with the problem named when it's wrong. may_draw: False when
+    the draft's picture budget is spent (only the cache is used). Returns {key, path (None when there's
+    no picture to show), drawn (pictures Gemini drew), usd, cached, why}. Never raises: a draft
+    without the picture (it gets the drawing) beats no draft."""
+    import usage
+    brief = (brief or "").strip()[:2000]
+    key = reel_key(brief)
+    out = {"key": key, "path": None, "drawn": 0, "usd": 0.0, "cached": False, "why": ""}
+    if not brief:
+        return {**out, "why": "it had no picture brief"}
+    hit = reel_cached(brief)
+    if hit:
+        return {**out, "path": hit, "cached": True}
+    data = meta(key) or {"brief": brief, "model": settings.IMAGE_MODEL, "aspect": REEL_ASPECT, "round": 0,
+                         "kind": "reel", "options": {}}
+    o = data["options"].setdefault("a", {})
+    if data.get("done"):  # settled and not usable (wrong twice, or the safety filter): drawn, not paid again
+        return {**out, "why": o.get("problem") or "the picture came out wrong"}
+    if available():
+        return {**out, "why": available()}
+    CONCEPTS.mkdir(parents=True, exist_ok=True)
+    slide = {"heading": (subject or "").strip()[:120] or "the picture", "body": ""}
+    for stage in ((2,) if o.get("state") == "retry" else (1, 2)):  # wrong once already: straight to the redraw
+        if stage == 2 and o.get("state") != "retry":
+            break
+        path = CONCEPTS / f"{key}_a_{stage}.jpg"
+        if not path.is_file():  # drawn before but not checked (Claude was down): checked now, not drawn again
+            if not may_draw:
+                out["why"] = "Studio had drawn as many new pictures as a draft may have"
+                break
+            try:
+                jpg, meta_ = generate(reel_prompt(brief, o.get("problem", "") if stage == 2 else ""), REEL_ASPECT)
+            except GeminiError as e:
+                o.update(state="blocked" if e.blocked else "failed", problem=str(e))
+                log.warning("Reel picture \"%s\" for %s: %s", subject, ref, e)
+                out["why"] = str(e)
+                break
+            path.write_bytes(jpg)
+            out["usd"] += usage.record_image(ref, settings.IMAGE_MODEL, meta_, settings.IMAGE_COST_USD)
+            out["drawn"] += 1
+            o["tries"] = stage
+        try:
+            problem = check([{"label": "1a", "path": path, "slide": slide, "brief": brief}], ref, client, reel=True)["1a"]
+        except Exception as e:  # Claude down: drawn and kept, checked next time (never shown unchecked)
+            log.warning("Checking the Reel picture \"%s\" for %s failed: %s", subject, ref, e)
+            o.update(state="unchecked", problem="Claude couldn't check the picture")
+            out["why"] = o["problem"]
+            break
+        data["checked"] = True
+        if not problem:
+            shutil.copyfile(path, option_path(key, "a"))
+            o.update(state="ok", problem="")
+            out["path"] = option_path(key, "a")
+            break
+        o.update(state="retry" if stage == 1 else "bad", problem=problem)
+        out["why"] = f"the picture came out wrong twice ({problem})" if stage == 2 else problem
+    data["done"] = o.get("state") in ("ok", "bad", "blocked")
+    if data["done"]:
+        for stale in CONCEPTS.glob(f"{key}_a_?.jpg"):
+            stale.unlink(missing_ok=True)
+    _save_meta(key, data)
+    out["usd"] = round(out["usd"], 4)
+    return out
