@@ -38,6 +38,9 @@ The editor (phase 5): turns a planned production into a draft Reel.
      loudness is measured (and corrected if it's off).
   8. Studio's read (draft_review.py), then Studio's own fix rounds (self_fix.py) on the
      fixes the editor can make, and only then To review.
+  A voice-over (voiceover.py: a talking head Bryan filmed in his studio, plus site B-roll) is cut the same way on
+  his voice; the B-roll in the plan is laid over it, with him in a small window and full screen for his first and
+  last sentence. A talking head filmed on site, or one with no B-roll, is edited as above.
 """
 import difflib
 import html
@@ -231,7 +234,7 @@ number, price, duration or key term (title is the big text, lines one short labe
 own words and facts; never invent numbers. Title at most 5 words, each line at most 4 words. \
 Leave the first 2.5 seconds clear for the hook. Use none if nothing in the speech suits a graphic. \
 For a card or callout, scene and why are "", look "cutaway" and role "explain".
-{scene_rule}- missing_shots: footage you wished you had while cutting this post, specific enough to film \
+{scene_rule}{voiceover_rule}- missing_shots: footage you wished you had while cutting this post, specific enough to film \
 (what, framing, roughly how long), each with why it would make the post better. Empty if none.
 - summary: two sentences on what you did, for Bryan.
 - On a revision, address every note and say how in notes_addressed. Notes are pinned to times \
@@ -320,10 +323,12 @@ def _words(clip: dict) -> list[dict]:
     return json.loads(path.read_text(encoding="utf-8")).get("words", [])
 
 
-def _clip_block(clip: dict, plan_segments: list[dict]) -> str:
+def _clip_block(clip: dict, plan_segments: list[dict], label: str = "") -> str:
+    """One clip for the plan: its words with their times, its planned segments, its quality; label: what it
+    is in a voice-over (voiceover.labels)."""
     words = _words(clip)
     lines = [f"Clip {clip['id']}: {clip['title']} ({clip['duration']:.1f}s, {clip['orientation']}, "
-             f"{'has audio' if clip['has_audio'] else 'no audio'})",
+             f"{'has audio' if clip['has_audio'] else 'no audio'}" + (f"; {label}" if label else "") + ")",
              f"  summary: {clip['summary']}"]
     try:
         q = json.loads(clip.get("quality") or "{}")
@@ -367,6 +372,10 @@ def _revision_block(conn, production: dict, fixes: list[dict] | None = None) -> 
             f"  {g['start']:.1f}-{g['start'] + g['duration']:.1f}s in the draft: clip {g['clip_id']} at {g['at']:.2f}s, "
             f"{g['duration']:.1f}s, {g.get('look', 'cutaway')}, {g.get('role', 'explain')}, why: {g.get('why') or '-'}, "
             f"scene: {json.dumps(g['scene'], ensure_ascii=False)}" for g in scenes)
+    import voiceover
+    picture = voiceover.describe(previous.get("pip"))
+    if picture:
+        shown += "\nPrevious picture (a voice-over; the cut list above is his voice): " + picture
     head = ("\n\nThis is a revision of draft v{v}. Previous cut list:\n".format(v=production["version"])
             + "\n".join(placed)
             + f"\nPrevious hook text: {_with_mark(previous.get('hook_text') or '', previous.get('hook_italic', '')) or '(none)'}"
@@ -443,9 +452,14 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes
               ref: str | None = None, fresh: bool = False) -> dict:
     """Claude's edit plan (EDL). fixes: a round of Studio's own fixes instead of Bryan's notes;
     ref: where its cost is recorded (Studio's own rounds are counted apart); fresh: start over
-    (_fresh_block), nothing of the previous edit in the prompt."""
+    (_fresh_block), nothing of the previous edit in the prompt. A voice-over (voiceover.mode: a studio
+    talking head and site B-roll) is planned with the B-roll before the words it shows, and comes back
+    split: edl["cuts"] his voice, edl["broll"] what's laid over it (voiceover.split_plan)."""
+    import voiceover
     plan = json.loads(production["plan"] or "{}")
     segments = plan.get("segments", [])
+    vo = voiceover.mode(clips) if settings.EDIT_VOICEOVER else {"on": False, "why": "voice-overs are turned off"}
+    names = voiceover.labels(vo) if vo["on"] else {}
     music_rule = ("This account uses an Epidemic Sound track; your music brief is used to search for it."
                   if music.allowed_for(production["brand"]) else
                   "This account adds music in the Instagram app instead; your music brief becomes a note "
@@ -460,7 +474,7 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes
                    + (f" | on screen: {s['on_screen']}" if s.get("on_screen") else "")
                    for i, s in enumerate(plan["storyboard"], 1)) if plan.get("storyboard") else "")
             + "\n\nFootage:\n\n"
-            + "\n\n".join(_clip_block(c, segments) for c in clips.values())
+            + "\n\n".join(_clip_block(c, segments, names.get(c["id"], "")) for c in clips.values())
             + (_fresh_block(conn, production) if fresh else _revision_block(conn, production, fixes)))
     pause_rule = ("- Pauses are tightened automatically after you plan: a long pause between sentences or clauses "
                   "is cut down to a natural breath, lone \"um\"s and stutters go (jump cuts), and so does silence at the "
@@ -473,9 +487,11 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes
     response = llm.final_message(
         client, model=CLAUDE_MODEL, max_tokens=32000,
         betas=["server-side-fallback-2026-07-01"], fallbacks="default",
-        output_config={"effort": "high", "format": {"type": "json_schema", "schema": _schema()}},
+        output_config={"effort": "high", "format": {"type": "json_schema", "schema": voiceover.schema(_schema())
+                                                                       if vo["on"] else _schema()}},
         system=_SYSTEM.replace("{playbook}", playbook.text()).replace("{music_rule}", music_rule)
-        .replace("{pause_rule}", pause_rule).replace("{scene_rule}", _scene_rule()) + "\n\n" + wording.guide(),
+        .replace("{pause_rule}", pause_rule).replace("{scene_rule}", _scene_rule())
+        .replace("{voiceover_rule}", voiceover.plan_rule(vo) + "\n" if vo["on"] else "") + "\n\n" + wording.guide(),
         messages=[{"role": "user", "content": user}],
     )
     import usage
@@ -485,7 +501,14 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes
     if response.stop_reason == "max_tokens":
         raise RuntimeError("Claude's edit plan was cut off (max_tokens)")
     edl = json.loads(next(b.text for b in response.content if b.type == "text"))
-    return tidy_plan(polish_plan(edl, ref or f"production:{production['id']}", client))
+    edl = tidy_plan(polish_plan(edl, ref or f"production:{production['id']}", client))
+    picture = edl.pop("picture", None)
+    if vo["on"]:
+        voiceover.split_plan(edl, vo, picture)
+        edl["voiceover"] = {k: vo[k] for k in ("on", "why", "studio", "site", "broll", "narrated")}
+        edl["voiceover"]["footage"] = {cid: {k: f.get(k) for k in ("kind", "where", "why", "score")}
+                                       for cid, f in vo["footage"].items()}
+    return edl
 
 
 def polish_plan(edl: dict, ref: str, client=None) -> dict:
@@ -2095,6 +2118,29 @@ def _gallery_graphic(gid, attrs, s, d, kind, title, italic, lines) -> tuple[str,
     return markup, anim
 
 
+def _split_at(runs: list[tuple[float, float]], spans: list) -> list[tuple[float, float]]:
+    """Runs cut where a voice-over's window comes up or goes (so each piece is wholly beside it or not)."""
+    out = []
+    for a, b in runs:
+        cuts = sorted(t for x, y in spans for t in (x, y) if a + 0.05 < t < b - 0.05)
+        edges = [a] + cuts + [b]
+        out += [(round(x, 3), round(y, 3)) for x, y in zip(edges, edges[1:]) if y - x >= 0.05]
+    return out
+
+
+def _pip_css(side: str) -> str:
+    """The captions beside a voice-over's window (voiceover.caption_room), and their shade fading out before it."""
+    import voiceover
+    left, right = voiceover.caption_room(side)
+    x = voiceover.box(side)[0]
+    c = side[0]
+    fade = "90deg" if side == "left" else "270deg"
+    edge = f"left:{x + voiceover.PIP_W - 60}px" if side == "left" else f"right:{W - x - 60}px"
+    return (f".cap.pip{c}{{left:{left}px;right:{right}px;max-width:{W - left - right}px}}"
+            f".capscrim.pip{c}{{{edge};-webkit-mask-image:linear-gradient({fade},transparent,#000 160px);"
+            f"mask-image:linear-gradient({fade},transparent,#000 160px)}}")
+
+
 def caption_shade(chunks: list[dict], paper: list[tuple[float, float]] = (), join: float = 1.2) -> list[tuple[float, float]]:
     """When the gallery look's soft shade sits behind the captions: while captions are up (gaps
     shorter than join seconds bridged), never over a cutaway's paper."""
@@ -2142,7 +2188,7 @@ def _overlay_assets(project: Path, font: str | None = None, serif: bool = False)
 def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
                    graphics: list[dict] = (), accent: str = "#f5a524", fmt: str = "webm", font: str | None = None,
                    paper: list[tuple[float, float]] = (), style: str | None = None, hook_italic: str | None = None,
-                   end: dict | None = None) -> None:
+                   end: dict | None = None, pip: dict | None = None) -> None:
     """Captions, hook and B-roll graphics as a transparent video (HyperFrames, headless Chrome):
     VP9 WebM for the draft, ProRes 4444 MOV (fmt="mov") for DaVinci Resolve. style: the title style
     (title_style; the draft's own look, draft_look). The fonts are bundled ones (caption_font, and the
@@ -2150,8 +2196,11 @@ def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
     layer (render_scenes), under this one; a caption over a full-screen one (paper: its (start, end)
     times) is set for the paper: on a box (classic) or in ink on a paper-coloured label (gallery).
     hook_italic: the hook's italic word (None: from the hook's text, title_parts). end: the end card
-    ({start, duration, ask, handle}, _end_card_html); no caption is shown from its start."""
+    ({start, duration, ask, handle}, _end_card_html); no caption is shown from its start. pip: a voice-over's
+    window ({side, spans}, voiceover.py): while it's up the captions and their shade move beside it."""
     style = title_style(style)
+    spans = (pip or {}).get("spans") or []
+    beside = lambda a, b: f" pip{pip['side'][0]}" if any(a < y and b > x for x, y in spans) else ""  # noqa: E731
     if end:
         chunks = [{**c, "end": min(c["end"], end["start"])} for c in chunks if c["start"] < end["start"] - 0.1]
     graphics = [g for g in graphics if g.get("style") in ("card", "callout")]
@@ -2175,14 +2224,14 @@ def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
         for i, c in enumerate(chunks):
             solid = " solid" if any(c["start"] < b and c["end"] > a for a, b in paper) else (
                 " lit" if c.get("lit") and style == "gallery" else "")
-            clips.append(f'<div id="c{i}" class="cap{solid} clip" data-start="{c["start"]:.3f}" '
+            clips.append(f'<div id="c{i}" class="cap{solid}{beside(c["start"], c["end"])} clip" data-start="{c["start"]:.3f}" '
                          f'data-duration="{c["end"] - c["start"]:.3f}" data-track-index="0">{_caption_html(c, style)}</div>')
             if style == "gallery":
                 animations.append(f"tl.from('#c{i}',{{opacity:0,y:6,duration:.14,ease:'power1.out'}},{c['start']:.3f});")
         if style == "gallery":
-            for k, (a, b) in enumerate(caption_shade(chunks, paper)):
-                clips.append(f'<div id="cs{k}" class="capscrim clip" data-start="{a:.3f}" data-duration="{b - a:.3f}" '
-                             'data-track-index="20"></div>')
+            for k, (a, b) in enumerate(_split_at(caption_shade(chunks, paper), spans)):
+                clips.append(f'<div id="cs{k}" class="capscrim{beside(a + 0.01, b - 0.01)} clip" data-start="{a:.3f}" '
+                             f'data-duration="{b - a:.3f}" data-track-index="20"></div>')
                 fade = min(.35, (b - a) / 3)
                 animations.append(f"tl.from('#cs{k}',{{opacity:0,duration:{fade:.2f},ease:'none'}},{a:.3f});"
                                   f"tl.to('#cs{k}',{{opacity:0,duration:{fade:.2f},ease:'none'}},{b - fade:.3f});")
@@ -2197,7 +2246,8 @@ def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
         (project / "index.html").write_text(
             '<!doctype html><html><head><meta charset="utf-8"><script src="gsap.min.js"></script>'
             f"<style>{''.join(css)}{_theme_css(accent)}{_OVERLAY_BASE}"
-            f"{_GALLERY_CSS if style == 'gallery' else _OVERLAY_CSS}{_END_CSS if end else ''}</style></head><body>"
+            f"{_GALLERY_CSS if style == 'gallery' else _OVERLAY_CSS}{_END_CSS if end else ''}"
+            f"{_pip_css(pip['side']) if spans else ''}</style></head><body>"
             f'<div id="overlay" data-composition-id="overlay" data-start="0" data-duration="{total:.3f}" '
             f'data-width="{W}" data-height="{H}">' + "".join(clips) + "</div>"
             "<script>const tl=gsap.timeline({paused:true});" + "".join(animations) +
@@ -2328,13 +2378,16 @@ def _measure_loudnorm(args: list[str]) -> dict:
 
 def mix_final(cut: Path, overlay: Path | None, music_file: Path | None, volume_db: float, total: float,
               out: Path, words: list[dict] = (), inserts: list[tuple[Path, float]] = (),
-              footage: float | None = None, voice_out: tuple[float, float] | None = None) -> dict:
+              footage: float | None = None, voice_out: tuple[float, float] | None = None,
+              under: tuple[Path, float] | None = None) -> dict:
     """The final draft: footage, the drawn inserts (transparent WebMs, each laid over the footage
     from its start: (file, seconds)), the caption layer on top of them, and the sound (the voice
     levelled, the music set under it, see VOICE_LUFS), all in the one encode. footage: how long the
     cut is when the draft runs on past it (the close: its last frame held under the end card);
     voice_out: (start, seconds) the shot's own sound fades out over, after the last word. The music
-    fades out over the last END_FADE. Returns what it measured and did."""
+    fades out over the last END_FADE. under: a voice-over's site sound (a WAV on the draft's clock) and
+    the gain (dB) that sets it well under the levelled voice (voiceover.SITE_BELOW), mixed in as it is.
+    Returns what it measured and did."""
     raw = ["-f", "f32le", "-ar", str(RATE), "-ac", "2"]
     with tempfile.TemporaryDirectory(prefix="studio-mix-") as tmp:
         work = Path(tmp)
@@ -2397,6 +2450,13 @@ def mix_final(cut: Path, overlay: Path | None, music_file: Path | None, volume_d
                    + "amix=inputs=2:duration=first:normalize=0")
         else:
             mix = "[0:a]anull"
+        if under:  # the site's own sound, low under everything
+            k = 2 if music_file else 1
+            sound_in += ["-i", str(under[0])]
+            mix = (mix + f"[pre];[{k}:a]aresample={RATE},aformat=channel_layouts=stereo,volume={under[1]:.2f}dB,"
+                   f"apad=whole_len={round(total * RATE)},atrim=end_sample={round(total * RATE)}[site];"
+                   "[pre][site]amix=inputs=2:duration=first:normalize=0")
+            report["site_gain_db"] = under[1]
         mixed = work / "mix.wav"
         extract._run([settings.FFMPEG, "-y", "-v", "error", *sound_in, "-filter_complex", mix + "[a]", "-map", "[a]",
                       "-c:a", "pcm_f32le", str(mixed)])
@@ -2540,6 +2600,12 @@ def check_loudness(final: Path) -> dict:
 
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
+def _broll_ids(edl: dict) -> list[int]:
+    """The clips a voice-over lays over the voice (not in its cut list)."""
+    voice = {c["clip_id"] for c in edl["cuts"]}
+    return list(dict.fromkeys(b["clip_id"] for b in edl.get("broll") or [] if b.get("clip_id") not in voice))
+
+
 def _clips_for(conn, ids: list[int]) -> dict[int, dict]:
     import onedrive
     onedrive.ensure_originals(conn, ids)  # originals the clean-up freed come back from OneDrive first
@@ -2575,6 +2641,7 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
     edl = plan_edit(conn, production, clips, client, fresh=fresh)
     edl["cuts"] = _cut(edl, clips, client, f"production:{production_id}", [n["body"] for n in notes])
     _keep_corrections(edl, production, clips if fresh else None)
+    _keep_picture(edl, production, clips, notes, fresh)
     if fresh:
         edl["fresh"] = True
     _render(conn, production, clips, edl, plan, version, find_track, client=client)
@@ -2820,7 +2887,7 @@ def rerender(conn, production_id: int, find_track=None) -> Path:
         raise RuntimeError("this production has no finished draft to render again")
     edl = json.loads(production["edl"])
     ids = list(dict.fromkeys(c["clip_id"] for c in edl["cuts"]))
-    clips = _clips_for(conn, ids)
+    clips = _clips_for(conn, ids + _broll_ids(edl))
     if set(ids) - set(clips):
         raise RuntimeError("some of the draft's clips are no longer in the library")
     find_track, plan = _same_music(production, json.loads(production["plan"] or "{}"), find_track)
@@ -2841,7 +2908,8 @@ def self_revise(conn, production_id: int, fixes: list[dict], round_no: int, clie
     plan = json.loads(production["plan"] or "{}")
     previous = json.loads(production["edl"] or "{}")
     ids = list(dict.fromkeys([c["clip_id"] for c in previous.get("cuts", [])]
-                             + [s["clip_id"] for s in plan.get("segments", [])]))
+                             + [s["clip_id"] for s in plan.get("segments", [])]
+                             + [b["clip_id"] for b in previous.get("broll") or []]))
     clips = _clips_for(conn, ids)
     if not clips:
         raise RuntimeError("none of the draft's clips are in the library any more")
@@ -2850,6 +2918,7 @@ def self_revise(conn, production_id: int, fixes: list[dict], round_no: int, clie
     if previous.get("look"):
         edl["look"] = previous["look"]
     _keep_corrections(edl, production)
+    _keep_picture(edl, production, clips)
     find_track, plan = _same_music(production, plan, find_track)
     return _render(conn, production, clips, edl, plan, production["version"], find_track,
                    suffix=f"_fix{round_no}", address_notes=False, client=client, ref=self_fix.ref(production_id))
@@ -2868,6 +2937,27 @@ def _keep_corrections(edl: dict, production: dict, clips: dict[int, dict] | None
         edl["corrections"] = kept
     if previous.get("spell") and not edl.get("spell"):
         edl["spell"] = previous["spell"]
+
+
+def _keep_picture(edl: dict, production: dict, clips: dict[int, dict], notes: list[dict] = (),
+                  fresh: bool = False) -> None:
+    """A voice-over's new plan keeps what was asked of the picture before (full screen here, the window's side),
+    unless it starts over, and Bryan's notes asking for it now ("full screen here", "move me to the left") are
+    made by code as well as by the plan (voiceover.asks_from_notes)."""
+    if not (edl.get("voiceover") or {}).get("on"):
+        return
+    import voiceover
+    previous = json.loads(production.get("edl") or "{}")
+    if not fresh:
+        voiceover.keep_asks(edl, previous)
+    asks, side, did = voiceover.asks_from_notes(notes, previous, clips)
+    if asks:
+        edl["pip_asks"] = (edl.get("pip_asks") or []) + [a for a in asks if not any(
+            voiceover._same_ask(a, o) for o in edl.get("pip_asks") or [])]
+    if side:
+        edl["pip_side"] = side
+    if did:
+        edl["pip_done"] = did
 
 
 def _int(v) -> int | None:
@@ -2896,7 +2986,7 @@ def self_patch(conn, production_id: int, actions: list[dict], round_no: int, cli
     if not edl.get("cuts"):
         raise RuntimeError("this draft has no edit to fix")
     ids = list(dict.fromkeys(c["clip_id"] for c in edl["cuts"]))
-    clips = _clips_for(conn, ids)
+    clips = _clips_for(conn, ids + _broll_ids(edl))
     if set(ids) - set(clips):
         raise RuntimeError("some of the draft's clips are no longer in the library")
     new, results = fix_actions.apply(edl, clips, actions)
@@ -2973,6 +3063,27 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         words = timeline(cuts, clips, sound=True)
         chunks = caption_chunks(words, close_at)
         overlay = None
+        # A voice-over: the site footage over his voice, him in a window (voiceover.py). His cut stays the voice.
+        picture, pip = work / "cut.mp4", None
+        if (edl.get("voiceover") or {}).get("on"):
+            import voiceover
+            try:
+                made, pip, notes = voiceover.render_picture(edl, cuts, clips, words, footage,
+                                                            close.get("speech_end") or footage, work, plan)
+            except Exception as e:  # a draft with him full screen beats no draft
+                log.warning("Couldn't lay the site footage over production %s: %s: %s", production_id,
+                            type(e).__name__, e)
+                made, pip, notes = None, None, ["kept you full screen all through: the site footage couldn't be laid in"]
+            checks += [{"did": n, "counted": False} for n in (edl.pop("pip_done", None) or []) + notes]
+            picture = made or picture
+        edl.pop("pip_notes", None)
+        if pip:
+            edl["pip"] = pip
+        else:
+            edl.pop("pip", None)
+            if (edl.get("voiceover") or {}).get("on"):
+                edl["pip_notes"] = notes or ["kept you full screen all through"]
+        window = {"side": pip["side"], "spans": pip["spans"]} if pip and pip["spans"] else None
         if placed:  # a re-render: the graphics are where the draft had them
             cards = [g for g in edl.get("graphics", []) if g.get("style") != "scene"]
             scenes = [g for g in edl.get("graphics", []) if g.get("style") == "scene"]
@@ -2988,6 +3099,11 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         cards, moved = clear_of_end(cards, clear_by)
         scenes, more = clear_of_end(scenes, clear_by)
         checks += [{"did": n, "counted": False} for n in moved + more]
+        if window:  # a panel over the top of the picture would cover the top of his window: full screen instead
+            for g in scenes:
+                if g.get("look") == "panel" and any(g["start"] < b and g["start"] + g["duration"] > a
+                                                    for a, b in window["spans"]):
+                    g["look"], g["look_changed"] = "cutaway", "a panel would have covered your window"
         tally = {"drawn": 0, "reused": 0}
         if scenes:
             scenes, more, tally = render_scenes(scenes)
@@ -2998,6 +3114,8 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         checks += [{"did": n, "counted": False} for n in scene_notes]
         if scenes and not placed:
             edl["summary"] = (edl.get("summary", "").rstrip() + " " + scene_summary(scenes)).strip()
+        if pip and not placed:
+            edl["summary"] = (edl.get("summary", "").rstrip() + " " + voiceover.summary(pip)).strip()
         chunks, doubled = clear_of_cards(chunks, graphics)
         if doubled:
             checks.append({"did": f"hid {doubled} caption{'s' if doubled != 1 else ''} repeating a card's own words",
@@ -3006,8 +3124,10 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         look = edl["look"] = draft_look(edl) if placed or edl.get("look") else look_now()
         if look["titles"] == "gallery":
             chunks = key_word_captions(chunks, edl.get("key_words") or [])
-            edl["bright"] = bright_spans(work / "cut.mp4")  # kept for the Resolve project's captions
+            edl["bright"] = bright_spans(picture)  # kept for the Resolve project's captions
             chunks = lit_captions(chunks, edl["bright"])
+            if window:
+                chunks = voiceover.lit_beside(chunks, window)
         end = {"start": close_at, "duration": card["seconds"], "ask": card["ask"], "handle": card["handle"]} if card else None
         if chunks or edl["hook_text"].strip() or cards or end:
             overlay = work / "overlay.webm"
@@ -3015,7 +3135,7 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
             render_overlay(chunks, edl["hook_text"], total, overlay, cards,
                            ACCENT.get(production["brand"], ACCENT["urban_makers"]), font=look["caption_font"],
                            style=look["titles"], hook_italic=edl.get("hook_italic"), end=end,
-                           **({"paper": paper} if paper else {}))
+                           **({"paper": paper} if paper else {}), **({"pip": window} if window else {}))
 
         music_info, music_file = {"mood": edl["music"]["mood"], "tempo_bpm": edl["music"]["tempo_bpm"]}, None
         chosen = (plan.get("music_plan") or {}).get("chosen")
@@ -3038,7 +3158,9 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         # The shot's own sound fades out at the end of the footage, after the last word (never over it).
         speech_end = close.get("speech_end")
         fade = min(0.3, footage - speech_end - 0.05) if speech_end is not None else 0.0
-        sound = mix_final(work / "cut.mp4", overlay, music_file, edl["music"]["volume_db"], total, final, words,
+        if pip and pip.get("site_gain_db") is not None and (work / "site.wav").exists():
+            layers["under"] = (work / "site.wav", pip["site_gain_db"])
+        sound = mix_final(picture, overlay, music_file, edl["music"]["volume_db"], total, final, words,
                           footage=footage, voice_out=(footage - fade, fade) if fade >= 0.05 else None, **layers)
         if sound.get("music_gain_db") is not None:
             music_info["gain_db"] = sound["music_gain_db"]  # the track's level in the mix (for Resolve)

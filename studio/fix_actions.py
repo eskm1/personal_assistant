@@ -17,6 +17,8 @@ draft is rendered again with every code check (voice edges, the clipped-word che
                   reworded or removed
   hook_text       the hook reworded (its *italic* word as the gallery look wants)
   music_level     the music turned down or up by some dB
+  layout          a voice-over's picture (voiceover.py): Bryan full screen for a stretch ("full"), the site
+                  footage and his window back there ("window"), or his window moved "left" or "right"
   replan          only when nothing smaller fits: the old way, a new edit plan from the editor
 
 Carousels have slide_text (a slide's heading or body, or the caption: carousel.patch) and replan. The
@@ -38,7 +40,7 @@ import voice_edges
 log = logging.getLogger("studio.fix_actions")
 
 PATCHES = ("caption_word", "drop_words", "restore_words", "trim_pause", "move_cut", "graphic", "hook_text",
-           "music_level", "slide_text")
+           "music_level", "layout", "slide_text")
 CUTS = ("drop_words", "restore_words", "trim_pause", "move_cut")
 
 NEAR = 3.0               # seconds: how far from the read's time its words or join may be
@@ -551,6 +553,30 @@ def _music(edl: dict, a: dict) -> str:
     return f"turned the music {'down' if new < old else 'up'} {abs(new - old):.0f} dB"
 
 
+def _layout(draft: Draft, edl: dict, a: dict) -> str:
+    """A voice-over's picture: him full screen from start to end ("full"; a start alone: the sentence said there;
+    no time: all through), the site footage and his window back there ("window"), or his window moved to the
+    "left" or "right" corner. Kept as asks tied to his words (voiceover.ask_for), so they hold through re-cuts."""
+    import voiceover
+    if not (edl.get("voiceover") or {}).get("on"):
+        raise NotApplied("this draft isn't a voice-over: there's no window to change")
+    field = a.get("field") or ""
+    if field in ("left", "right"):
+        if (edl.get("pip_side") or (edl.get("pip") or {}).get("side")) == field:
+            raise NotApplied(f"the window is already on the {field}")
+        edl["pip_side"] = field
+        return f"moved your window to the {field}"
+    if field not in ("full", "window"):
+        raise NotApplied("the read didn't say what to change in the picture")
+    start, end = _num(a.get("start")), _num(a.get("end"))
+    asks = voiceover.ask_for(edl, draft.clips, field, start, end, "fix")
+    if not asks:
+        raise NotApplied(f"there's no voice at {_mmss(start)}" if start is not None else "there's no voice to change")
+    edl["pip_asks"] = (edl.get("pip_asks") or []) + asks
+    return (("showed you full screen" if field == "full" else "put the site footage back with you in the window")
+            + (f" at {_mmss(start)}" if start is not None else " all through"))
+
+
 def _remap(old: Draft, new: Draft, t: float) -> float:
     """A moment on the old draft's clock on the new one (the same footage)."""
     src = old.to_source(t)
@@ -580,6 +606,8 @@ def apply(edl: dict, clips: dict[int, dict], actions: list[dict]) -> tuple[dict,
                 res["did"] = _hook(new, a)
             elif kind == "music_level":
                 res["did"] = _music(new, a)
+            elif kind == "layout":
+                res["did"] = _layout(draft, new, a)
             elif kind in CUTS:
                 planned, did = {"drop_words": _plan_drop, "restore_words": _plan_restore,
                                 "trim_pause": _plan_pause, "move_cut": _plan_move}[kind](draft, a)

@@ -60,6 +60,7 @@ window.StudioHelp = (() => {
       "One post: your call, the shots to film and the next step.",
       "Anyone on the team can Go or Park it. Dismiss and Make this are Bryan's.",
       "Tap the line under the title for its kind, format and caption.",
+      "Talking shots can wait for the studio: film the site as B-roll, talk later.",
       "Main action: the big button at the bottom. It always shows the next step.",
     ], tour: [
       ["[data-plan-decision=go]", "Your call: Go to make it, Park for later. Tap it again to undo."],
@@ -72,6 +73,7 @@ window.StudioHelp = (() => {
       "The shots to film today, for the project you're on.",
       "Tap a shot to tick it off. Film or upload straight to it.",
       "Only what's left shows unless you switch it off.",
+      "On site, film the work with no talking. Bryan talks to camera in the studio after; Studio lays the site footage over him.",
     ], tour: [
       [".cl-shot", "Tap to tick a shot off when it's filmed."],
       ["[data-up-film], [data-up-choose]", "Film or upload a take for that shot."],
@@ -146,6 +148,7 @@ window.StudioHelp = (() => {
       "Studio's read lists what to fix. They all go to the editor when you **Send back**.",
       "Main action: the bar at the bottom. **Send back** with your notes (anyone), or **Approve** (Bryan).",
       "A slideshow Reel (a carousel with music): a note can change a slide's time, the order or the music.",
+      "A voice-over (you in a small window over site footage): write **full screen here**, **move me to the left** or **no window**.",
     ], tour: [
       ["#player-frame", "The draft. Tap to play."],
       ["#quick-note, #note-jump, #note-body", "Type a note. It pins to the moment the video is at."],

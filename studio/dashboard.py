@@ -799,7 +799,8 @@ def production_detail(production_id: int):
     item.update({"review": draft_review.current(row), "review_state": draft_review.state(row),
                  "review_error": draft_review.errors.get(production_id) if is_owner() else None,
                  "shot_list": _shot_list_target(row) is not None,
-                 "edit": {"cuts": len(cuts), "clips": len({c["clip_id"] for c in cuts}),
+                 "edit": {"cuts": len(cuts), "clips": len({c["clip_id"] for c in cuts}
+                                                          | {s["clip_id"] for s in ((edl or {}).get("pip") or {}).get("shots", [])}),
                           "hook_text": (edl or {}).get("hook_text", "")} if edl else None,
                  "transcript": " ".join(w["word"] for w in words), "words": len(words), "languages": langs})
     item.update({"idea": row["idea"], "caption": row["caption"] or "", "sources": sources,

@@ -1,5 +1,5 @@
 """Run Studio's edit-quality suites: cuts, endings, listen-back and watch-through, fix rounds, slideshow
-Reels, Whisper's prompt. One line per suite with its pass count; exits 1 if any check fails.
+Reels, voice-overs, Whisper's prompt. One line per suite with its pass count; exits 1 if any check fails.
 
     python tests/quality/run.py                # from studio/, all suites, 4 at a time
     python tests/quality/run.py cuts ending    # just these
@@ -18,6 +18,7 @@ STUDIO = HERE.parents[1]
 # name: (script, extra args, the checks it makes). Longest first, so the slow ones start at once.
 SUITES = {
     "finalcheck": ("suite_finalcheck.py", [], 59),
+    "pip": ("suite_pip.py", [], 80),
     "selffix": ("suite_selffix.py", [], 67),
     "ending": ("suite_ending.py", [], 71),
     "patches": ("suite_patches.py", [], 59),

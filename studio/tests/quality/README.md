@@ -15,7 +15,7 @@ python tests/quality/suite_cuts.py          # one suite on its own (STUDIO_QUALI
 How long: about 7,800 CPU-seconds in all, most of it real renders (HyperFrames overlays and 1080x1920
 encodes); `finalcheck` is over half of it and runs its renders one after another. On a 4-vCPU box that is
 about 30 minutes at best; measured 2026-10-21: 43 minutes, all green, on a 4-vCPU box shared with other
-work (load ~15), and 39 minutes with slideshow added (7,775 CPU-seconds). Each line shows the suite's wall time and its CPU time (with its ffmpeg and Chrome).
+work (load ~15), and 39 minutes with slideshow added (7,775 CPU-seconds); 2026-10-22, with pip added: 44 minutes, all green, 561 checks (9,270 CPU-seconds; pip about 33 minutes of it, its seven real renders). The suites need about 2.5 GB of free disk at once (finalcheck and ending about 800 and 700 MB each). Each line shows the suite's wall time and its CPU time (with its ffmpeg and Chrome).
 
 Use Studio's own Python (the server's or a session's venv: the one with `requirements.txt`). Needs ffmpeg
 with the flite filter (Ubuntu's ffmpeg has it), node, and HyperFrames installed in `render/` (`npm ci`), as
@@ -34,6 +34,7 @@ works in a temporary folder of its own (`STUDIO_ROOT` included), removed after.
 | `suite_selffix.py` | 67 | Studio fixes its own read before Bryan sees a draft: one round, Bryan told once at the end, the fixed render delivered, rules learned into the playbook, the cost recorded apart. Send-back notes (editing becomes a rule, taste doesn't). Edge cases: a round that isn't better, one that fails, rounds off, the round limit, a failed read, a re-render, a restart mid-rounds. Carousels through the same loop. |
 | `suite_edit_units.py` | 77 | Unit checks: the sentence guard and clause ends (a whole clause before "and"/"so"/"but"/"then" may end what is said) (stray last word, mid-sentence start, dead air), caption case and timing, cards clear of the caption line, the bundled fonts and their licences, the music ducking expression, learned rules (count, cap, retire, merge, forget, Bryan's part untouched), notes sorted, the trend, scores. |
 | `suite_slideshow.py` | 97 | Slideshow Reels (`slideshow.py`): a carousel's slides made into a 9:16 Reel with music. Owner only, one per carousel; the slides laid out again for the Reel (no Swipe cue or counter, a carousel's own layout exactly as before), a missing photo falls back to the carousel's slide; times from the words, slides in order, crossfades, a slow push-in inside the safe zones, the end card and the music fade, read in frames and sound. Studio's read and the watch-through (no listen-back: no voice), send back (order, times, a track link), a music-level patch, Start over, posting as a Reel, the carousel untouched, a personal post with no music or end card, a release's restart. |
+| `suite_pip.py` | 80 | Voice-overs (`voiceover.py`): the footage told apart (a talking head from B-roll, a few words in the background still B-roll; the studio from the site by its sound, its camera, its setting and its time, and by sound and camera alone), when a post is a voice-over (never on site, never without B-roll, off by setting); the plan split into his voice and the B-roll laid over it, Bryan's notes read; a real voice-over draft: 9:16 H.264/AAC, him full screen for his first and last sentence, the site footage with his rounded window in a bottom corner in between (each shot its own clip from its in-point, changing at clause ends, starting at its words), captions beside the window, the site's sound under him, the read told it's deliberate; his cut identical to a plain talking-head edit of the same footage; "Full screen here" and "Move me to the right" notes, a re-render keeping it, the read's layout fix; on site edited exactly as the editor before did (plan, cut, picture); Resolve (B-roll on V2, the window layer); the mix's site level; the docs, help and planner wording. |
 | `suite_whisper_prompt.py` | 10 | The glossary's hotwords fit Whisper's 448-token window (the 2026-10-21 "maximum decoding length must be > 0" failure), and an overflow retries without them instead of failing the edit. |
 
 Real ffmpeg, HyperFrames and OpenCV renders in cuts, ending, finalcheck, patches (part 1), selffix (parts
@@ -53,14 +54,18 @@ Made at run time by `media.py`, nothing large committed:
   photo `messi5.jpg` (Apache-2.0, `fixtures/person.LICENSE.txt`). OpenCV's face detector needs a real
   face, so this 25 KB picture is the one media file committed.
 - B-roll (ffmpeg's test pattern), a warm chord bed for music, tones.
+- **A voice-over's footage** (pip): the person and flite phrases "in the studio" (a still camera, a plain wall,
+  clean sound) and "on site" (the picture shaking, a busy background, the site's noise about 11 dB under the
+  voice), and three B-roll clips (three test patterns, a site rumble, one with a few words in the background).
 - **A carousel's slides** (slideshow): 1080x1350 PNGs drawn with Pillow, one flat colour each so a frame tells
   which slide is up, a white frame at the slide's margins and a dark line at its edge (to see nothing is cropped).
 
-`fixtures/before/` holds Studio as it was before three changes (xz-compressed, 94 KB): `editor.py` before
-bde7803 (cuts follow the voice) and before 576f763 (gentle cuts, the ending), the playbook seed before
-576f763, and `carousel.py` before 9d1f570 (slideshow Reels). The suites load them to show the test media
+`fixtures/before/` holds Studio as it was before four changes (xz-compressed, 140 KB): `editor.py` before
+bde7803 (cuts follow the voice), before 576f763 (gentle cuts, the ending) and at ca2fe96 (before voice-overs), the
+playbook seed before 576f763, and `carousel.py` before 9d1f570 (slideshow Reels). The suites load them to show the test media
 still reproduces the bug each fix is for, as the "old draft" a re-render must repair, as the old playbook
-the migration rewrites, and as the carousel layout a carousel must still get now the Reel has its own. If a
+the migration rewrites, as the carousel layout a carousel must still get now the Reel has its own, and as the
+editor whose on-site edits a voice-over change must leave exactly as they were. If a
 later change elsewhere stops an old file importing, fix the import in the suite, don't drop the check.
 
 ## Adding to it

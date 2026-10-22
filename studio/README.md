@@ -452,6 +452,52 @@ list to `Studio\logs\epidemic_tools.json`, which is useful when the music step m
 Each draft costs one Claude call to plan the cut plus a few short calls to pick music,
 typically tens of cents.
 
+### Voice-overs: film on site, talk in the studio
+
+Filming speech on site is hard work (noise, light, people). So you can film the site as **B-roll only** (the work,
+the details, no talking needed) and talk to camera later in your studio. Studio tells the footage apart by itself,
+with no extra cost (`voiceover.py`):
+
+- **A talking head**: a face looking at the camera in most of the clip's stills and someone talking most of the
+  time. **B-roll**: hardly anything said (a few words in the background are fine). Talking with no face to camera (a
+  walk-through) counts as site footage too.
+- **Studio or site**: a talking head is from the studio when enough of these agree: clean sound (the quality check's
+  gap between your voice and the room), a still camera (Studio measures how much the picture moves), the setting
+  Claude saw when it tagged the clip (a studio, an office; or a site), and when it was filmed (another day than the
+  B-roll, or hours later). The sound and the camera have the final say: a noisy or hand-held talking head is on site.
+  What Studio decided is kept with each clip (`footage.json`) and in the draft.
+
+When a post's footage is **a studio talking head plus site B-roll**, the draft is a **voice-over**:
+
+1. Your words are cut exactly as for any talking head (whole sentences, cuts that follow your voice, the
+   clipped-word check). The editor puts each B-roll shot before the words it shows; Studio lays it over your voice
+   instead of stopping it, changing shots at the ends of your sentences or clauses.
+2. You're **full screen for your first sentence** (the hook) and **your last** (before the end card). In between,
+   the site footage fills the screen and you're in a **small window** (a third of the width, rounded corners, a
+   hairline and a soft shadow) in a bottom corner, above Instagram's caption area. The captions move beside the
+   window. The window goes on the side where the footage is calmest (usually the left).
+3. The site's own sound plays well under your voice (about 18 dB under it), under the music too.
+
+A talking head filmed **on site** is edited the old way (the B-roll cut in between your sentences), and so is a
+talking head with no B-roll. `STUDIO_EDIT_VOICEOVER=0` turns voice-overs off.
+
+**Notes that change the picture**: pause where you want it and write "**full screen here**" (that sentence shows you
+full screen), "**show the site here**" (the footage and your window come back), "**move me to the left**" or
+"**... right**" (the window's corner, the whole draft), or "**no window**" (full screen all through). Studio makes
+these itself when you send it back, and keeps them in later versions. Studio's own read can make the same changes
+before you see a draft. Not yet: a bigger or smaller window, the window in a top corner, or a shot swapped for
+another by a note (the editor re-plans for that, as for any note).
+
+**Planning for it**: in the shot list, mark talking shots for the studio and keep the site list to B-roll (the
+planner suggests this). Film the B-roll first, then talk in the studio with the plan in front of you.
+
+**Cost**: nothing extra. The footage check uses what Studio already measured (stills, transcript, the quality check)
+and OpenCV on the server. The edit is still one plan; its prompt is a few hundred words longer for a voice-over
+(about a cent).
+
+**DaVinci Resolve**: the project has the site shots on V2 as clips from your originals (their sound low), your
+window as a layer above them, and the rest as before.
+
 ### Finishing a draft by hand in DaVinci Resolve
 
 Any draft can be opened in the free [DaVinci Resolve](https://www.blackmagicdesign.com/products/davinciresolve)

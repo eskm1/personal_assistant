@@ -128,6 +128,11 @@ EDIT_MAX_PAUSE = float(_env("STUDIO_EDIT_MAX_PAUSE", "0.7"))
 # Makers end card (the mark, the Instagram handle, the post's ask) while the music fades out.
 # Off = the draft ends after that beat, with no card.
 END_CARD = _flag("STUDIO_END_CARD", True)
+# Voice-overs (voiceover.py; Bryan, 2026-10-21: film B-roll on site, talk in the studio after): when a post's
+# footage is a talking head filmed in the studio plus site B-roll, the site footage fills the screen over his voice
+# with him in a small window in a bottom corner, full screen for his first and last sentence. Off = such posts are
+# edited as before (the B-roll cut in between his sentences).
+EDIT_VOICEOVER = _flag("STUDIO_EDIT_VOICEOVER", True)
 # Slideshow Reels (slideshow.py: a carousel's slides as a Reel with music): each slide very slowly grows to
 # 103% while it's up (the whole slide, never cropped). Off = the slides stay still.
 SLIDESHOW_PUSH_IN = _flag("STUDIO_SLIDESHOW_PUSH_IN", True)

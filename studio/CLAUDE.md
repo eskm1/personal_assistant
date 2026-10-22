@@ -229,6 +229,21 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   over, `editor._fresh_block`); RELEASE "2026-10-21 gentle cuts, a proper ending, started over" with
   `RELEASE_FRESH`: on the next start each draft in To review is rejected + archived (note `restyle.REJECT_NOTE`) and
   its idea restarts as a new production (`restyle.restart`, open notes moved, version carries on).
+- Voice-overs, built 2026-10-21 (Bryan: "film video / b roll on site then come back and voiceover", a studio talking
+  head "in a part of the screen"; not yet proven on real footage or with real Claude): `voiceover.py`. The footage check
+  (`recognise`, `footage.json` beside each clip, no Claude): talking head = a frontal face in >= half the ingest stills
+  and talk >= 45% of the clip; B-roll = talk < 25% or < 10 words; studio vs site from the quality check's SNR, camera
+  movement (phase correlation on 3 short samples), Claude's `setting` words and the time against the B-roll (studio =
+  score >= 2 with sound and camera not against). Studio talking head + B-roll (+ no site talking head) = voice-over
+  (`edl["voiceover"]`, `STUDIO_EDIT_VOICEOVER`): the plan prompt's voice-over rule and `picture` field; B-roll cuts are
+  split off (`split_plan`, `edl["broll"]`, anchored to the next voice cut) and laid over the voice at clause ends
+  (`layout`); his cut is cut exactly as a plain talking head (suite_pip checks it piece for piece). Picture: full
+  screen for the first and last sentence, else the B-roll with his window 360x480 r28 at x 56 or 600, y 1020-1500
+  (calmer side, `choose_side`), captions beside it (`_pip_css`); site sound 18 dB under the voice (`mix_final` under=).
+  `edl["pip"]` (shots, spans, side, crop), asks `edl["pip_asks"]` / `edl["pip_side"]` from notes ("full screen
+  here", "move me to the left", `asks_from_notes`), the plan's picture field and the read's `layout` action
+  (`fix_actions._layout`). Resolve: B-roll on V2 from the originals, `window.mov` above. Planner shot-list prompt
+  (plan.py + `_shared/prompts.ts`) now offers talking in the studio: NEEDS `cloud_setup --update` for the Edge Functions.
 - Fix rounds that fix, built 2026-10-20 (not yet proven with real Claude): Studio's read gives each editor-fixable fix
   an `action` (caption_word, drop_words, restore_words, trim_pause, move_cut, graphic, hook_text, music_level, replan;
   carousels slide_text) and a `for_bryan` reason; `self_fix.py` applies them as patches (`fix_actions.py`,

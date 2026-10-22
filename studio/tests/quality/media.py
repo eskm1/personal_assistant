@@ -158,9 +158,10 @@ def phrase_speech(parts, out: Path):
     return out, words, dur(out)
 
 
-def person_video(out: Path, size, seconds, face_x_expr, face_y, scale, audio=None, bg="0x4a5560"):
+def person_video(out: Path, size, seconds, face_x_expr, face_y, scale, audio=None, bg="0x4a5560", noise=6):
     """A plain background with the person on it; face_x_expr is the face centre's x in pixels (ffmpeg expr
-    of t), face_y its y; scale the person's size (3.0: the face about 230 px across)."""
+    of t), face_y its y; scale the person's size (3.0: the face about 230 px across); noise: the sensor's
+    grain on the background."""
     w, h = size
     cw, ch = 150, 302
     fx, fy = FACE_IN_CROP[0] * scale, FACE_IN_CROP[1] * scale
@@ -168,7 +169,7 @@ def person_video(out: Path, size, seconds, face_x_expr, face_y, scale, audio=Non
     oy = f"{face_y - fy:.1f}"
     inputs = ["-f", "lavfi", "-i", f"color=c={bg}:size={w}x{h}:rate=30:duration={seconds:.3f}", "-loop", "1", "-i", str(FACE)]
     graph = (f"[1:v]scale={round(cw * scale)}:{round(ch * scale)}[p];"
-             f"[0:v]noise=alls=6:allf=t[bg];[bg][p]overlay=x='{ox}':y={oy}:shortest=1,format=yuv420p[v]")
+             f"[0:v]noise=alls={noise}:allf=t[bg];[bg][p]overlay=x='{ox}':y={oy}:shortest=1,format=yuv420p[v]")
     args = ["ffmpeg", "-y", "-v", "error", *inputs]
     if audio:
         args += ["-i", str(audio)]
@@ -289,3 +290,68 @@ def tone_track(out: Path, seconds=90):
     run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"sine=frequency=262:duration={seconds}", "-f", "lavfi",
          "-i", f"sine=frequency=392:duration={seconds}", "-filter_complex", "amix=inputs=2", "-c:a", "libmp3lame", str(out)])
     return out
+
+
+# ── A voice-over's footage (the pip suite's) ──────────────────────────────────
+# Bryan in his studio (a still camera, a plain wall, clean sound) and on site (held in the hand, a busy
+# background, the site's noise), saying the same lines; and three B-roll clips, each its own picture (so a frame
+# tells which is up) with the site's sound, one with a few words said in the background.
+STUDIO_LINES = ["Most floors in old flats are not level.", 0.55, "Here is how we fix that.", 0.6,
+                "First we hack off the old tiles,", 0.35, "right down to the screed.", 0.6,
+                "Then we pour a new screed over the whole room.", 0.6, "It takes about two days to dry.", 0.6,
+                "After that, the new tiles go down.", 0.6, "So the floor stays flat for years.", 0.9]
+BROLL_LOOKS = {"hack": "testsrc2=size=1920x1080:rate=30", "pour": "smptehdbars=size=1920x1080:rate=30",
+               "tile": "rgbtestsrc=size=1920x1080:rate=30"}
+
+
+def site_person(out: Path, seconds, audio, scale=3.0):
+    """The person on a busy background (the test pattern, dimmed), the picture shaking as a hand-held phone does
+    (a window moving 40 px about), with the given sound."""
+    w, h, pad = 1080, 1920, 60
+    cw, ch = 150, 302
+    fx, fy = FACE_IN_CROP[0] * scale, FACE_IN_CROP[1] * scale
+    graph = (f"[0:v]eq=brightness=-0.25:saturation=0.35[bg];[1:v]scale={round(cw * scale)}:{round(ch * scale)}[p];"
+             f"[bg][p]overlay=x={(w + 2 * pad) / 2 - fx:.1f}:y={760 + pad - fy:.1f}:shortest=1,"
+             f"crop={w}:{h}:x='{pad}+40*sin(2*PI*t*1.3)':y='{pad}+40*sin(2*PI*t*1.7+1)',format=yuv420p[v]")
+    run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=size={w + 2 * pad}x{h + 2 * pad}:rate=30:duration={seconds:.3f}",
+         "-loop", "1", "-i", str(FACE), "-i", str(audio), "-filter_complex", graph, "-map", "[v]", "-map", "2:a",
+         "-c:a", "aac", "-ar", "48000", "-t", f"{seconds:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(out)])
+    return out
+
+
+def site_broll(out: Path, look: str, seconds: float = 8.0, words: str = ""):
+    """Horizontal B-roll (one of BROLL_LOOKS: no face), the site's sound (a low rumble and hiss, about -32 dBFS), and
+    when words is given, someone saying them quietly in the background."""
+    inputs = ["-f", "lavfi", "-i", f"{BROLL_LOOKS[look]}:duration={seconds}",
+              "-f", "lavfi", "-i", f"anoisesrc=color=brown:amplitude=0.06:d={seconds}:seed=11"]
+    mix = "[1:a]aformat=channel_layouts=mono,aresample=48000[a]"
+    if words:
+        inputs += ["-f", "lavfi", "-i", f"flite=text='{words}':voice=kal"]
+        mix = ("[2:a]aresample=48000,volume=0.35,adelay=2000|2000,apad[w];[1:a]aformat=channel_layouts=mono,"
+               "aresample=48000[n];[n][w]amix=inputs=2:normalize=0:duration=first[a]")
+    run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", mix, "-map", "0:v", "-map", "[a]",
+         "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "48000",
+         "-t", str(seconds), str(out)])
+    return out
+
+
+def pip_media(m: Path):
+    """m/studio.mp4 (Bryan in the studio: still, plain wall, clean sound) and m/site.mp4 (the same lines on site:
+    shaking, busy background, the site's noise about 10 dB under him), their word times (m/words.json), and the
+    B-roll m/hack.mp4, m/pour.mp4 (a few words in the background) and m/tile.mp4."""
+    m.mkdir(parents=True, exist_ok=True)
+    voice, words, vlen = phrase_speech(STUDIO_LINES, m / "voice.wav")
+    clean = m / "voice_room.wav"
+    run(["ffmpeg", "-y", "-v", "error", "-i", str(voice), "-f", "lavfi", "-i", f"anoisesrc=color=pink:amplitude=0.0006:d={vlen:.3f}:seed=5",
+         "-filter_complex", "[0:a][1:a]amix=inputs=2:normalize=0:duration=first,aformat=channel_layouts=mono", "-ar", "48000", str(clean)])
+    person_video(m / "studio.mp4", (1080, 1920), vlen, "540", 700, 3.0, audio=clean, bg="0x5a6470", noise=1)
+    noisy = m / "voice_site.wav"
+    run(["ffmpeg", "-y", "-v", "error", "-i", str(voice), "-f", "lavfi", "-i", f"anoisesrc=color=pink:amplitude=0.3:d={vlen:.3f}:seed=9",
+         "-filter_complex", "[0:a][1:a]amix=inputs=2:normalize=0:duration=first,aformat=channel_layouts=mono", "-ar", "48000", str(noisy)])
+    site_person(m / "site.mp4", vlen, noisy)
+    site_broll(m / "hack.mp4", "hack")
+    site_broll(m / "pour.mp4", "pour", words="pass me the trowel")
+    site_broll(m / "tile.mp4", "tile")
+    (m / "words.json").write_text(json.dumps({"total": vlen, "words": words}))
+    shutil.rmtree(m / "voice_parts", ignore_errors=True)
+    return m

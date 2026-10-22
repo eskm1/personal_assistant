@@ -131,7 +131,12 @@ films it ({cameras}). description: what the camera sees, \
 specific enough to film without asking ("Close-up: trowel spreading grey membrane into the \
 wall-floor corner, slow pan left"). line: what's said over it ("" if nothing). on_screen: text on \
 screen ("" if none). seconds: rough length in the final cut. why: what this shot does for the story. \
-Plan B-roll and detail shots to cover talking, as the playbook says. Usually 4 to 10 shots.
+Plan B-roll and detail shots to cover talking, as the playbook says. Usually 4 to 10 shots. Filming speech \
+on site is hard (noise, light, people): plan talking shots to be filmed in Bryan's studio after the site day \
+(say "in the studio" in the description) and keep the site shots to B-roll and details with no lines, so \
+the team films the site without anyone talking and Bryan talks over it later (Studio puts the site footage \
+full screen with him in a small window). Plan a talking shot on site only when it must be there: a \
+walk-through, a reveal, a reaction.
 - music: the mood, tempo and a short search phrase for the music bed. For personal posts this \
 becomes a note on what to pick from Instagram's library.
 - Never invent facts, prices, timelines, promotions, offers or client details. Write \

@@ -40,9 +40,10 @@ _item = {"anyOf": [{"type": "integer"}, {"type": "null"}]}
 
 # What a fix the editor can make does, exactly (fix_actions.py makes it): one machine action per fix.
 REEL_ACTIONS = ("caption_word", "drop_words", "restore_words", "trim_pause", "move_cut", "graphic", "hook_text",
-                "music_level", "replan", "none")
+                "music_level", "layout", "replan", "none")
 CAROUSEL_ACTIONS = ("slide_text", "replan", "none")
-ACTION_FIELDS = ("", "before", "after", "time", "title", "lines", "remove", "heading", "body", "caption")
+ACTION_FIELDS = ("", "before", "after", "time", "title", "lines", "remove", "heading", "body", "caption", "full", "window",
+                 "left", "right")
 # Why a fix is Bryan's, not the editor's (Review says it in plain words: self_fix.left_because).
 FOR_BRYAN = ("", "footage", "taste", "message", "spending")
 
@@ -146,7 +147,8 @@ for any future post in at most 14 words ("End on the last full sentence, never o
 starts the next"); same_rule is the number of the rule in "Editing rules Studio learned" it repeats \
 (R3 = 3), else 0. For other fixes rule is "" and same_rule 0."""
 _REEL_FIXABLE = ("trims and cuts, the order of the opening, the hook text, pace, caption words and timing, a "
-                 "graphic's or drawn animation's wording, placement or timing (or removing it), the music level")
+                 "graphic's or drawn animation's wording, placement or timing (or removing it), the music level, and "
+                 "in a voice-over where Bryan is full screen or in his window, and which corner it's in")
 _REEL_ACTIONS = """\
 - action: for an editor_can_fix fix, the exact change, so Studio makes just that change instead of \
 editing the whole draft again. Take the words and times from the material (seconds on the draft's \
@@ -167,6 +169,9 @@ word in *asterisks*), "lines" (to = the new lines joined with " / ") or "remove"
   - hook_text: to = the new on-screen hook (at most 6 words, sentence case, one *italic* word or none), \
 or "" to take it off.
   - music_level: amount = how many dB to change it by (negative = quieter).
+  - layout: only in a voice-over (Bryan in a small window over site footage): field "full" shows him full \
+screen from start to end (start alone: the sentence he says there; both null: all through), "window" puts the \
+site footage and his window back there, "left" or "right" moves his window to that corner for the whole draft.
   - replan: only when none of these can make it (reordering, a different take, a new drawn animation, \
 caption timing, anything across many places): reason = why, in a few words.
   A fix that isn't editor_can_fix has type "none". Fields a type doesn't use are null, or "" (field "").
@@ -520,6 +525,18 @@ def _context(conn, production: dict) -> str:
     if cut_words:
         lines.append(cut_words)
     lines.append(f"Hook text on screen for the first ~2.5s: {edl.get('hook_text') or '(none)'}")
+    vo = edl.get("voiceover") or {}
+    if vo.get("on"):
+        import voiceover
+        pip = edl.get("pip")
+        lines.append("This is a voice-over, on purpose (Bryan films site footage, then talks to camera in his studio): "
+                     "the cut list above is his studio talking head, the voice. "
+                     + ("The picture: " + voiceover.describe(pip, _clips(conn, {"cuts": [
+                         {"clip_id": s["clip_id"]} for s in pip["shots"]]})) + " His window, the studio backdrop and the "
+                        "site footage covering him are deliberate: don't suggest removing them or filming him on site. "
+                        "Judge whether each site shot shows what he's saying, and his window clear of what matters."
+                        if pip else "This time he is full screen all through: "
+                        + ("; ".join((edl.get("pip_notes") or [])) or "no site footage could be laid in") + "."))
     close = edl.get("close") or {}
     if close.get("at") is not None:
         card = close.get("card") or {}

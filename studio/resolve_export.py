@@ -7,6 +7,8 @@ by hand in the free DaVinci Resolve, with every layer still editable.
                           every cut can be trimmed back out), plus the layers below
         captions.mov      the styled captions on a transparent layer (ProRes 4444)
         animations.mov    the drawn animations (motion library inserts), same, on their own track
+        window.mov        a voice-over's window (Bryan over the site footage), same; the site footage itself is
+                          on V2 as clips from the originals
         graphics.mov      the hook and B-roll cards, same
         captions.srt      the caption text, to import as an editable subtitle track
         music.mp3         the Epidemic Sound track (Urban Makers only)
@@ -154,10 +156,13 @@ def srt(chunks: list[dict]) -> str:
 
 
 def fcpxml(title: str, cuts: list[dict], clips: dict[int, dict], sources: dict[int, dict],
-           layers: list[tuple[str, Path, int]], music: tuple[Path, dict, float] | None, after: float = 0.0) -> str:
+           layers: list[tuple[str, Path, int]], music: tuple[Path, dict, float] | None, after: float = 0.0,
+           broll: list[dict] = (), broll_db: float = 0.0) -> str:
     """layers: (name, file, lane) transparent video layers lasting the whole timeline.
     music: (file, media info, volume dB). after: seconds the timeline runs on past the cut (the
-    close: the draft holds its last frame, then the end card, which is on the graphics layer)."""
+    close: the draft holds its last frame, then the end card, which is on the graphics layer).
+    broll: a voice-over's site shots (voiceover.layout: clip_id, src, start, end) on lane 1, from the
+    originals, their sound at broll_db."""
     placed = frames_to_cuts(cuts)
     cut_frames = sum(n for _, n in placed)
     gap = max(round(after * FPS), 0)
@@ -184,7 +189,7 @@ def fcpxml(title: str, cuts: list[dict], clips: dict[int, dict], sources: dict[i
         assets[key] = (aid, f"<asset {' '.join(attrs)}/>")
         return aid
 
-    for cid in dict.fromkeys(c["clip_id"] for c in cuts):
+    for cid in dict.fromkeys([c["clip_id"] for c in cuts] + [b["clip_id"] for b in broll]):
         add_asset(("clip", cid), clips[cid]["source_name"] or Path(clips[cid]["video_path"]).name,
                   Path(clips[cid]["video_path"]), sources[cid])
     layer_infos = [(name, add_asset(("layer", name), path.name, path, {
@@ -201,6 +206,14 @@ def fcpxml(title: str, cuts: list[dict], clips: dict[int, dict], sources: dict[i
         if k == 0:
             # Whole-length layers ride on the first clip; their offsets are in that
             # clip's own time, so "the start of the timeline" is the clip's in-point.
+            for b in broll:  # the site footage, each shot where it was in the draft
+                bsrc = sources[b["clip_id"]]
+                f0, f1 = round(b["start"] * FPS), round(b["end"] * FPS)
+                inner.append(f'<asset-clip ref="{assets[("clip", b["clip_id"])][0]}" lane="1" '
+                             f'offset="{t(start + Fraction(f0, FPS))}" '
+                             f'name={quoteattr(clips[b["clip_id"]]["title"] or clips[b["clip_id"]]["source_name"] or "Site footage")} '
+                             f'start="{t(_source_in(b["src"], bsrc))}" duration="{t(Fraction(f1 - f0, FPS))}">'
+                             f'<adjust-conform type="fill"/><adjust-volume amount="{broll_db:.1f}dB"/></asset-clip>')
             for name, lid, lane in layer_infos:
                 inner.append(f'<asset-clip ref="{lid}" lane="{lane}" offset="{t(start)}" name={quoteattr(name)} '
                              f'start="0s" duration="{t(Fraction(total, FPS))}"/>')
@@ -269,7 +282,9 @@ def build(conn, production_id: int) -> Path:
         raise RuntimeError("this production has no finished draft yet")
     edl = json.loads(production["edl"])
     cuts = edl["cuts"]
-    ids = list(dict.fromkeys(c["clip_id"] for c in cuts))
+    pip = edl.get("pip") or {}
+    shots = pip.get("shots") or []
+    ids = list(dict.fromkeys([c["clip_id"] for c in cuts] + [b["clip_id"] for b in shots]))
     import onedrive
     onedrive.ensure_originals(conn, ids)  # the timeline points at the originals: freed ones come back first
     rows = conn.execute(f"SELECT * FROM clips WHERE id IN ({','.join('?' * len(ids))})", ids).fetchall()
@@ -296,7 +311,16 @@ def build(conn, production_id: int) -> Path:
         look = editor.draft_look(edl)  # the draft's own titles and caption font
         if look["titles"] == "gallery":
             chunks = editor.lit_captions(editor.key_word_captions(chunks, edl.get("key_words") or []), edl.get("bright"))
+            if pip.get("spans"):
+                import voiceover
+                chunks = voiceover.lit_beside(chunks, pip)
         layers, lane = [], 1
+        if shots:  # a voice-over: the site footage on V2, his window above it
+            import voiceover
+            lane = 2
+            if voiceover.resolve_layer(edl, cuts, clips, whole, work / "window.mov"):
+                layers.append(("Your window over the site footage", work / "window.mov", lane))
+                lane += 1
         # The drawn animations get a track of their own, under the cards and the captions.
         scenes = [g for g in edl.get("graphics", []) if g.get("style") == "scene" and "start" in g]
         if scenes and editor.scenes_layer(scenes, whole, work / "animations.mov"):
@@ -311,7 +335,8 @@ def build(conn, production_id: int) -> Path:
         if chunks:
             paper = [(g["start"], g["start"] + g["duration"]) for g in scenes if g.get("look") == "cutaway"]
             editor.render_overlay(chunks, "", whole, work / "captions.mov", accent=accent, fmt="mov", paper=paper,
-                                  font=look["caption_font"], style=look["titles"])
+                                  font=look["caption_font"], style=look["titles"],
+                                  **({"pip": {"side": pip["side"], "spans": pip["spans"]}} if pip.get("spans") else {}))
             layers.append(("Captions", work / "captions.mov", lane + 1))
             (work / "captions.srt").write_text(srt(chunks), encoding="utf-8")
 
@@ -330,8 +355,11 @@ def build(conn, production_id: int) -> Path:
         final_music = (folder / "music.mp3", music[1], music[2]) if music else None
         title = f"{production['title'] or 'Studio post'} v{production['version']}"
         (work / "timeline.fcpxml").write_text(
-            fcpxml(title, cuts, clips, sources, final_layers, final_music, after=whole - exact), encoding="utf-8")
-        lane_lines = "".join(f"     V{lane + 1}  {name.lower()} (transparent layer)\n" for name, _, lane in layers)
+            fcpxml(title, cuts, clips, sources, final_layers, final_music, after=whole - exact, broll=shots,
+                   broll_db=float(pip.get("site_gain_db") or -20.0)), encoding="utf-8")
+        lane_lines = (("     V2  the site footage, from your original clips (its sound low under your voice)\n"
+                       if shots else "")
+                      + "".join(f"     V{lane + 1}  {name.lower()} (transparent layer)\n" for name, _, lane in layers))
         music_line = (f"     A2  music: {info.get('title', 'Epidemic Sound track')} by {info.get('artist', '?')}, "
                       f"at {music[2]:.0f} dB (the draft also dipped it under your voice)\n"
                       if music else
@@ -360,7 +388,9 @@ def download_files(conn, production: dict) -> list[tuple[str, Path]]:
         return []
     top = folder.name
     files = [(f"{top}/{p.relative_to(folder).as_posix()}", p) for p in sorted(folder.rglob("*")) if p.is_file()]
-    ids = list(dict.fromkeys(c["clip_id"] for c in json.loads(production["edl"] or "{}").get("cuts", [])))
+    edl = json.loads(production["edl"] or "{}")
+    ids = list(dict.fromkeys([c["clip_id"] for c in edl.get("cuts", [])]
+                             + [b["clip_id"] for b in (edl.get("pip") or {}).get("shots") or []]))
     seen = set()
     for cid in ids:
         row = conn.execute("SELECT video_path FROM clips WHERE id = ?", (cid,)).fetchone()
