@@ -178,7 +178,14 @@ def never_text(allow: list[str] | None = None) -> str:
             f"- Words: {words}.\n- Phrases: {phrases}.\n- Shapes: {shapes}; a hashtag block of more than 5.\n"
             "- Typing: no em dashes (use a comma or a full stop), no curly quotes, no … (three dots), "
             "no invisible characters.\n- Sound like Bryan talking: contractions, plain words, sentences of "
-            "different lengths, the concrete thing (the material, the step, the problem) over adjectives."
+            "different lengths, the concrete thing (the material, the step, the problem) over adjectives.\n"
+            # Bryan, 2026-10-23: "You often use passive voice. I rather we use active voice ... We should always
+            # use active voice."
+            "- Active voice, always: say who does it (we, you, the tiler), or tell the reader to do it. "
+            "\"Change the floor finish, but keep the level\", not \"The floor finish changes, the level does not\"; "
+            "\"Plan the grab bars with the tiles\", not \"Grab bars planned with the tiles\". No passive verbs "
+            "(\"is done\", \"are planned\", \"was installed\") and no heading built on one (\"A bench, designed "
+            "into the tiling\" becomes \"Design the bench into the tiling\")."
             + (f"\n- Fine for Bryan (his own words): {', '.join(allow)}." if allow else ""))
 
 
