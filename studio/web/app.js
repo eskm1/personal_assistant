@@ -2811,7 +2811,7 @@ function renderTileMeta(d) {
   el.innerHTML = `${line ? `<p>${esc(line)}</p>` : ""}
     ${d.video ? `<div class="quick-note">
       <label class="grow"><span class="sr-only">Note for the editor, pinned to this moment</span>
-        <input id="quick-note" maxlength="2000" autocomplete="off" enterkeyhint="send" placeholder="Note at ${esc(at)}"></label>
+        <textarea id="quick-note" rows="1" maxlength="2000" autocomplete="off" enterkeyhint="send" placeholder="Note at ${esc(at)}"></textarea></label>
       <button class="btn" id="quick-add">Add</button>
     </div>
     ${d.kind === "production" && !isSlideshow(d) && isOwner() ? `<label class="check small quick-remember" title="Adds it to the playbook the editor follows on every future edit"><input type="checkbox" id="note-remember"> Remember for future edits</label>` : ""}
@@ -2934,8 +2934,17 @@ $("#panel").addEventListener("click", async (e) => {
   }
   await detailClick(e);
 });
+// The quick note grows with what's typed, so the whole note is in view (Bryan, 2026-10-23: "the text box for
+// giving feedback is very small and can't see the full message"). Enter adds it; Shift+Enter starts a new line.
+function growNote(el) {
+  el.style.height = "auto";
+  el.style.height = `${Math.min(el.scrollHeight + 2, 240)}px`;
+}
+$("#tile-meta").addEventListener("input", (e) => { if (e.target.id === "quick-note") growNote(e.target); });
+// Pressing Add keeps the cursor in the note, so the box doesn't fold back under the finger before the click lands.
+$("#tile-meta").addEventListener("mousedown", (e) => { if (e.target.closest("#quick-add")) e.preventDefault(); });
 $("#tile-meta").addEventListener("keydown", (e) => {
-  if (e.target.id === "quick-note" && e.key === "Enter" && !e.isComposing) {
+  if (e.target.id === "quick-note" && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
     addNote("quick-note").catch((err) => toast(`Couldn't save: ${err.message}`));
   }
@@ -3180,6 +3189,7 @@ async function addNote(box = "note-body") {
   const here = () => state.current && state.current.kind === target.kind && String(state.current.id) === String(target.id);
   const when = slide ? `slide ${slide}` : mmss(at || 0);
   input.value = "";
+  input.style.height = "";
   if (rememberBox) rememberBox.checked = false;
   const li = pendingNote(body, at, slide);
   quickStatus(quick ? `Saving the note at ${when}…` : "");
