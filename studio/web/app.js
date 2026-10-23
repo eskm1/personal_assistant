@@ -2269,6 +2269,14 @@ function openZoom(el) {
   }, true);
   $("#modal-body [data-modal-close]")?.focus();
 }
+// Why the other picture can't be picked now (Bryan, 2026-10-23: "i can't seem to 'select' the other photo"): a
+// pick lays the slides out again, which only a draft waiting for review takes.
+function conceptLocked(status) {
+  if (["planned", "producing", "revising"].includes(status)) return "Studio is working on this draft. Pick another picture when it's back in To review.";
+  if (status === "approved" || status === "rejected") return "This draft is decided, so its pictures are set. Press Back to review below to pick again.";
+  if (status === "posted") return "This post is out, so its pictures are set.";
+  return "Pictures can be picked while a draft waits for review.";
+}
 async function pickConcept(d, n, option) {
   for (const b of document.querySelectorAll("[data-concept-pick]")) b.disabled = true;
   toast(`Laying out slide ${n} again…`);
@@ -2427,6 +2435,7 @@ function conceptsHTML(d) {
   };
   return `<section class="d-sec" id="concepts-sec"><h2>Concept pictures</h2>
     <p class="muted small">AI pictures of the idea, marked “Concept” on the slide; never shown as a home you built.${owner && ready && cs.some((x) => x.concept.options.length > 1) ? " Pick the one you prefer: the slide is laid out again (free)." : ""}</p>
+    ${owner && !ready && cs.some((x) => x.concept.options.length > 1) ? `<p class="muted small">${conceptLocked(d.status)}</p>` : ""}
     ${cs.map(slide).join("")}</section>`;
 }
 
