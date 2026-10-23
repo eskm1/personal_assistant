@@ -24,7 +24,9 @@
   <div class="subnav" id="subnav">
     <nav class="tabs" id="tabs" aria-label="Review stages"></nav>
     <div class="menu tabs-menu" id="tabs-menu" role="menu" aria-label="More stages" hidden></div>
-    <div class="seg" id="brand-filter" role="group" aria-label="Account">
+    <!-- Hidden until Studio knows there's more than one account (renderAccount): it flashed "Personal" on open
+         (Bryan, 2026-10-23) while only Urban Makers is on. -->
+    <div class="seg" id="brand-filter" role="group" aria-label="Account" hidden>
       <button data-brand="" class="on">All</button>
       <button data-brand="personal">Personal</button>
       <button data-brand="urban_makers">Urban Makers</button>
