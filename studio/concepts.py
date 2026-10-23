@@ -150,11 +150,27 @@ def _retry_delay(r) -> float | None:
     return None
 
 
+def _busy(r) -> "GeminiError":
+    """Gemini's 429 says which limit it hit; Review says which, so the fix is plain (Bryan, 2026-10-23: every
+    slide read "Gemini is busy ... or the key's quota is used up" and nobody could tell which). A free-plan key
+    has no picture quota at all ("limit: 0"), and a day's quota doesn't come back by retrying: neither retries."""
+    try:
+        text = json.dumps(r.json().get("error") or {})
+    except (ValueError, TypeError, AttributeError):
+        text = ""
+    low = text.lower()
+    if "limit: 0" in low or "free_tier" in low or "freetier" in low:
+        return GeminiError("Gemini's free plan can't make pictures: turn on billing for this key in Google AI Studio")
+    if "per_day" in low or "perday" in low:
+        return GeminiError("Today's picture limit for this Gemini key is used up; it comes back tomorrow")
+    return GeminiError("Gemini is busy (too many pictures at once); Redraw in a minute",
+                       retry=True, wait=_retry_delay(r))
+
+
 def _answer(r) -> tuple[bytes, dict]:
     """One generateContent answer: the picture as a JPEG and its usageMetadata."""
     if r.status_code == 429:
-        raise GeminiError("Gemini is busy (too many pictures at once, or the key's quota is used up)",
-                          retry=True, wait=_retry_delay(r))
+        raise _busy(r)
     if r.status_code >= 500:
         raise GeminiError(f"Gemini had a problem ({r.status_code})", retry=True, wait=_retry_delay(r))
     if r.status_code in (401, 403):

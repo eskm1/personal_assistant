@@ -23,7 +23,7 @@ SUITES = {
     "ending": ("suite_ending.py", [], 71),
     "patches": ("suite_patches.py", [], 59),
     "slideshow": ("suite_slideshow.py", [], 97),
-    "pictures": ("suite_pictures.py", [], 63),
+    "pictures": ("suite_pictures.py", [], 67),
     "look": ("suite_look.py", [], 55),
     "cuts": ("suite_cuts.py", [], 41),
     "edit_units": ("suite_edit_units.py", [], 83),

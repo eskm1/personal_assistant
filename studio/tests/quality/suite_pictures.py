@@ -531,5 +531,23 @@ if strip:  # a strip of the picture draft: before, the picture coming in, its mi
     shutil.copy(final, out / "draft.mp4")
     print(f"  strip: {out / 'strip.png'} at {[round(t, 2) for t in times]}")
 
+print("== Gemini's 429 says which limit (2026-10-23: every slide read \"busy ... or quota used up\")")
+class _R:
+    def __init__(self, msg, retry_after=None):
+        self.status_code, self._m = 429, msg
+        self.headers = {"Retry-After": retry_after} if retry_after else {}
+    def json(self): return {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": self._m}}
+e = concepts._busy(_R("Quota exceeded for metric: generate_content_free_tier_requests, limit: 0, model: x"))
+ok("free plan" in str(e) and "billing" in str(e) and not e.retry, f"a free-plan key says turn on billing, no retry ({e})")
+e = concepts._busy(_R("Quota exceeded for quota metric 'GenerateRequestsPerDayPerProjectPerModel'"))
+ok("Today's picture limit" in str(e) and not e.retry, f"a day's quota says it comes back tomorrow, no retry ({e})")
+e = concepts._busy(_R("Resource has been exhausted (e.g. check quota).", retry_after="7"))
+ok("busy" in str(e) and e.retry and e.wait == 7.0, f"a per-minute limit is busy, retried after Gemini's wait ({e})")
+try:
+    concepts._answer(_R("limit: 0 free_tier"))
+    ok(False, "_answer raises the specific 429")
+except concepts.GeminiError as e:
+    ok("free plan" in str(e), "_answer raises the specific 429")
+
 server.shutdown()
 finish()
