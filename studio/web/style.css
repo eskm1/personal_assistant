@@ -834,9 +834,17 @@ body:has(.viewer.detail-mode:not([hidden]) .decision-bar:not([hidden])) .toast {
 @media (max-width: 720px) { .concept-opts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } }
 .concept-opt { position: relative; margin: 0; padding: 0; border: 2px solid transparent; border-radius: var(--um-radius); overflow: hidden; background: var(--um-paper-mid); text-align: left; }
 .concept-opt img { display: block; width: 100%; aspect-ratio: 4 / 5; object-fit: cover; }
+.concept-zoom { display: block; width: 100%; margin: 0; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.concept-zoom:focus-visible { outline: 2px solid var(--um-ink); outline-offset: -2px; }
+.cs-slide img[data-zoom] { cursor: zoom-in; }
+.zoom-fig { margin: 28px 0 12px; display: grid; gap: 6px; justify-items: center; }  /* clear of the card's × */
+.zoom-fig img { display: block; max-width: 100%; max-height: min(78vh, 900px); width: auto; height: auto; border-radius: var(--um-radius); }
 .concept-opt.on { border-color: var(--um-ink); }
-button.concept-opt:hover, button.concept-opt:focus-visible { border-color: var(--ink-soft); outline: none; }
-button.concept-opt:disabled { opacity: .6; cursor: progress; }
+.concept-opt:hover { border-color: var(--ink-soft); }
+.concept-opt.on:hover { border-color: var(--um-ink); }
+button.concept-tag { border: 0; text-align: left; cursor: pointer; font: inherit; font-size: var(--um-fs-meta); font-weight: 500; }
+button.concept-tag:hover, button.concept-tag:focus-visible { background: var(--um-ink); color: var(--um-paper); outline: none; }
+button.concept-tag:disabled { opacity: .6; cursor: progress; }
 .concept-tag { position: absolute; left: 6px; bottom: 6px; right: 6px; padding: 4px 8px; border-radius: var(--um-radius-sm); background: rgba(255, 255, 255, .94); color: var(--um-ink); font-size: var(--um-fs-meta); font-weight: 500; }
 .concept-opt.on .concept-tag { background: var(--um-ink); color: var(--um-paper); }
 .concept-redraw input { width: 100%; }

@@ -2252,6 +2252,31 @@ function resolveBody(d) {
 }
 const RESOLVE_PEEK = { none: "", building: "Building…", ready: "Ready to download", failed: "Didn't work" };
 
+// A slide or a concept picture, large: tap it to look closer (Bryan, 2026-10-23). From a concept option the
+// pop-up also offers Use this, the same pick as the tag under it; Close, Escape or a tap outside leave.
+function openZoom(el) {
+  const n = el.dataset.zoomSlide, option = el.dataset.zoomOption;
+  const label = option ? `Slide ${n}, option ${option.toUpperCase()}${"zoomOn" in el.dataset ? ", on the slide" : ""}` : `Slide ${n}`;
+  const use = "zoomPick" in el.dataset
+    ? `<button type="button" class="btn primary" data-concept-pick="${esc(n)}" data-option="${esc(option)}">Use this on slide ${esc(n)}</button>` : "";
+  openModal(`<h2 id="modal-title" class="sr-only">${esc(label)}</h2>
+    <figure class="zoom-fig"><img src="${esc(el.dataset.zoom)}" alt="${esc(label)}"><figcaption class="muted small">${esc(label)}</figcaption></figure>
+    <div class="row end"><button type="button" class="btn" data-modal-close>Close</button>${use}</div>`, async (e) => {
+    const p = e.target.closest("[data-concept-pick]");
+    if (!p) return;
+    closeModal();
+    await pickConcept(state.detail, Number(p.dataset.conceptPick), p.dataset.option);
+  }, true);
+  $("#modal-body [data-modal-close]")?.focus();
+}
+async function pickConcept(d, n, option) {
+  for (const b of document.querySelectorAll("[data-concept-pick]")) b.disabled = true;
+  toast(`Laying out slide ${n} again…`);
+  await api(`/api/production/${d.id}/slide/${n}/choose`, { option });
+  await loadDetail();
+  toast(`Slide ${n} uses option ${option.toUpperCase()} now.`);
+}
+
 // ── Carousel drafts: the slides to swipe, Studio's read, notes that can name a slide ──
 
 const CAROUSEL_SCORES = [["cover", "Cover"], ["legibility", "Easy to read"], ["spelling", "Spelling"], ["claims", "Claims"], ["ask", "The ask"]];
@@ -2262,7 +2287,7 @@ function swiperHTML(d, where) {
   if (!slides.length) return `<div class="placeholder">${d.status === "failed" ? "No slides" : "Laying out the slides…"}</div>`;
   return `<div class="cs-swipe" data-swipe="${esc(where)}">
     <div class="cs-track" tabindex="0" role="group" aria-label="Slides, ${slides.length} of them: swipe sideways">
-      ${slides.map((x) => `<figure class="cs-slide" data-slide-n="${esc(x.n)}"><img src="${esc(safeSrc(x.image))}" alt="Slide ${esc(x.n)}: ${esc(x.heading)}${x.body ? `. ${esc(x.body)}` : ""}" loading="${x.n <= 2 ? "eager" : "lazy"}"></figure>`).join("")}
+      ${slides.map((x) => `<figure class="cs-slide" data-slide-n="${esc(x.n)}"><img src="${esc(safeSrc(x.image))}" alt="Slide ${esc(x.n)}: ${esc(x.heading)}${x.body ? `. ${esc(x.body)}` : ""}" loading="${x.n <= 2 ? "eager" : "lazy"}" data-zoom="${esc(safeSrc(x.image))}" data-zoom-slide="${esc(x.n)}"></figure>`).join("")}
     </div>
     <div class="cs-nav"><button class="cs-step" data-swipe-step="-1" aria-label="Previous slide">‹</button>
       <span class="cs-count" aria-live="polite">${esc(state.slideInView || 1)} / ${slides.length}</span>
@@ -2317,6 +2342,9 @@ function gotoSlide(n) {
   if (sec && phone()) sec.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 document.addEventListener("click", (e) => {
+  // A slide or concept picture opens large, wherever it sits (the desk's slide viewer is outside the detail pane).
+  const zoom = !e.target.closest("#modal") && e.target.closest("[data-zoom]");
+  if (zoom) { openZoom(zoom); return; }
   const step = e.target.closest("[data-swipe-step]");
   if (step) { stepSlide(step.closest(".cs-swipe"), Number(step.dataset.swipeStep)); return; }
   const to = e.target.closest("[data-goto-slide]");
@@ -2377,9 +2405,13 @@ function conceptsHTML(d) {
     const opts = c.options.length ? `<div class="concept-opts" role="group" aria-label="Pictures for slide ${esc(x.n)}">${c.options.map((o) => {
       const on = o.option === c.chosen;
       const label = o.option.toUpperCase();
-      return owner && ready && !on
-        ? `<button class="concept-opt" data-concept-pick="${esc(x.n)}" data-option="${esc(o.option)}" aria-label="Use option ${esc(label)} on slide ${esc(x.n)}"><img src="${esc(safeSrc(o.image))}" alt="" loading="lazy"><span class="concept-tag">${esc(label)} · Use this</span></button>`
-        : `<figure class="concept-opt${on ? " on" : ""}"><img src="${esc(safeSrc(o.image))}" alt="Option ${esc(label)}${on ? ", on the slide" : ""}" loading="lazy"><figcaption class="concept-tag">${esc(label)}${on ? " · ✓ On the slide" : ""}</figcaption></figure>`;
+      const pickable = owner && ready && !on;
+      // The picture opens large (Bryan, 2026-10-23: "click an image to inspect it closer and have it pop up");
+      // picking it is the tag's own button, here and in the pop-up.
+      const zoom = `<button type="button" class="concept-zoom" data-zoom="${esc(safeSrc(o.image))}" data-zoom-slide="${esc(x.n)}" data-zoom-option="${esc(o.option)}"${on ? " data-zoom-on" : ""}${pickable ? " data-zoom-pick" : ""} aria-label="See option ${esc(label)} of slide ${esc(x.n)} larger"><img src="${esc(safeSrc(o.image))}" alt="" loading="lazy"></button>`;
+      return pickable
+        ? `<figure class="concept-opt">${zoom}<button type="button" class="concept-tag" data-concept-pick="${esc(x.n)}" data-option="${esc(o.option)}" aria-label="Use option ${esc(label)} on slide ${esc(x.n)}">${esc(label)} · Use this</button></figure>`
+        : `<figure class="concept-opt${on ? " on" : ""}">${zoom}<figcaption class="concept-tag">${esc(label)}${on ? " · ✓ On the slide" : ""}</figcaption></figure>`;
     }).join("")}</div>` : "";
     const why = c.why ? `<p class="muted small">Text only for now: ${esc(c.why)}.</p>` : "";
     const one = c.options.length === 1 ? `<p class="muted small">Only one picture passed Studio's check.</p>` : "";
@@ -2976,12 +3008,7 @@ async function detailClick(e) {
     } else if (id === "voice-open") {
       await openVoice();
     } else if (pick) {
-      const n = Number(pick.dataset.conceptPick);
-      for (const b of document.querySelectorAll("[data-concept-pick]")) b.disabled = true;
-      toast(`Laying out slide ${n} again…`);
-      await api(`/api/production/${d.id}/slide/${n}/choose`, { option: pick.dataset.option });
-      await loadDetail();
-      toast(`Slide ${n} uses option ${pick.dataset.option.toUpperCase()} now.`);
+      await pickConcept(d, Number(pick.dataset.conceptPick), pick.dataset.option);
     } else if (redraw) {
       const n = Number(redraw.dataset.conceptRedraw);
       const change = $(`#concept-change-${n}`)?.value.trim() || "";
