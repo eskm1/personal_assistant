@@ -14,7 +14,7 @@ sanitise() before any of its words reach a prompt, and only the trade facts are 
 checks, times, mounting heights, rules of thumb). It drops:
   - whole articles that are directories (a title with Directory, Contacts, Showrooms, Shot list, Open
     questions or Editorial; or a quarter or more of their lines, at least three, addresses or numbers);
-  - links into the app ("[50 Jalan Mas Kuning](/projects?open=...)"): a project or client link with its
+  - links into the app ("[12 Example Road](/projects?open=...)"): a project or client link with its
     text, any other app link down to its text; an outside link keeps its text, a bare web address its line;
   - image placeholders ("> 📷 Image needed [IMG-...]", "to be inserted") and open checklist items;
   - any line, callout or section marked internal or commercial;
