@@ -478,7 +478,9 @@ at it, what's left), the open suggestions; Bryan's site talk: tagged, usable, pu
 with at least 160 characters of speech, most explanatory first (timestamped transcript, moments, project name
 marked internal, where the clip is already used), about 60k characters; open `client_questions` (who added it,
 who asked, the note); active references' titles and why-notes; the shoot calendar (site days and phases starting
-in the next 28 days, active projects); posts already planned or made, and dismissed ones (status `dismissed`,
+in the next 28 days, active projects); Urban Makers' wiki (`wiki.py`: the quote engine's published articles, read
+at most daily with a read-only role and kept in `Studio/wiki.json`, each sanitised, its key facts, the least used
+first, about 3,500 tokens at most, one with a suggestion still waiting left out); posts already planned or made, and dismissed ones (status `dismissed`,
 plus every earlier suggestion from `idea_runs` whose idea is dismissed or gone). The system prompt has brands,
 the playbook (with the style guide), the sources best first, and the rules: offers only from `content_plan`; no
 price, fee, duration or other figure unless Bryan said it or the team wrote it (`[check]` instead); no place
@@ -496,8 +498,9 @@ transcripts, question notes or offers (`[check]`).
 | carousel (most Know-how, Ideas, Work with us) | the standing Topics project (`standing = 'topics'`, made if missing), arc **Studio suggests** (made once, first) | `ideas` (`decision 'proposed'`, `status 'new'`, `created_by` null, `post_type`, `format 'carousel'`, `slides` = the outline: cover first, ask last, text slides with `image.note`; the cover shows the cited clip's still when there is one) |
 | Reel where Bryan explains it on camera | the clip's project if active, else Everyday posts; arc **From your footage** | `ideas` + `shots` (the clip's moment first) + `takes` (`source 'auto'`, note `Bryan explains it here`) |
 
-Every suggestion has `ideas.suggestion` = `{why, source: transcript|question|calendar|reference|basics|plan,
-clip_id, at, question_id, run, suggested_at}` (checked by `valid_suggestion()`: an object, `why` <= 300). A cited
+Every suggestion has `ideas.suggestion` = `{why, source: transcript|question|wiki|calendar|reference|basics|plan,
+clip_id, at, question_id, run, suggested_at, wiki?: {slug, title}}` (a wiki suggestion's `why` starts "From the wiki:
+<title>." and its `purpose` ends with the article's key facts, at most ~120 words, for Write slides) (checked by `valid_suggestion()`: an object, `why` <= 300). A cited
 question is set `status 'suggested'`, `idea_id` = the suggestion (only while it's `open`).
 
 **client_questions** (`id, question (3..500), note (<= 2000), asked_by (<= 120, free text), status open |

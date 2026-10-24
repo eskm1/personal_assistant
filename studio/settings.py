@@ -249,6 +249,12 @@ TOPICS_DAY = _env("STUDIO_TOPICS_DAY", "monday").lower()
 TOPICS_HOUR = min(max(int(_env("STUDIO_TOPICS_HOUR", "8")), 0), 23)
 TOPICS_COUNT = min(max(int(_env("STUDIO_TOPICS_COUNT", "4")), 0), 8)
 TOPICS_BEHIND = _flag("STUDIO_TOPICS_BEHIND", True)
+# Urban Makers' wiki (wiki.py): the quote engine's trade articles, read-only, as a source of topics.
+# The address (the Supabase REST base), a read-only role's token and the anon key; never logged.
+# Any of them blank = topics without the wiki.
+WIKI_URL = _env("STUDIO_WIKI_URL").rstrip("/")
+WIKI_JWT = _env("STUDIO_WIKI_JWT")
+WIKI_ANON_KEY = _env("STUDIO_WIKI_ANON_KEY")
 
 # Who may sign in to the dashboard: emails at these domains (comma-separated; "*" = anyone).
 # Owner accounts are always allowed, whatever their address.

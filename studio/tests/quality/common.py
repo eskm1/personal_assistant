@@ -16,7 +16,8 @@ dotenv.load_dotenv = lambda *a, **k: False
 
 # Blank means "unset" to settings._env, and it can't be filled in from anywhere else.
 for _k in ("GEMINI_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "STUDIO_SUPABASE_URL",
-           "STUDIO_SUPABASE_SERVICE_KEY", "STUDIO_SUPABASE_ANON_KEY", "STUDIO_ONEDRIVE_REMOTE"):
+           "STUDIO_SUPABASE_SERVICE_KEY", "STUDIO_SUPABASE_ANON_KEY", "STUDIO_ONEDRIVE_REMOTE", "STUDIO_WIKI_URL",
+           "STUDIO_WIKI_JWT", "STUDIO_WIKI_ANON_KEY"):
     os.environ[_k] = ""
 os.environ.setdefault("ANTHROPIC_API_KEY", "")
 os.environ.setdefault("STUDIO_TOPICS_DAY", "off")

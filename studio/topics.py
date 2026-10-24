@@ -11,9 +11,11 @@ month's gaps, in one call. Each is a proposed idea Bryan Go's, Parks or Dismisse
 Each carries a short "why now" (ideas.suggestion) the planner shows on the card.
 
 Where topics come from, best first: what Bryan said on site (the library's transcripts), the
-team's list of questions clients ask (client_questions; the question is linked to the post), the
-saved references and the style guide (format and tone), the shoot calendar (a Know-how post timed
-for when that work is filmed) and Singapore renovation basics, stated carefully. Never a price or
+team's list of questions clients ask (client_questions; the question is linked to the post), Urban
+Makers' own wiki (wiki.py: the trade articles in the quote engine, sanitised, the least used first;
+mostly carousels when there's no footage of it, each citing its article), the saved references and
+the style guide (format and tone), the shoot calendar (a Know-how post timed for when that work is
+filmed) and Singapore renovation basics, stated carefully. Never a price or
 figure Bryan didn't write, never an offer that isn't in the content plan, never a place name in
 public text, nothing about quotes. Never a repeat of a post already planned, made or dismissed
 (dismissed suggestions are remembered here too, in idea_runs, so they don't come back reworded).
@@ -36,6 +38,7 @@ import content_plan
 import footage_ideas
 import playbook
 import settings
+import wiki
 import wording
 
 log = logging.getLogger("studio.topics")
@@ -51,7 +54,7 @@ ARC_PURPOSE = "Posts Studio suggested for the month's gaps (topics.py). Go, Park
 TRIGGERS = ("weekly", "behind", "job")
 FILLABLE = ("knowhow", "ideas", "offer")            # kinds a topic fills without new footage
 KINDS_OK = ("knowhow", "ideas", "onsite", "offer")  # never Finished homes: that needs handover footage
-SOURCES = ("transcript", "question", "calendar", "reference", "basics", "plan")
+SOURCES = ("transcript", "question", "wiki", "calendar", "reference", "basics", "plan")
 TRANSCRIPT_DAYS = 120       # how far back Bryan's site talk is read
 TRANSCRIPT_BUDGET = 60_000  # characters of transcripts per call (~15k tokens)
 TRANSCRIPT_CHARS = 3000     # per clip
@@ -64,6 +67,7 @@ SIMILAR = 0.75              # share of the shorter title's words above which it 
 EARLY_HOURS = 12            # a run this long before the weekly slot counts as that week's (say, right after an update)
 CHECK_SECONDS = 600         # how often the "month falls behind" check may ask the database
 TAKE_NOTE = "Bryan explains it here"
+PURPOSE_MAX = 1500          # an idea's purpose with its wiki facts (the planner's Write slides reads up to 2000)
 
 _checked_at = 0.0           # when run_due last asked for the month (the behind check)
 
@@ -390,12 +394,12 @@ def _schema() -> dict:
             "post_type": {"type": "string", "enum": list(KINDS_OK)}, "format": {"type": "string", "enum": formats},
             "why_now": {"type": "string"}, "source": {"type": "string", "enum": list(SOURCES)},
             "clip_id": {"type": "integer"}, "start": {"type": "number"}, "end": {"type": "number"},
-            "question_id": {"type": "integer"},
+            "question_id": {"type": "integer"}, "wiki_slug": {"type": "string"},
             "purpose": {"type": "string"}, "cta": {"type": "string"}, "caption": {"type": "string"},
             "est_seconds": {"type": "number"},
             "slides": {"type": "array", "items": slide}, "shots": {"type": "array", "items": shot}},
             "required": ["title", "hook", "hook_options", "post_type", "format", "why_now", "source", "clip_id", "start", "end",
-                         "question_id", "purpose", "cta", "caption", "est_seconds", "slides", "shots"],
+                         "question_id", "wiki_slug", "purpose", "cta", "caption", "est_seconds", "slides", "shots"],
             "additionalProperties": False}},
         "notes": {"type": "string"}},
         "required": ["suggestions", "notes"], "additionalProperties": False}
@@ -419,10 +423,16 @@ something is done, that's a ready Know-how post in his own words. Cite it: clip_
 end seconds from the transcript timestamps, on whole phrases.
 2. Questions clients ask (the team's list). What people really ask: one question per post; give \
 its question_id.
-3. The saved references and the style guide: for format and tone, not topics to copy.
-4. The shoot calendar: a Know-how topic timed for when that work is filmed (a post on \
+3. Urban Makers' wiki: the team's own trade knowledge (sizes, sequences, checks, mounting \
+heights, rules of thumb), the least used articles first. Especially when there's little footage \
+of Bryan explaining something: a carousel built on one article's facts (or a Reel whose shots say \
+what to film). Use only the facts listed under that article, in plain words for a homeowner; give \
+its wiki_slug (the text after "wiki:" in its tag). Never one already in the planner again: a \
+second post from an article must make a different point.
+4. The saved references and the style guide: for format and tone, not topics to copy.
+5. The shoot calendar: a Know-how topic timed for when that work is filmed (a post on \
 waterproofing the week the team films waterproofing).
-5. Singapore renovation basics (HDB renovation rules and permits, the order of works, what to check \
+6. Singapore renovation basics (HDB renovation rules and permits, the order of works, what to check \
 before hacking or tiling) from your own knowledge, stated carefully: general, true for most flats, \
 "check with HDB or your contractor" where rules vary or change.
 
@@ -441,16 +451,18 @@ suit the slide, in a few words (a still from the cited clip, a project photo, or
 footage gives its clip_id with start and end seconds; a shot still to film has clip_id 0, start 0 \
 and end 0, and says exactly what to film.
 - clip_id, start, end: the moment Bryan explains it (0 when the topic doesn't come from footage). \
-question_id: the client question it answers (0 when none).
+question_id: the client question it answers (0 when none). wiki_slug: the wiki article it's built \
+on ("" when none).
 - why_now: one short line for Bryan (under 100 characters): why this, why now. Concrete, e.g. \
 "Fills October's Ideas gap", "You explained this on site last Tuesday", "Michelle logged this client \
 question", "You film waterproofing on Thursday". It is internal: a project's name may appear there, \
 never in a hook, caption, cta or slide.
-- source: transcript, question, calendar, reference, basics or plan (the gap alone).
+- source: transcript, question, wiki, calendar, reference, basics or plan (the gap alone).
 - Never repeat a post already planned, made or dismissed (listed in the message), even reworded or \
 as another angle on the same point. Fewer, stronger suggestions beat filling the count.
 - Never state a price, cost, fee, discount, penalty, duration or any other figure unless Bryan says \
-it in a transcript or the team wrote it in a question's note: write [check] where a figure would go. \
+it in a transcript, the team wrote it in a question's note, or the cited wiki article lists it: write \
+[check] where a figure would go. Never name a supplier, brand or shop. \
 No promotions or offers beyond the listed offers. Nothing about quotes, quotations or pricing.
 - Never name a place (estate, street, condo, block, town, a client's address) or a client in a hook, \
 caption, cta, slide or shot line.
@@ -492,6 +504,8 @@ def prompt(ctx: dict) -> str:
             f"Open suggestions (waiting for Bryan; they cover gaps already):\n{_list_text(open_)}\n\n"
             f"Things Bryan said on site (transcripts, the most explanatory first):\n\n{ctx['transcripts_text']}\n\n"
             f"Questions clients ask (the team's list, open):\n{ctx['questions_text']}\n\n"
+            f"Urban Makers' wiki (the team's trade knowledge, the least used first; cite wiki_slug):\n"
+            f"{ctx.get('wiki_text') or '(none)'}\n\n"
             f"Saved references (format and tone):\n{ctx['references_text']}\n\n"
             f"Shoot calendar (next four weeks):\n{ctx['calendar_text']}\n\n"
             f"Posts already planned or made (never repeat these):\n{_list_text(ctx['planned'])}\n\n"
@@ -549,6 +563,16 @@ def _slides(raw: list[dict], names, allowed, clip: dict | None) -> list[dict]:
         out.append({"key": uuid.uuid4().hex[:10], "role": role, "heading": _public(s.get("heading"), names, allowed, 200),
                     "body": _public(s.get("body"), names, allowed, 800), "image": image})
     return out
+
+
+def with_facts(purpose: str, article: dict) -> str:
+    """The purpose with the wiki article's key facts after it: the planner's Write slides reads the purpose,
+    so the carousel it writes has the facts (sanitised, at most wiki.FACT_WORDS words)."""
+    block = (f"From the wiki: {article['title']}. Key facts from Urban Makers' own wiki (the team's trade "
+             f"knowledge; these figures may be used): {article['brief']}")
+    room = PURPOSE_MAX - len(block) - 2
+    purpose = purpose[:max(room, 0)].rstrip()
+    return (f"{purpose}\n\n{block}" if purpose else block)[:PURPOSE_MAX]
 
 
 def clean(answer: dict, ctx: dict) -> tuple[list[dict], list[dict]]:
@@ -609,17 +633,28 @@ def clean(answer: dict, ctx: dict) -> tuple[list[dict], list[dict]]:
             source = "basics"
         if source == "question" and not q:
             source = "basics"
+        # Built on a wiki article: the card says which, and the idea carries its facts for Write slides.
+        w = (ctx.get("wiki") or {}).get((s.get("wiki_slug") or "").strip())
+        if source == "wiki" and not w:
+            source = "basics"
+        if w and source in ("basics", "plan"):
+            source = "wiki"
+        why = no_figures((s.get("why_now") or "").strip(), allowed)[:300] or "Fills a gap in this month's mix"
+        purpose = (s.get("purpose") or "").strip()[:1000]
+        if w:
+            why = f"From the wiki: {w['title']}. {why}"[:300]
+            purpose = with_facts(purpose, w)
         fields = {
             "title": title, "post_type": kind, "format": fmt,
             "brand": settings.SINGLE_BRAND or "urban_makers",
-            "hook": _public(hook, names, allowed, 600), "purpose": (s.get("purpose") or "").strip()[:1000],
+            "hook": _public(hook, names, allowed, 600), "purpose": purpose,
             "hook_options": [{**o, "text": _public(o["text"], names, allowed, 600)} for o in hook_options],
             "cta": _public(s.get("cta"), names, allowed, 400), "caption": _public(s.get("caption"), names, allowed, 2200),
             "est_seconds": s.get("est_seconds") if isinstance(s.get("est_seconds"), (int, float))
             and 5 <= s["est_seconds"] <= 180 else 30,
-            "suggestion": {"why": no_figures((s.get("why_now") or "").strip(), allowed)[:300] or "Fills a gap in this month's mix",
-                           "source": source, "clip_id": clip["id"] if clip else None, "at": at,
-                           "question_id": q["id"] if q else None, "suggested_at": catalog.now()},
+            "suggestion": {"why": why, "source": source, "clip_id": clip["id"] if clip else None, "at": at,
+                           "question_id": q["id"] if q else None, "suggested_at": catalog.now(),
+                           **({"wiki": {"slug": w["slug"], "title": w["title"]}} if w else {})},
             "clip": clip, "question": q,
         }
         if fmt == "carousel":
@@ -682,7 +717,7 @@ def _home(store, clip) -> dict:
 
 def write(store, picks: list[dict], run_id: int) -> list[dict]:
     """Write the suggestions to the planner. Returns [{id, title, hook, post_type, format,
-    project, why, source, clip_id, question_id}]."""
+    project, why, source, clip_id, question_id, wiki}]."""
     out = []
     topics = None
     for f in picks:
@@ -711,11 +746,33 @@ def write(store, picks: list[dict], run_id: int) -> list[dict]:
                 log.warning("Couldn't link client question %s to idea %s: %s", f["question"]["id"], idea_id, e)
         out.append({"id": idea_id, "title": f["title"], "hook": f["hook"], "post_type": f["post_type"], "format": f["format"],
                     "project": project["name"], "why": f["suggestion"]["why"], "source": f["suggestion"]["source"],
-                    "clip_id": f["suggestion"]["clip_id"], "question_id": f["suggestion"]["question_id"]})
+                    "clip_id": f["suggestion"]["clip_id"], "question_id": f["suggestion"]["question_id"],
+                    "wiki": (f["suggestion"].get("wiki") or {}).get("slug")})
     return out
 
 
 # ── One run ───────────────────────────────────────────────────────────────────
+
+def wiki_used(ideas: list[dict], memory: list[dict]) -> tuple[dict, set]:
+    """({slug: [titles of posts made from it]}, {slugs with a suggestion still waiting}): which wiki articles
+    were used already (in the planner, or suggested before and since deleted), so the least used go first."""
+    used: dict[str, list[str]] = {}
+    seen, waiting = set(), set()
+    for i in ideas:
+        slug = ((i.get("suggestion") or {}).get("wiki") or {}).get("slug") if isinstance(i.get("suggestion"), dict) else None
+        if not slug:
+            continue
+        seen.add(i.get("id"))
+        if is_open(i):
+            waiting.add(slug)
+        title = (i.get("title") or "").strip()[:120]
+        used.setdefault(slug, []).append(title if i.get("status") != "dismissed" else f"{title} (dismissed)")
+    for m in memory:
+        if m.get("wiki") and m.get("id") not in seen:
+            seen.add(m.get("id"))
+            used.setdefault(m["wiki"], []).append((m.get("title") or "").strip()[:120])
+    return used, waiting
+
 
 def _ideas(api) -> list[dict]:
     return api.select("ideas", {"select": "id,title,hook,status,decision,post_type,format,project_id,suggestion,production",
@@ -734,6 +791,9 @@ def context(api, conn, now: datetime | None = None) -> dict:
     count = max(settings.TOPICS_COUNT, 1)
     uses = clip_uses(api)
     projects = api.select("projects", {"select": "name,folder,standing"})
+    project_names = [n for p in projects if not p.get("standing") for n in (p.get("name"), p.get("folder"))]
+    used, waiting = wiki_used(ideas, remembered(conn))
+    wiki_text, wiki_articles = wiki.digest(wiki.articles(), used, project_names, skip=waiting)
     allowed = " ".join([*(r["transcript"] or "" for r in clips),
                         *(f"{q.get('question', '')} {q.get('note', '')}" for q in questions),
                         *(f"{o.get('details', '')} {o.get('ask', '')}" for o in plan.get("offers") or [])]).lower()
@@ -742,8 +802,8 @@ def context(api, conn, now: datetime | None = None) -> dict:
             "clips": clips, "uses": uses, "transcripts_text": _transcripts_text(clips, uses),
             "questions": questions, "questions_text": _questions_text(questions, names),
             "references_text": _references_text(api), "calendar_text": _calendar_text(_calendar(api, now)),
-            "names": [n for p in projects if not p.get("standing") for n in (p.get("name"), p.get("folder"))],
-            "allowed": allowed}
+            "wiki_text": wiki_text, "wiki": wiki_articles,
+            "names": project_names, "allowed": allowed}
 
 
 def run(api, conn, trigger: str, client=None, now: datetime | None = None) -> dict:
@@ -826,7 +886,8 @@ def run_job(api, conn, client=None) -> dict:
 def status(conn) -> dict:
     """For the planner (laptop_status.info.topics): when Studio suggests by itself, and the last run."""
     out = {"day": settings.TOPICS_DAY if settings.TOPICS_DAY in DAYS else "off", "hour": settings.TOPICS_HOUR,
-           "count": settings.TOPICS_COUNT, "behind": settings.TOPICS_BEHIND, "last_run": None, "last_suggested": None}
+           "count": settings.TOPICS_COUNT, "behind": settings.TOPICS_BEHIND, "last_run": None, "last_suggested": None,
+           "wiki": wiki.info()}
     last = conn.execute("SELECT * FROM idea_runs WHERE trigger LIKE 'topics:%' ORDER BY id DESC LIMIT 1").fetchone()
     if last:
         result = json.loads(last["result"] or "{}")

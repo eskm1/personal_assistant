@@ -874,6 +874,20 @@ call, a few cents (shown with the rest of the month's cost); Telegram says when 
 `STUDIO_TOPICS_DAY` (`off` = only the button), `STUDIO_TOPICS_HOUR`, `STUDIO_TOPICS_COUNT`, `STUDIO_TOPICS_BEHIND`.
 After this update, run `cloud_setup.py --update` once; until then the planner doesn't show the row.
 
+**Ideas from the wiki.** When there isn't footage of you explaining something, Studio also suggests posts from
+Urban Makers' own wiki (the trade articles in the quote engine: tiling, carpentry, electrical, plumbing, permits and
+so on). Mostly carousels, each built on one article's facts: sizes, the order of works, checks, mounting heights,
+rules of thumb. Such a suggestion's line on Plan says **From the wiki:** and the article's title, and its purpose
+carries the article's key facts, so **Write slides** has the detail. Before anything from the wiki reaches Claude,
+Studio takes out everything that mustn't go public: prices and anything about money, quotes or margins, internal
+notes, addresses, postcodes and unit numbers, estates and towns, clients' and projects' names, phone numbers and
+emails, supplier and brand names, case studies, image placeholders and unchecked facts; directories (supplier lists,
+showrooms) are left out whole. Articles used least so far go first, and an article already behind a suggestion
+waiting for you isn't offered again. Studio reads the wiki at most once a day (read-only) and keeps a copy, so it
+still works when the wiki can't be reached. It adds a few pages of reading to each run's one call (at most about 3,500 tokens, about
+US$0.015 a run); there's no extra call. Settings: `STUDIO_WIKI_URL`, `STUDIO_WIKI_JWT`, `STUDIO_WIKI_ANON_KEY`
+(the CTO sets them on the server); blank = no wiki.
+
 ### Planning online
 
 Planning can live on the online planner instead (a website on Netlify with its data in Supabase),
