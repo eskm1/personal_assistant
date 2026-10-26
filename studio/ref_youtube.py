@@ -72,14 +72,12 @@ def canonical(url: str) -> str:
 
 def _schema() -> dict:
     """The answer's shape, in JSON Schema (the same pieces as Claude's reel read): Claude's look,
-    the beats with what is said (no transcript of our own here), the numbers and the transcript."""
+    the beats as "t | on screen | said | changed" strings (no transcript of our own here; read by
+    style_study.read_parts), the numbers and the transcript. Kept small like Claude's: Gemini refuses
+    a schema with too many states."""
     import style_study
     look = style_study.LOOK_SCHEMA
-    props = {k: v for k, v in look["properties"].items() if k != "beats"}
-    props["beats"] = {"type": "array", "items": {
-        "type": "object", "properties": {"t": {"type": "number"}, "on_screen": {"type": "string"},
-                                         "said": {"type": "string"}, "changed": {"type": "string"}},
-        "required": ["t", "on_screen", "said", "changed"], "additionalProperties": False}}
+    props = dict(look["properties"])
     num = {"anyOf": [{"type": "number"}, {"type": "null"}]}
     props["numbers"] = {"type": "object", "properties": {
         "duration": {"type": "number"}, "cuts": {"type": "integer"}, "first_cut": num, "shot_median": num,
@@ -122,9 +120,10 @@ reference for their Reels (Urban Makers, a Singapore renovation company), and de
 precisely. Report only what you see or hear; say "unclear" rather than guess.
 
 Go through the video as a timeline before concluding anything:
-- beats: 8 to 16, in time order, one each time the picture or the point changes: t (seconds), on_screen \
-(what is on screen, under 15 words), said (the words spoken from then to the next beat, quoted; "" when \
-nothing is said) and changed (what changed since the beat before, under 10 words; "first beat" first).
+- beats: 8 to 16, in time order, one each time the picture or the point changes, each the string \
+"t | on screen | said | changed": t (seconds), what is on screen (under 15 words), the words spoken from then \
+to the next beat (quoted; empty when nothing is said) and what changed since the beat before (under 10 words; \
+"first beat" first).
 - layouts: one per beat, in order (talking_full = speaker fills the frame; punch_in = a tighter crop of the \
 speaker; split_broll_top = footage above, speaker below; broll_full; screen; text_card; before_after).
 - captions: words per on-screen chunk (e.g. "1-3"), case, font look, accent colours and what they mark, \
@@ -133,19 +132,25 @@ box/outline/shadow, position. hook: what the first 3 seconds say and show. first
 it ends and asks for something. standout: the one editing choice that makes it work.
 - design: palette (names, hex where clear), materials, lighting, camera, framing, shot_types, text_style and \
 closest_free_fonts (Google Fonts / SIL Open Font License).
-- arc: the structure, read from the beats. open: how the first 3 seconds stop the scroll (pattern, what, at). \
-hold: how it keeps attention through the middle (devices, what). turn: the moment it shifts (the reveal, the \
-answer, the after; at = its time; pattern "none" with at null when it never turns). close: how it ends \
-(pattern, what, at). basis for each: seen, heard, both, or inferred (your conclusion beyond what is shown \
-or said: mark it so).
+- arc: the structure, read from the beats, each part the string "pattern | at | basis | what". open: how the \
+first 3 seconds stop the scroll ({opens}). hold: how it keeps attention through the middle, one or more \
+devices split by commas and at "-" ({holds}). turn: the moment it shifts, the reveal, the answer, the after \
+({turns}; "none | - | inferred | never turns" when it never turns). close: how it ends ({closes}). at: the \
+time in seconds. basis: seen, heard, both, or inferred (your conclusion beyond what is shown or said: mark it so).
 - gaps: what you could have missed (you see about one frame a second, so quick cuts and flashes can slip \
 by; speech you couldn't make out; parts not shown to you). Each short.
 - observations: the three highest-signal observations about why it works or doesn't, most important first, \
-each with its time and basis.
+each the string "at | basis | observation".
 - numbers (estimates from watching, not measurements): duration in seconds of what you watched, cuts \
 (hard cuts counted), first_cut (seconds, null if none), shot_median (a typical shot's seconds), words \
 (spoken), speech_start and speech_end (seconds, null if no speech).
 - transcript: every spoken word, in order (under 600 words)."""
+
+
+def _system() -> str:
+    import style_study
+    return _SYSTEM.format(opens=", ".join(style_study.OPEN_PATTERNS), holds=", ".join(style_study.HOLD_DEVICES),
+                          turns=", ".join(style_study.TURN_PATTERNS), closes=", ".join(style_study.CLOSE_PATTERNS))
 
 
 class _Retry(Exception):
@@ -245,7 +250,7 @@ def watch(url: str, ref: str) -> dict:
     endpoint = f"{settings.GEMINI_URL}/models/{model}:generateContent"
     video = {"file_data": {"file_uri": canonical(url)},
              "video_metadata": {"end_offset": f"{settings.REFERENCE_VIDEO_MAX_SECONDS}s"}}
-    body = {"systemInstruction": {"parts": [{"text": _SYSTEM}]},
+    body = {"systemInstruction": {"parts": [{"text": _system()}]},
             "contents": [{"role": "user", "parts": [video, {"text": "Describe this reference video."}]}],
             "generationConfig": {"responseMimeType": "application/json", "responseSchema": gemini_schema(_schema()),
                                  "maxOutputTokens": 16384}}

@@ -31,6 +31,9 @@ Usage (from the studio folder, inside its venv):
   python worker.py --reset-password a@b.com             set a new password for one
   python worker.py --cloud-check   check the online planner connection and what the next sync does
   python worker.py --cloud-import  push the plan made on this dashboard to the online planner, once
+  python worker.py --style-study reels.txt  measure reels you admire (style_study.py; --style-apply after)
+  while the worker runs: --check, --cloud-check, the accounts, --style-study, --style-apply, --resolve;
+  the rest do the worker's own work and need it stopped
   add --no-claude to transcribe and catalogue without tagging (no API calls)
   add --no-dashboard to skip the review site (http://127.0.0.1:8765 by default)
 """
@@ -70,6 +73,40 @@ def _setup_logging() -> None:
 
 
 _lock_handle = None
+_job_locks: dict[str, object] = {}
+
+# The modes that do the service's own work (the inbox, clips, edits, the planner sync): with the
+# service running they'd do it twice at once, so they need ROOT/worker.lock like the loop. Every
+# other one-off (a style study, putting one in the playbook, a Resolve project) runs alongside the
+# service under a lock of its own kind, so two of the same can't write the same files.
+SERVICE_WORK = ("once", "file", "retry_failed", "rebuild_previews", "edit", "trial", "check_quality", "cloud_import")
+ALONGSIDE = {"style_study": "a style study", "style_apply": "putting a style study in the playbook",
+             "resolve": "a Resolve project"}
+
+
+def _lock(path: Path, wait: float = 0):
+    """An OS lock on path (an open file handle), or None when another process holds it.
+    wait: seconds to keep trying."""
+    try:
+        handle = open(path, "a+")
+    except PermissionError:  # made by another user (say root's one-off): a lock needs only to read it
+        handle = open(path, "r")
+    deadline = time.time() + wait
+    while True:
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return handle
+        except OSError:
+            if time.time() >= deadline:
+                handle.close()
+                return None
+            time.sleep(0.5)
 
 
 def _single_instance(wait: float = 0) -> bool:
@@ -78,22 +115,28 @@ def _single_instance(wait: float = 0) -> bool:
     wait: seconds to keep trying (a worker restarted for an update waits for the
     old one to exit)."""
     global _lock_handle
-    _lock_handle = open(ROOT / "worker.lock", "a+")
-    deadline = time.time() + wait
-    while True:
-        _lock_handle.seek(0)
-        try:
-            if os.name == "nt":
-                import msvcrt
-                msvcrt.locking(_lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(_lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return True
-        except OSError:
-            if time.time() >= deadline:
-                return False
-            time.sleep(0.5)
+    _lock_handle = _lock(ROOT / "worker.lock", wait)
+    return _lock_handle is not None
+
+
+def _job_lock(kind: str) -> bool:
+    """Hold ROOT/<kind>.lock for a one-off that runs alongside the service (ALONGSIDE)."""
+    if kind not in _job_locks:
+        handle = _lock(ROOT / f"{kind.replace('_', '-')}.lock")
+        if handle is None:
+            return False
+        _job_locks[kind] = handle
+    return True
+
+
+def mode_of(args) -> str:
+    """Which mode a command line asks for: "loop" (no mode: the worker and the dashboard), or the
+    mode's name (once, style_study, ...)."""
+    for name in (*SERVICE_WORK, *ALONGSIDE):
+        value = getattr(args, name, None)
+        if value is not None and value is not False:  # an id of 0 is still a mode (0 == False)
+            return name
+    return "loop"
 
 
 # ── Inbox ─────────────────────────────────────────────────────────────────────
@@ -615,10 +658,42 @@ def main() -> int:
         return cloud_sync.check(catalog.connect())
     if args.add_user or args.reset_password:  # accounts: fine while Studio runs
         return accounts(args)
+    mode = mode_of(args)
+    if mode in ALONGSIDE:  # one-offs that don't need the service stopped
+        if not _job_lock(mode):
+            print(f"Another copy of {ALONGSIDE[mode]} is running; let it finish, then run this again.")
+            return 1
+        if args.style_study:
+            import style_study
+            try:
+                study = style_study.run(args.style_study, keep_videos=args.keep_videos)
+            except RuntimeError as e:  # nothing could be measured: the reasons were said above
+                print(f"\nThe study stopped: {e}")
+                return 1
+            print(f"\nDone. Read {study / 'report.md'}\nProposed playbook section: {study / 'house_style.md'}\n"
+                  f"If you're happy with it: python worker.py --style-apply")
+            return 0
+        if args.style_apply:
+            import style_study
+            study = style_study.latest() if args.style_apply == "latest" else args.style_apply
+            if not study:
+                print("No finished style study yet. Run --style-study first.")
+                return 1
+            print(f"House style from {study} added to {style_study.apply(study)}")
+            return 0
+        import catalog
+        import resolve_export
+        folder = resolve_export.build(catalog.connect(), args.resolve)
+        print(f"Resolve project: {folder}\nIn Resolve: File > Import > Timeline > timeline.fcpxml")
+        return 0
     restarted = os.environ.pop("STUDIO_RESTARTED", "") == "1"
     if not _single_instance(wait=60 if restarted else 0):
         if args.cloud_import:
             print("Stop the Studio worker first (it syncs with the planner too), then run this again.")
+            return 1
+        if mode not in ("loop", "once"):
+            print("The Studio worker is running and does this work itself; running both would do it twice at once. "
+                  "Stop it first (on the server: systemctl stop studio), then run this again.")
             return 1
         log.info("Another studio worker is already running; exiting.")
         return 0
@@ -643,20 +718,6 @@ def main() -> int:
         return 0
     if args.trial:
         return trial(conn, args.trial)
-    if args.style_study:
-        import style_study
-        study = style_study.run(args.style_study, keep_videos=args.keep_videos)
-        print(f"\nDone. Read {study / 'report.md'}\nProposed playbook section: {study / 'house_style.md'}\n"
-              f"If you're happy with it: python worker.py --style-apply")
-        return 0
-    if args.style_apply:
-        import style_study
-        study = style_study.latest() if args.style_apply == "latest" else args.style_apply
-        if not study:
-            print("No finished style study yet. Run --style-study first.")
-            return 1
-        print(f"House style from {study} added to {style_study.apply(study)}")
-        return 0
     if args.check_quality:
         check_quality(conn, args.all)
         return 0
@@ -672,11 +733,6 @@ def main() -> int:
             print(f"Import stopped: {e}. Run it again: what's already online isn't sent twice.")
             return 1
         print("Imported to the online planner: " + ", ".join(f"{n} {t}" for t, n in done.items()))
-        return 0
-    if args.resolve:
-        import resolve_export
-        folder = resolve_export.build(conn, args.resolve)
-        print(f"Resolve project: {folder}\nIn Resolve: File > Import > Timeline > timeline.fcpxml")
         return 0
     if args.edit:
         conn.execute("UPDATE productions SET status = 'planned' WHERE id = ? AND status NOT IN ('revising')",

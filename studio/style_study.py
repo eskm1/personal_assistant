@@ -113,9 +113,9 @@ def parse_links(text: str) -> list[dict]:
 class DownloadFailed(RuntimeError):
     """A download that didn't work, with what kind of problem it was (problem_of)."""
 
-    def __init__(self, message: str, problem: str = "other"):
+    def __init__(self, message: str, problem: str = "other", raw: str = ""):
         super().__init__(message)
-        self.problem = problem
+        self.problem, self.raw = problem, raw
 
 
 def _ydl_opts(out_dir: Path) -> tuple[dict, str]:
@@ -158,7 +158,7 @@ def download_post(url: str, out_dir: Path) -> tuple[Path, dict]:
             info = ydl.extract_info(url, download=True)
             path = Path(ydl.prepare_filename(info)).with_suffix(".mp4")
     except Exception as e:  # yt-dlp's DownloadError and friends: say what to do about it
-        first = DownloadFailed(download_problem(url, str(e), browser), problem_of(str(e)))
+        first = DownloadFailed(download_problem(url, str(e), browser), problem_of(str(e)), str(e))
         if "instagram" not in url.lower() or first.problem in ("gone", "net"):
             raise first from None
         # Instagram often answers yt-dlp's video lookup with "HTTP Error 400" (most of Bryan's
@@ -167,21 +167,53 @@ def download_post(url: str, out_dir: Path) -> tuple[Path, dict]:
         return _instagram_fallback(url, out_dir, first)
     if not path.exists():
         found = sorted(p for p in out_dir.glob(f"*{info.get('id', '')}*") if p.suffix.lower() in VIDEO_EXTS)
-        if not found:
-            raise DownloadFailed("download finished but no video file appeared")
-        path = found[0]
+        path = found[0] if found else None
+    wrong = video_problem(path)
+    if wrong:
+        first = DownloadFailed(f"the download gave no usable video ({wrong})")
+        if "instagram" in url.lower():
+            return _instagram_fallback(url, out_dir, first)
+        raise first
     return path, info
 
 
+def video_problem(path: Path | None) -> str | None:
+    """Why a downloaded file isn't a video to study (missing, empty, no picture, under half a
+    second), or None when it is one. A partly written file from a refused download reads so."""
+    if path is None or not Path(path).is_file():
+        return "no file"
+    if Path(path).stat().st_size < 1024:
+        return "an empty file"
+    try:
+        meta = extract.probe(Path(path))
+    except Exception as e:  # ffprobe can't read it: cut short, or not a video at all
+        return f"not a video ffprobe can read: {str(e)[:80]}"
+    if not meta.get("width") or (meta.get("duration") or 0) < 0.5:
+        return "no picture in it" if not meta.get("width") else "under half a second long"
+    return None
+
+
+def _short(message: str, n: int = 120) -> str:
+    """A downloader's error without its colour codes, ERROR: and "[Instagram] <id>:" prefix."""
+    text = re.sub(r"\x1b\[[0-9;]*m", "", str(message or "")).replace("ERROR: ", "").strip()
+    text = re.sub(r"^\[[^\]]+\]\s*[A-Za-z0-9_-]{5,}:\s*", "", text)
+    return _clip(text, n)
+
+
 def _instagram_fallback(url: str, out_dir: Path, first: "DownloadFailed") -> tuple[Path, dict]:
-    """A reel yt-dlp couldn't fetch: gallery-dl (video and metadata), then yt-dlp signed out.
-    Returns (video, info with "_source"); raises the clearest of the failures."""
+    """A reel yt-dlp couldn't fetch: gallery-dl (video and metadata, with the cookies.txt sign-in),
+    then yt-dlp signed out (a public reel needs no sign-in). A file either gives is only taken when
+    it is a real video (video_problem), so a refused download never goes on to Claude. Returns
+    (video, info with "_source"); raises DownloadFailed with a plain reason."""
     import yt_dlp
     gdl = out_dir / "gdl-video"
+    shutil.rmtree(gdl, ignore_errors=True)  # never a file an earlier try left
+    gdl_message = ""
     try:
         result = _gallery_dl(["-D", str(gdl), "--write-metadata", "--range", "1", "--no-part", "--no-mtime", url])
         videos = sorted(p for p in gdl.glob("*") if p.suffix.lower() in VIDEO_EXTS) if gdl.exists() else []
-        if videos:
+        good = [v for v in videos if not video_problem(v)]
+        if good:
             meta = {}
             for js in sorted(gdl.glob("*.json")):
                 try:
@@ -191,8 +223,10 @@ def _instagram_fallback(url: str, out_dir: Path, first: "DownloadFailed") -> tup
                     continue
             meta = meta if isinstance(meta, dict) else {}
             meta["_source"] = "gallery-dl"
-            return videos[0], meta
-        gdl_message = _gallery_error(result.stderr)
+            log.info("Instagram refused yt-dlp for %s (%s); gallery-dl got the video", url, _short(str(first), 80))
+            return good[0], meta
+        gdl_message = _gallery_error(result.stderr) or (
+            f"its file wasn't a video ({video_problem(videos[0])})" if videos else "no video came back")
     except (OSError, subprocess.SubprocessError) as e:
         gdl_message = f"gallery-dl couldn't run: {type(e).__name__}"
     if COOKIES_FILE.is_file() or settings._env("STUDIO_YTDLP_COOKIES_BROWSER"):
@@ -203,14 +237,21 @@ def _instagram_fallback(url: str, out_dir: Path, first: "DownloadFailed") -> tup
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 path = Path(ydl.prepare_filename(info)).with_suffix(".mp4")
-            if path.exists():
+            if not video_problem(path):
+                log.info("Instagram refused yt-dlp with the sign-in for %s; signed out it got the video", url)
                 return path, info
         except Exception:
             pass
     problem = problem_of(gdl_message) if gdl_message else first.problem
     if problem == "other":
         problem = first.problem
-    raise DownloadFailed(f"{first} (gallery-dl: {gdl_message[:150]})" if gdl_message else str(first), problem)
+    if problem == "login":  # what to do about the sign-in says more than the error
+        raise DownloadFailed(f"{first} (gallery-dl: {_short(gdl_message, 100)})" if gdl_message else str(first), problem)
+    reason = _short(first.raw or str(first), 100)
+    if gdl_message:
+        reason += f" (gallery-dl: {_short(gdl_message, 80)})"
+    raise DownloadFailed(f"Instagram refused the download: {reason}; try again later or upload the file "
+                         "(OneDrive: Studio Inbox > References)", problem, first.raw)
 
 
 def problem_of(message: str) -> str:
@@ -234,6 +275,13 @@ def problem_of(message: str) -> str:
     if any(k in low for k in ("timed out", "getaddrinfo", "connection", "network", "resolve", "temporary failure")):
         return "net"
     return "other"
+
+
+def _throttled(message: str) -> bool:
+    """Instagram said to slow down (429, "please wait"), not only refused one lookup (400)."""
+    low = str(message or "").lower()
+    return any(k in low for k in ("429", "too many requests", "please wait a few minutes", "rate-limit reached",
+                                  "rate limit reached"))
 
 
 def download_problem(url: str, message: str, browser: str = "") -> str:
@@ -353,10 +401,13 @@ def fetch_slides(url: str, out_dir: Path) -> dict:
                     "slides": len(entries) or 1}
         first_error = DownloadFailed("Instagram didn't give the post's pictures", "other")
     except Exception as e:
-        first_error = DownloadFailed(download_problem(url, str(e), browser), problem_of(str(e)))
-    # gallery-dl: images (and the cover of any video slide), with a .json of metadata per file.
-    if first_error.problem in ("rate", "net") or (first_error.problem == "login" and not COOKIES_FILE.is_file()):
-        raise first_error  # gallery-dl would be refused the same way
+        first_error = DownloadFailed(download_problem(url, str(e), browser), problem_of(str(e)), str(e))
+    # gallery-dl: images (and the cover of any video slide), with a .json of metadata per file. Not
+    # after a real "slow down" or no internet: it would be refused the same way. Instagram's "HTTP
+    # Error 400" to yt-dlp is its lookup being turned away, which gallery-dl's own way often isn't.
+    throttled = first_error.problem == "rate" and _throttled(first_error.raw)
+    if first_error.problem == "net" or throttled or (first_error.problem == "login" and not COOKIES_FILE.is_file()):
+        raise first_error
     gdl = out_dir / "gdl"
     try:
         result = _gallery_dl(["-D", str(gdl), "--write-metadata", "--range", f"1-{MAX_SLIDES}", "--no-part",
@@ -646,29 +697,84 @@ TURN_PATTERNS = ("reveal", "answer", "twist", "before_after", "next_step", "none
 CLOSE_PATTERNS = ("ask_follow", "ask_comment", "ask_save_share", "ask_dm_or_book", "final_reveal", "summary", "loop",
                   "end_card", "just_stops", "other")
 BASIS = ("seen", "heard", "both", "inferred")
-_BASIS = {"type": "string", "enum": list(BASIS)}
-_AT = {"anyOf": [{"type": "number"}, {"type": "null"}]}
-
-
-def _part(patterns: tuple, key: str = "pattern", many: bool = False) -> dict:
-    field = {"type": "array", "items": {"type": "string", "enum": list(patterns)}} if many \
-        else {"type": "string", "enum": list(patterns)}
-    props = {key: field, "what": {"type": "string"}, "basis": _BASIS}
-    if not many:
-        props["at"] = _AT
-    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
-
-
+# The beats, the arc and the observations come back as short "a | b | c" strings, read and checked
+# here (read_parts): as enums and nested objects they made the schema too big for structured output
+# ("The compiled grammar is too large", 2026-10-26). tests/quality/suite_study_fixes.py holds every
+# structured-output schema under a size budget.
+_TEXTS = {"type": "array", "items": {"type": "string"}}
 ARC_SCHEMA = {
     "type": "object",
-    "properties": {"open": _part(OPEN_PATTERNS), "hold": _part(HOLD_DEVICES, "devices", many=True),
-                   "turn": _part(TURN_PATTERNS), "close": _part(CLOSE_PATTERNS)},
+    "properties": {"open": {"type": "string"}, "hold": {"type": "string"}, "turn": {"type": "string"},
+                   "close": {"type": "string"}},
     "required": ["open", "hold", "turn", "close"],
     "additionalProperties": False,
 }
-OBSERVATIONS_SCHEMA = {"type": "array", "items": {
-    "type": "object", "properties": {"at": {"type": "number"}, "text": {"type": "string"}, "basis": _BASIS},
-    "required": ["at", "text", "basis"], "additionalProperties": False}}
+OBSERVATIONS_SCHEMA = _TEXTS
+_NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def _fields(text, n: int) -> list[str]:
+    """An "a | b | c" answer as exactly n fields (the last keeps any further "|")."""
+    bits = [b.strip() for b in str(text or "").split("|", n - 1)]
+    return bits + [""] * (n - len(bits))
+
+
+def _time_of(text):
+    """The first number in a field ("0.3", "0.3 s", "at 12"), or None ("-", "none")."""
+    m = _NUM_RE.search(str(text or ""))
+    return float(m.group(0)) if m else None
+
+
+def _basis_of(text) -> str:
+    low = str(text or "").lower()
+    return next((b for b in BASIS if re.search(rf"\b{b}\b", low)), "inferred")
+
+
+def _slug(text) -> str:
+    return re.sub(r"[^a-z_]+", "_", str(text or "").strip().lower()).strip("_")
+
+
+def read_parts(seen: dict, timed_beats: bool = False) -> dict:
+    """Claude's (or Gemini's) compact strings as the shapes tidy_read keeps. beats: "on screen |
+    changed" one per still in order (Gemini, with no stills: "t | on screen | said | changed");
+    arc parts: "pattern | at | basis | what" (hold: "device, device | - | basis | what");
+    observations: "at | basis | text". Anything already in the object shape passes through."""
+    out = dict(seen)
+    beats = []
+    for i, b in enumerate(seen.get("beats") or []):
+        if isinstance(b, str):
+            if timed_beats:
+                t, screen, said, changed = _fields(b, 4)
+                beats.append({"t": _time_of(t), "on_screen": screen, "said": said, "changed": changed})
+            else:
+                bits = [x.strip() for x in b.split("|")]  # a field it wasn't asked for (what is said) is dropped
+                beats.append({"i": i, "on_screen": bits[0], "changed": bits[-1] if len(bits) > 1 else ""})
+        elif isinstance(b, dict):
+            beats.append(b)
+    out["beats"] = beats
+    arc = seen.get("arc") if isinstance(seen.get("arc"), dict) else {}
+    parts = {}
+    for part, p in arc.items():
+        if isinstance(p, str):
+            head, at, basis, what = _fields(p, 4)
+            item = {"what": what, "basis": _basis_of(basis)}
+            if part == "hold":
+                item["devices"] = [_slug(d) for d in re.split(r"[,;/+]| and ", head) if _slug(d)]
+            else:
+                item["pattern"], item["at"] = _slug(head), _time_of(at)
+            parts[part] = item
+        elif isinstance(p, dict):
+            parts[part] = p
+    out["arc"] = parts
+    obs = []
+    for o in seen.get("observations") or []:
+        if isinstance(o, str):
+            at, basis, text = _fields(o, 3)
+            obs.append({"at": _time_of(at), "basis": _basis_of(basis), "text": text})
+        elif isinstance(o, dict):
+            obs.append(o)
+    out["observations"] = obs
+    return out
 
 
 def _at(v, duration: float | None):
@@ -683,18 +789,21 @@ def tidy_read(seen: dict, beats: list[dict], gaps: list[str], duration: float | 
     is said is the transcript's, never a model's paraphrase, when there is a transcript), the
     structure's patterns and bases checked, times inside the reel, the measured gaps first, at
     most three observations. Short texts: this sits in every reference's row."""
+    seen = read_parts(seen, timed_beats=not beats)
     out = dict(seen)
     theirs = [b for b in seen.get("beats") or [] if isinstance(b, dict)]
 
-    def nearest(t):
+    def nearest(k, t):
         if not theirs:
             return {}
+        if "i" in theirs[0]:  # one per still, in order: matched by place
+            return theirs[k] if k < len(theirs) else {}
         return min(theirs, key=lambda b: abs((b.get("t") if isinstance(b.get("t"), (int, float)) else 1e9) - t))
 
     kept = []
-    for b in beats or theirs:
+    for k, b in enumerate(beats or theirs):
         t = _at(b.get("t"), duration) or 0.0
-        mine = nearest(t) if beats else b
+        mine = nearest(k, t) if beats else b
         said = b.get("said") if beats else mine.get("said")
         row = {"t": t, "screen": _clip(mine.get("on_screen"), 140), "said": _clip(said, 220),
                "changed": _clip(mine.get("changed"), 100)}
@@ -799,12 +908,9 @@ LOOK_SCHEMA = {
         "cta": {"type": "string"},
         "standout": {"type": "string"},
         "design": DESIGN_SCHEMA,
-        "beats": {"type": "array", "items": {
-            "type": "object", "properties": {"t": {"type": "number"}, "on_screen": {"type": "string"},
-                                             "changed": {"type": "string"}},
-            "required": ["t", "on_screen", "changed"], "additionalProperties": False}},
+        "beats": _TEXTS,
         "arc": ARC_SCHEMA,
-        "gaps": {"type": "array", "items": {"type": "string"}},
+        "gaps": _TEXTS,
         "observations": OBSERVATIONS_SCHEMA,
     },
     "required": ["layouts", "captions", "hook", "first_frame", "broll", "graphics", "cta", "standout", "design",
@@ -832,18 +938,22 @@ weight, rounded or geometric, letter spacing, case); closest_free_fonts: the nea
 (Google Fonts / SIL Open Font License) to the type you see, e.g. "Figtree", "DM Serif Display".
 
 The reel comes as a timeline of beats: each beat is a still, what is said from that moment to the next \
-still (the transcript, exact) and the cuts in between. Go through the timeline before concluding anything:
-- beats: one per still, in order, with its time t: on_screen (what the still shows, under 15 words) and \
-changed (what changed since the beat before: a cut to what, new text, a reveal; "first beat" for the first; \
-under 10 words).
-- arc: the structure, read from the timeline. open: how the first 3 seconds stop the scroll (pattern, what, at). \
-hold: how it keeps attention through the middle (devices, what). turn: the moment it shifts (the reveal, the \
-answer, the after; at = its time; pattern "none" with at null when it never turns). close: how it ends (pattern, \
-what, at). basis for each: seen (a still shows it), heard (the transcript says it), both, or inferred (your \
-conclusion beyond what is shown or said: mark it so, never present it as seen).
+still (the transcript, exact) and the cuts in between. Go through the timeline before concluding anything. \
+Answer the next three as short strings with fields split by " | ".
+- beats: one per still, in order: "on screen | changed", what the still shows (under 15 words) and what \
+changed since the beat before (a cut to what, new text, a reveal; "first beat" for the first; under 10 words).
+- arc: the structure, read from the timeline, each part "pattern | at | basis | what". open: how the first \
+3 seconds stop the scroll ({opens}). hold: how it keeps attention through the middle, one or more devices \
+split by commas and at "-" ({holds}). turn: the moment it shifts, the reveal, the answer, the after ({turns}; \
+"none | - | inferred | never turns" when it never turns). close: how it ends ({closes}). at: the time in \
+seconds. basis: seen (a still shows it), heard (the transcript says it), both, or inferred (your conclusion \
+beyond what is shown or said: mark it so, never present it as seen). Example: "result_first | 0.3 | both | \
+shows the finished kitchen first".
 - gaps: what the sampling could have missed beyond the measured gaps listed after the timeline (each short).
 - observations: the three highest-signal observations about why this reel works or doesn't, most important \
-first, each with the time it happens and its basis. Short."""
+first, each "at | basis | observation". Short.""".format(
+    opens=", ".join(OPEN_PATTERNS), holds=", ".join(HOLD_DEVICES), turns=", ".join(TURN_PATTERNS),
+    closes=", ".join(CLOSE_PATTERNS))
 
 SLIDES_SCHEMA = {
     "type": "object",
@@ -1251,8 +1361,47 @@ def run(source: Path, keep_videos: bool = False, client=None, say=print) -> Path
     reels = _inputs(source)
     if not reels:
         raise RuntimeError("no links or videos found (see the example at the top of style_study.py)")
-    study = STUDIES / datetime.now().strftime("%Y-%m-%d_%H%M")
-    study.mkdir(parents=True, exist_ok=True)
+    tidy_studies()
+    stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+    study, n = STUDIES / stamp, 1
+    while study.exists():  # a second study in the same minute gets a folder of its own
+        n += 1
+        study = STUDIES / f"{stamp}_{n}"
+    study.mkdir(parents=True)
+    try:
+        return _run(study, reels, keep_videos, client, say)
+    except BaseException:
+        # Nothing measured (every link refused, or stopped early): the folder holds nothing worth
+        # keeping, and an empty study only clutters Studio/Style. A study with results stays.
+        if not any(r.get("measured") for r in reels):
+            shutil.rmtree(study, ignore_errors=True)
+        raise
+
+
+_STUDY_NAME = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{4}(?:_\d+)?$")
+
+
+def tidy_studies() -> list[Path]:
+    """Remove dated study folders (Studio/Style/YYYY-MM-DD_HHMM) with no file in them at all,
+    such as the ones a failed study left before it cleaned up after itself. A folder holding any
+    file, at any depth, is never touched. Returns the folders removed."""
+    gone = []
+    for folder in sorted(STUDIES.glob("*")) if STUDIES.exists() else []:
+        if not folder.is_dir() or folder.is_symlink() or not _STUDY_NAME.match(folder.name):
+            continue
+        try:
+            if any(not p.is_dir() or p.is_symlink() for p in folder.rglob("*")):
+                continue
+            for d in sorted(folder.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+                d.rmdir()  # only ever empty folders: rmdir refuses anything else
+            folder.rmdir()
+            gone.append(folder)
+        except OSError as e:  # a file appeared meanwhile, or no permission: leave it
+            log.info("Left the study folder %s: %s", folder.name, e)
+    return gone
+
+
+def _run(study: Path, reels: list[dict], keep_videos: bool, client, say) -> Path:
     say(f"Studying {len(reels)} reels ({sum(r['group'] == 'ours' for r in reels)} ours) in {study}")
     for i, reel in enumerate(reels, 1):
         name = reel.get("url") or Path(reel["file"]).name

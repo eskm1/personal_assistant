@@ -288,7 +288,7 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
 - Reference library and taste report built 2026-10-19 (not yet proven against Instagram or real Claude):
   Import many (paste or CSV, dedupe by shortcode, `import_references()`), held until Bryan presses Analyse
   (all, or a stratified sample of 150), paced downloads with backoff and pauses (`ref_library.py`), carousels and
-  photos from their pictures (yt-dlp metadata, gallery-dl 1.32.15 with the sign-in), engagement captured, the
+  photos from their pictures (yt-dlp metadata, gallery-dl with the sign-in), engagement captured, the
   monthly cap `STUDIO_REFERENCE_BUDGET_USD` (60), the taste report (`taste.py`, map-reduce, `#/taste`, approval puts
   its guide in force and its taste section in the playbook). Bryan's 814 saved posts (no tags: the report infers why
   each stands out) are to be imported once the migration is online. What Bryan must do: (1) `cloud_setup.py

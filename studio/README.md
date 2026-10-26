@@ -1104,10 +1104,16 @@ suggestions: changing one is a separate decision.
    ```
 
    (Or put video files in a folder; files named `ours...` count as yours.)
-2. `.\venv\Scripts\python worker.py --style-study reels.txt`
+2. `.\venv\Scripts\python worker.py --style-study reels.txt` (on the server: `python worker.py --style-study
+   reels.txt` as user studio). It runs while Studio runs; a second study waits until the first is done.
 3. Read `Studio\Style\<date>\report.md`, and `house_style.md` (the proposed playbook section).
 4. Happy with it: `.\venv\Scripts\python worker.py --style-apply`. Run another study later and
    apply it again; it replaces the earlier house style instead of adding a second one.
+
+A reel Instagram won't hand over (yt-dlp, then gallery-dl, both with the sign-in when there is one, then
+yt-dlp signed out) is skipped with the reason ("Instagram refused the download: ...; try again later or
+upload the file"); it never goes on to Claude without its video. A study where nothing could be measured
+leaves no folder behind, and each study starts by removing empty dated folders in `Studio\Style`.
 
 Measured on the laptop, no API cost: cuts (including jump cuts and punch-ins), shot lengths, first
 cut, speaking pace, pauses, loudness, and how far the music sits under the voice. Claude then looks

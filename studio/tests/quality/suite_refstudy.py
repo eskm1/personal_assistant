@@ -65,19 +65,19 @@ _captions = {"present": True, "words_per_chunk": "1-3", "case": "upper", "font":
              "box": "none", "position": "middle"}
 READ = {"layouts": ["talking_full"] * 7, "captions": _captions, "hook": "three mistakes", "first_frame": "red wall",
         "broll": [], "graphics": "none", "cta": "follow", "standout": "colour changes", "design": _design,
-        # Claude paraphrases what is said; the kept beat must carry the transcript's words instead.
-        "beats": [{"t": 0.15, "on_screen": "a red wall", "changed": "first beat"},
-                  {"t": 2.6, "on_screen": "a blue wall", "changed": "cut to blue", "said": "PARAPHRASE"},
-                  {"t": 5.1, "on_screen": "a green wall", "changed": "cut to green"}],
-        "arc": {"open": {"pattern": "list_promise", "what": "promises three mistakes", "at": 0.3, "basis": "heard"},
-                "hold": {"devices": ["numbered_steps", "made_up_device", "fast_cuts"], "what": "counts them", "basis": "both"},
-                "turn": {"pattern": "reveal", "what": "the green room", "at": 4.1, "basis": "seen"},
-                "close": {"pattern": "ask_follow", "what": "asks to follow", "at": 99.0, "basis": "guessed"}},
+        # Compact "a | b" strings (the schema's shape since 2026-10-26: as objects and enums it was too
+        # big to compile). One beat per still, in order; Claude may paraphrase what is said in a field
+        # it wasn't asked for, and the kept beat must carry the transcript's words instead.
+        "beats": ["a red wall | first beat", "a blue wall | PARAPHRASE | cut to blue", "a green wall | cut to green"],
+        "arc": {"open": "list_promise | 0.3 | heard | promises three mistakes",
+                "hold": "numbered_steps, made_up_device, fast cuts | - | both | counts them",
+                "turn": "reveal | 4.1 s | seen | the green room",
+                "close": "ask_follow | 99 | guessed | asks to follow"},
         "gaps": ["the speaker's face is never shown"],
-        "observations": [{"at": 0.3, "text": "the promise lands in the first second", "basis": "heard"},
-                         {"at": 2.0, "text": "each cut matches a new point", "basis": "both"},
-                         {"at": 5.5, "text": "the ask may be why it is saved", "basis": "inferred"},
-                         {"at": 5.9, "text": "a fourth one", "basis": "seen"}]}
+        "observations": ["0.3 | heard | the promise lands in the first second",
+                         "2.0 | both | each cut matches a new point",
+                         "5.5 | inferred | the ask may be why it is saved",
+                         "5.9 | seen | a fourth one"]}
 
 
 # ── 1. The beat timeline (no API) ─────────────────────────────────────────────
@@ -231,16 +231,15 @@ GEM = {"calls": [], "modes": [], "gets": []}
 def gemini_answer():
     return {"layouts": ["talking_full", "broll_full"], "captions": _captions, "hook": "h", "first_frame": "f",
             "broll": ["tiles"], "graphics": "none", "cta": "follow", "standout": "s", "design": _design,
-            "beats": [{"t": 0.0, "on_screen": "a man in a kitchen", "said": "Stop doing this", "changed": "first beat"},
-                      {"t": 6.5, "on_screen": "tiles close up", "said": "", "changed": "cut to the tiles"}],
-            "arc": {"open": {"pattern": "mistake_warning", "what": "stop doing this", "at": 0.0, "basis": "both"},
-                    "hold": {"devices": ["demonstration"], "what": "shows it", "basis": "seen"},
-                    "turn": {"pattern": "none", "what": "never turns", "at": 3.0, "basis": "inferred"},
-                    "close": {"pattern": "summary", "what": "sums up", "at": 30.0, "basis": "heard"}},
+            "beats": ["0 | a man in a kitchen | Stop doing this | first beat",
+                      "6.5 | tiles close up |  | cut to the tiles"],
+            "arc": {"open": "mistake_warning | 0 | both | stop doing this",
+                    "hold": "demonstration | - | seen | shows it",
+                    "turn": "none | 3 | inferred | never turns",
+                    "close": "summary | 30 | heard | sums up"},
             "gaps": ["the text at 12 s was too small to read"],
-            "observations": [{"at": 0.0, "text": "a warning first", "basis": "heard"},
-                             {"at": 6.5, "text": "the close-up proves it", "basis": "seen"},
-                             {"at": 25.0, "text": "probably saved for the tip", "basis": "inferred"}],
+            "observations": ["0 | heard | a warning first", "6.5 | seen | the close-up proves it",
+                             "25 | inferred | probably saved for the tip"],
             "numbers": {"duration": 31.0, "cuts": 9, "first_cut": 1.2, "shot_median": 2.8, "words": 80,
                         "speech_start": 0.2, "speech_end": 30.2},
             "transcript": "Stop doing this ..."}
