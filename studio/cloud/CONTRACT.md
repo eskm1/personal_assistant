@@ -133,14 +133,53 @@ are retired (status `retired`), not deleted, when they stop representing the sty
 | jobs kind `style` | any member queues "Update style guide" (runner laptop) | result `{guide_id, version}` |
 
 **Laptop (cloud_sync, each tick):** analyse pending references (download -> `style_study.measure`
--> stills -> `style_study.look`, upload stills, delete the download), at most 2 per tick so ingest
-isn't starved; then, if the set of active analysed references of a brand differs from the latest
+-> stills -> `style_study.look`, upload stills, delete the download; a YouTube link is watched by Gemini
+instead, below), at most 2 per tick so ingest isn't starved; then, if the set of active analysed references of a brand differs from the latest
 draft-or-active guide's `reference_ids` and nothing is pending, draft a new guide automatically
 (also on a `style` job): Claude gets the previous active guide, every active reference's numbers,
 look and why-note, and which were added/removed (with their notes), and writes `content`,
 `report`, `changes`. When a guide becomes active, the laptop writes its `content` into
 `playbook.md` between the style-study markers (replacing an earlier one) and remembers which
 guide id it applied.
+
+**The analysis's shape (2026-10-26; no migration: new keys inside the existing jsonb).** A reel's `look` keeps
+Claude's read as before (layouts, captions, hook, first_frame, broll, graphics, cta, standout, design) plus the
+beat timeline and what was read from it, all optional (references analysed before have none; `analyser` stays 2,
+so nothing is re-analysed by itself):
+
+- `look.beats`: `[{t, screen, said, changed, cuts?}]`, one per still in time order (`t` seconds; `said` the
+  transcript's words from that still to the next, exact; `cuts` how many hard cuts in it); short texts.
+- `look.arc`: `{open: {pattern, what, at, basis}, hold: {devices: [], what, basis}, turn: {pattern, what, at,
+  basis}, close: {pattern, what, at, basis}}`. Patterns: open `question | bold_claim | result_first | problem |
+  mistake_warning | number_or_price | list_promise | story | before_after | visual_only | other`; hold devices
+  `fast_cuts | numbered_steps | open_loop | progress_reveal | text_on_screen | broll_variety | direct_address |
+  demonstration | humour | music_beat | other`; turn `reveal | answer | twist | before_after | next_step | none |
+  other` (`none` = `at` null); close `ask_follow | ask_comment | ask_save_share | ask_dm_or_book | final_reveal |
+  summary | loop | end_card | just_stops | other`. `basis`: `seen | heard | both | inferred` (anything else is kept
+  as `inferred`); `at` within the reel or null.
+- `look.gaps`: what the sampling could have missed (Studio's measured ones first: shots no still landed in, long
+  stretches with one still, no speech; then the model's), at most 8.
+- `look.observations`: `[{at, text, basis}]`, the three highest-signal, most important first.
+
+The stills are now the first frame, the first 5 shots and the rest spread to the last shot (still 12 at most).
+Carousels (`kind` images) are unchanged. The style guide's evidence and the taste report count the patterns
+(`summary.<side>.structure`, `taste.stats().video.structure`: `{read, of, opens, holds, turns, closes,
+turn_at_s_median, turn_at_share_median, inferred}`), without the beats.
+
+**YouTube references (no migration, no Edge Function change).** A link on youtube.com/watch, youtu.be or
+youtube.com/shorts is not downloaded (YouTube blocks servers): Gemini (`STUDIO_REFERENCE_VIDEO_MODEL`, Studio's
+`GEMINI_API_KEY`) watches it from the link (`file_data.file_uri`, the first `STUDIO_REFERENCE_VIDEO_MAX_SECONDS`,
+default 180) and answers with a responseSchema in the same shape (`ref_youtube.py`). The row: `kind` video;
+`measured` its estimated numbers (duration, cuts, first_cut, shot_median, words, words_per_sec, speech_start,
+transcript) with `estimated_by` (the model) and `source` youtube (`watched_to` when cut short): the style guide
+and the taste report keep them out of their medians; `look` as above (Gemini's beats carry its own `said`);
+`stills` YouTube's thumbnail (one, or none); `engagement` `{account: the channel from YouTube's oEmbed, source:
+youtube}`, the counts null. One call, recorded in `usage` kind `style` at `STUDIO_REFERENCE_VIDEO_COST_USD`
+(default 0.05), so it counts toward `STUDIO_REFERENCE_BUDGET_USD`. Gemini's filter, a refused answer or a video it
+can't open (private, removed): `failed`, `problem` `gone`, a plain `error`, not retried by itself (a `failed` +
+`gone` analysis now waits for a new link or an `analyser` bump, for hand-added references too); no key, a refused
+key or an unknown model: `failed`, `problem` `other`, the reason says what to do (hand-added: tried again after a
+day; library: Try again).
 
 **Planner:** References tab: add link (+ side, why, brand), edit why, retire/restore, see
 analysis state and a strip of stills plus key numbers (shot length, first cut, words/s, music

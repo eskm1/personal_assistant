@@ -190,6 +190,15 @@ TITLE_STYLE = _env("STUDIO_TITLE_STYLE", "site").lower().strip()
 # How far the music sits under the voice while Bryan talks (dB); between phrases it rises a
 # little, and with no talking it plays at a comfortable bed level.
 MUSIC_GAP_DB = min(max(float(_env("STUDIO_MUSIC_GAP_DB", "20")), 12.0), 30.0)
+# Soft sound effects on the graphics (sfx.py; Bryan, 2026-10-26: "calm, never jarring"): a whoosh as a label comes
+# in, ticks on a numbers panel, a chime on the end card. Epidemic Sound's when its server offers them, else
+# Openverse's CC0 / public domain ones, fetched once and kept. SFX_LEVEL_DB: how far their loudest moment sits under
+# the loud parts of the voice; SFX_MAX: at most this many a draft (and about one per 6 seconds). Off = voice and
+# music only, as before.
+SFX = _flag("STUDIO_SFX", True)
+SFX_LEVEL_DB = min(max(float(_env("STUDIO_SFX_LEVEL_DB", "24")), 12.0), 40.0)
+SFX_MAX = min(max(int(_env("STUDIO_SFX_MAX", "5") or 5), 0), 12)
+OPENVERSE_URL = _env("STUDIO_OPENVERSE_URL", "https://api.openverse.org/v1/audio/")
 
 # ── Epidemic Sound (music for the editor) ─────────────────────────────────────
 # Personal MCP key from epidemicsound.com/account/api-keys.
@@ -318,6 +327,14 @@ def ensure_folders() -> None:
 # writing taste reports (US$; about 0.05 a post). Nothing is spent until the owner presses
 # "Analyse" in the planner; past this, analysing pauses until next month.
 REFERENCE_BUDGET_USD = max(float(_env("STUDIO_REFERENCE_BUDGET_USD", "60")), 0.0)
+# YouTube references (ref_youtube.py): YouTube blocks downloads from servers, so Gemini watches the
+# video from its link instead (GEMINI_API_KEY, the concept pictures' key). The model must take video
+# input; the name is not checked against Google's model list from here (a wrong one fails each YouTube
+# reference with a plain reason). What one costs (US$, an estimate: Google bills by tokens) counts
+# toward the budget above. Only the first REFERENCE_VIDEO_MAX_SECONDS of a long video are watched.
+REFERENCE_VIDEO_MODEL = _env("STUDIO_REFERENCE_VIDEO_MODEL", "gemini-3.8-flash")
+REFERENCE_VIDEO_COST_USD = max(float(_env("STUDIO_REFERENCE_VIDEO_COST_USD", "0.05")), 0.0)
+REFERENCE_VIDEO_MAX_SECONDS = min(max(int(_env("STUDIO_REFERENCE_VIDEO_MAX_SECONDS", "180")), 30), 1800)
 
 # ── Posting to Instagram (instagram.py, posting.py, post_results.py) ──────────
 # Studio posts only what Bryan approved and scheduled, through "Instagram API with Instagram

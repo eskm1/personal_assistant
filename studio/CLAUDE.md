@@ -201,6 +201,13 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   "image/picture/photo of X" notes (`asks_from_notes`/`apply_asks`) and the read's graphic field `picture`
   (`fix_actions._to_picture`); any failure, no key or `STUDIO_REEL_PICTURES=0` = the drawing, said once.
   `tests/quality/suite_pictures.py`.
+- Sound effects on Reels' graphics, built 2026-10-26 (Bryan's "yes ok": "calm, never jarring"; not yet heard on a real
+  draft, Epidemic's MCP sound effects tool unproven: the code shows no such tool, so Studio asks `tools/list` each time
+  it needs a new effect): `sfx.py` (whoosh as a label/card/callout comes in, ticks on a numbers panel's bars, an air
+  whoosh on drawings/pictures, a chime on the end card; sparse rules; Openverse CC0/PDM fallback; cached in
+  `Studio/SoundEffects`, `edl["sfx"]` with source/id/licence), mixed in `editor.mix_final` (`effects_stem`,
+  `STUDIO_SFX_LEVEL_DB` 24 under the voice's loud parts), notes/`edl["sfx_pref"]`, the read's `sound_effects` action.
+  `STUDIO_SFX`, `STUDIO_SFX_MAX` (5). Slideshows and Resolve: none. `tests/quality/suite_sfx.py`.
 - Editor upgrades built (not yet proven on real footage): jump cuts (`editor.tighten`), face-tracked
   reframing of horizontal footage and punch-ins (`framing.py`, OpenCV), each a `STUDIO_EDIT_*` setting.
   Still offered: numbered chapter labels, screenshots floating above the speaker.

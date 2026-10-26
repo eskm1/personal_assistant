@@ -1099,6 +1099,8 @@ def _due(analysis: dict, now: datetime) -> bool:
     updated = _ts(analysis.get("updated_at"))
     age = now - datetime.fromisoformat(updated) if updated else timedelta(days=999)
     if state == "failed":
+        if analysis.get("problem") == "gone":  # deleted, private, or Gemini refused it: not again by itself
+            return (analysis.get("analyser") or 0) < style_study.ANALYSER
         return age > timedelta(hours=REF_RETRY_HOURS) or (analysis.get("analyser") or 0) < style_study.ANALYSER
     if state == "done":
         return (analysis.get("analyser") or 0) < style_study.ANALYSER

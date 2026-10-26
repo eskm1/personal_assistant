@@ -17,6 +17,8 @@ draft is rendered again with every code check (voice edges, the clipped-word che
                   reworded or removed, or made a picture ("picture": an AI picture of what it shows, pictures.py)
   hook_text       the hook reworded (its *marked* word, set in the look's accent: brass, or the gallery's italic)
   music_level     the music turned down or up by some dB
+  sound_effects   the soft sound effects (sfx.py): one taken off (by its number in the read), all off, or all
+                  quieter or louder by some dB
   layout          a voice-over's picture (voiceover.py): Bryan full screen for a stretch ("full"), the site
                   footage and his window back there ("window"), or his window moved "left" or "right"
   replan          only when nothing smaller fits: the old way, a new edit plan from the editor
@@ -40,7 +42,7 @@ import voice_edges
 log = logging.getLogger("studio.fix_actions")
 
 PATCHES = ("caption_word", "drop_words", "restore_words", "trim_pause", "move_cut", "graphic", "hook_text",
-           "music_level", "layout", "slide_text")
+           "music_level", "sound_effects", "layout", "slide_text")
 CUTS = ("drop_words", "restore_words", "trim_pause", "move_cut")
 
 NEAR = 3.0               # seconds: how far from the read's time its words or join may be
@@ -582,6 +584,16 @@ def _music(edl: dict, a: dict) -> str:
     return f"turned the music {'down' if new < old else 'up'} {abs(new - old):.0f} dB"
 
 
+def _effects(edl: dict, a: dict) -> str:
+    import sfx
+    if not (edl.get("sfx") or {}).get("placed") and a.get("field") == "remove" and a.get("item") is not None:
+        raise NotApplied("this draft has no sound effects")
+    try:
+        return sfx.patch(edl, a)
+    except ValueError as e:
+        raise NotApplied(str(e))
+
+
 def _layout(draft: Draft, edl: dict, a: dict) -> str:
     """A voice-over's picture: him full screen from start to end ("full"; a start alone: the sentence said there;
     no time: all through), the site footage and his window back there ("window"), or his window moved to the
@@ -635,6 +647,8 @@ def apply(edl: dict, clips: dict[int, dict], actions: list[dict]) -> tuple[dict,
                 res["did"] = _hook(new, a)
             elif kind == "music_level":
                 res["did"] = _music(new, a)
+            elif kind == "sound_effects":
+                res["did"] = _effects(new, a)
             elif kind == "layout":
                 res["did"] = _layout(draft, new, a)
             elif kind in CUTS:

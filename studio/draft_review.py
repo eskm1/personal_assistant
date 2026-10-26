@@ -40,7 +40,7 @@ _item = {"anyOf": [{"type": "integer"}, {"type": "null"}]}
 
 # What a fix the editor can make does, exactly (fix_actions.py makes it): one machine action per fix.
 REEL_ACTIONS = ("caption_word", "drop_words", "restore_words", "trim_pause", "move_cut", "graphic", "hook_text",
-                "music_level", "layout", "replan", "none")
+                "music_level", "sound_effects", "layout", "replan", "none")
 CAROUSEL_ACTIONS = ("slide_text", "replan", "none")
 ACTION_FIELDS = ("", "before", "after", "time", "title", "lines", "remove", "heading", "body", "caption", "full", "window",
                  "left", "right", "picture")
@@ -125,7 +125,7 @@ next_shoot fix (talking, broll, detail, before_after, reaction, screen), otherwi
 {fixable}
 {actions}
 {illustrate}
-{pictures}- works: 2 to 4 short points on what already works, so it's kept in the next version.
+{pictures}{effects}- works: 2 to 4 short points on what already works, so it's kept in the next version.
 - Place names stay internal: if an estate, condo, street or building name, an address or a \
 client's name appears in the on-screen text, captions or hook, that is always a this_draft fix \
 (area captions) to remove it.
@@ -147,7 +147,8 @@ for any future post in at most 14 words ("End on the last full sentence, never o
 starts the next"); same_rule is the number of the rule in "Editing rules Studio learned" it repeats \
 (R3 = 3), else 0. For other fixes rule is "" and same_rule 0."""
 _REEL_FIXABLE = ("trims and cuts, the order of the opening, the hook text, pace, caption words and timing, a "
-                 "graphic's or drawn animation's wording, placement or timing (or removing it), the music level, and "
+                 "graphic's or drawn animation's wording, placement or timing (or removing it), the music level, the sound "
+                 "effects (one taken off, or all quieter or off), and "
                  "in a voice-over where Bryan is full screen or in his window, and which corner it's in")
 _REEL_ACTIONS = """\
 - action: for an editor_can_fix fix, the exact change, so Studio makes just that change instead of \
@@ -171,6 +172,9 @@ animation becomes an AI picture of it, for a real-looking thing a drawing doesn'
   - hook_text: to = the new on-screen hook (at most 6 words, sentence case, one *italic* word or none), \
 or "" to take it off.
   - music_level: amount = how many dB to change it by (negative = quieter).
+  - sound_effects: only when the material lists sound effects: item = its number (E2 = 2) with field "remove" \
+takes that one off; field "remove" with item null takes them all off; amount = how many dB to change them all \
+by (negative = quieter, item null, field "").
   - layout: only in a voice-over (Bryan in a small window over site footage): field "full" shows him full \
 screen from start to end (start alone: the sentence he says there; both null: all through), "window" puts the \
 site footage and his window back there, "left" or "right" moves his window to that corner for the whole draft.
@@ -190,6 +194,15 @@ in a few words). A fix that isn't editor_can_fix has type "none". Unused fields 
 or footage), "taste", "message" (an offer, a claim only he can confirm) or "spending" (a new concept \
 picture costs money). "" for an editor_can_fix fix."""
 
+
+# Sound effects (sfx.py): deliberate, soft, under the voice; the read may flag one.
+_EFFECTS = """\
+- Sound effects: the material lists the few soft sound effects Studio added on purpose as graphics \
+come in (a whoosh, ticks on a numbers panel, a chime on the end card). Don't suggest removing them for \
+being there. Flag one only when the material or the stills give a reason: it lands on his words, it \
+doesn't fit the moment, or there are too many. Bryan wants them calm, never jarring; an effect he would \
+find loud or jarring is an editor_can_fix fix (area sound, action sound_effects).
+"""
 
 # Drawn inserts (editor.place_scenes): what the read says about them, and "Draw it for now".
 _ILLUSTRATE = """\
@@ -580,6 +593,10 @@ def _context(conn, production: dict) -> str:
                                  for n, d in shown))
     if pictures.available():
         lines.append(f"Studio can't make pictures for this draft ({pictures.available()}): no \"picture\" fixes.")
+    import sfx
+    if sfx.listed(edl):
+        lines.append(sfx.listed(edl) + f". They sit about {edl['sfx'].get('level_db', settings.SFX_LEVEL_DB):.0f} dB "
+                     "under his voice.")
     lines.append("Captions on screen (start-end seconds: text):\n"
                  + ("\n".join(f"  {c['start']:.2f}-{c['end']:.2f}: {c['text']}" for c in chunks) or "  (none)"))
     lines.append("Words spoken in the draft (start seconds, word):\n"
@@ -828,6 +845,7 @@ def run(conn, production_id: int, client=None, ref: str | None = None) -> dict:
     text = _slideshow_context(conn, production) if edl.get("slideshow") else _context(conn, production)
     grid = [total * (i + 0.5) / STILLS for i in range(STILLS)]
     import pictures
+    import sfx
     extra = [round((d["start"] + d["end"]) / 2, 2) for d in inserts(edl) + pictures.listed(edl)
              if not any(d["start"] <= t <= d["end"] for t in grid)]
     with tempfile.TemporaryDirectory(prefix="studio-review-") as tmp:
@@ -846,7 +864,8 @@ def run(conn, production_id: int, client=None, ref: str | None = None) -> dict:
         .replace("{fixable}", _FIXABLE.replace("{examples}", _REEL_FIXABLE)).replace("{actions}", _REEL_ACTIONS)
         .replace("{illustrate}", _ILLUSTRATE if settings.EDIT_SCENES and settings.EDIT_SCENES_MAX > 0 else _NO_ILLUSTRATE)
         .replace("{pictures}", "" if pictures.available() and not pictures.listed(edl)
-                 else _PICTURES.replace("{max}", str(settings.REEL_PICTURES_MAX))),
+                 else _PICTURES.replace("{max}", str(settings.REEL_PICTURES_MAX)))
+        .replace("{effects}", _EFFECTS if sfx.listed(edl) else ""),
         messages=[{"role": "user", "content": content}],
     )
     usage.record("review", ref or f"production:{production_id}", response)

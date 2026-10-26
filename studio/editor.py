@@ -2796,7 +2796,7 @@ def _measure_loudnorm(args: list[str]) -> dict:
 def mix_final(cut: Path, overlay: Path | None, music_file: Path | None, volume_db: float, total: float,
               out: Path, words: list[dict] = (), inserts: list[tuple[Path, float]] = (),
               footage: float | None = None, voice_out: tuple[float, float] | None = None,
-              under: tuple[Path, float] | None = None) -> dict:
+              under: tuple[Path, float] | None = None, effects: list[dict] = (), effects_below: float | None = None) -> dict:
     """The final draft: footage, the drawn inserts (transparent WebMs, each laid over the footage
     from its start: (file, seconds)), the caption layer on top of them, and the sound (the voice
     levelled, the music set under it, see VOICE_LUFS), all in the one encode. footage: how long the
@@ -2804,7 +2804,8 @@ def mix_final(cut: Path, overlay: Path | None, music_file: Path | None, volume_d
     voice_out: (start, seconds) the shot's own sound fades out over, after the last word. The music
     fades out over the last END_FADE. under: a voice-over's site sound (a WAV on the draft's clock) and
     the gain (dB) that sets it well under the levelled voice (voiceover.SITE_BELOW), mixed in as it is.
-    Returns what it measured and did."""
+    effects: the soft sound effects on the graphics (sfx.plan: [{file, at, seconds, duck_db, dips}]), each one's
+    loudest moment effects_below dB under the loud parts of the levelled voice (effects_stem). Returns what it measured and did."""
     raw = ["-f", "f32le", "-ar", str(RATE), "-ac", "2"]
     with tempfile.TemporaryDirectory(prefix="studio-mix-") as tmp:
         work = Path(tmp)
@@ -2861,6 +2862,9 @@ def mix_final(cut: Path, overlay: Path | None, music_file: Path | None, volume_d
                            else round(v + lowered, 1) if k in ("gap_db", "bed_below_db") and v is not None else v)
                        for k, v in gap.items()}
             report.update(gap, music_lowered_db=lowered)
+        if effects:
+            fx_raw = work / "sfx.f32"
+            report["sfx"] = effects_stem(effects, voice_raw, list(words), total, effects_below, fx_raw)
         sound_in = [*raw, "-i", str(voice_raw)] + ([*raw, "-i", str(music_raw)] if music_file else [])
         if music_file:
             mix = ((f"[1:a]volume=-{lowered}dB[ml];[0:a][ml]" if lowered else "[0:a][1:a]")
@@ -2874,6 +2878,12 @@ def mix_final(cut: Path, overlay: Path | None, music_file: Path | None, volume_d
                    f"apad=whole_len={round(total * RATE)},atrim=end_sample={round(total * RATE)}[site];"
                    "[pre][site]amix=inputs=2:duration=first:normalize=0")
             report["site_gain_db"] = under[1]
+        if effects:  # the sound effects, well under everything
+            k = 1 + bool(music_file) + bool(under)
+            sound_in += [*raw, "-i", str(fx_raw)]
+            down = report["sfx"]["lowered_db"]
+            mix = (mix + f"[pre_fx];[{k}:a]" + (f"volume=-{down}dB" if down else "anull")
+                   + "[fx];[pre_fx][fx]amix=inputs=2:duration=first:normalize=0")
         mixed = work / "mix.wav"
         extract._run([settings.FFMPEG, "-y", "-v", "error", *sound_in, "-filter_complex", mix + "[a]", "-map", "[a]",
                       "-c:a", "pcm_f32le", str(mixed)])
@@ -2904,6 +2914,89 @@ def mix_final(cut: Path, overlay: Path | None, music_file: Path | None, volume_d
                  "-t", f"{total:.3f}", str(out)]
         extract._run(args)
     return report
+
+
+VOICE_PEAK_DB = -10.0  # the loud parts of a voice levelled to VOICE_LUFS (K-weighted, 50 ms), when there's no voice
+EFFECT_WINDOW = 0.05
+
+
+def _window_db(x, rate: int = RATE, window: float = EFFECT_WINDOW):
+    """Level (dB) of each `window` of samples, a new one every 10 ms."""
+    import numpy as np
+    k, hop = int(window * rate), int(0.01 * rate)
+    if len(x) < k:
+        return np.array([_db(x)])
+    c = np.concatenate([[0.0], np.cumsum(np.square(x, dtype="float64"))])
+    starts = np.arange(0, len(x) - k + 1, hop)
+    power = (c[starts + k] - c[starts]) / k
+    return 10 * np.log10(np.maximum(power, 1e-12))
+
+
+EFFECT_RAMP = 0.03  # an effect's dip under a loud word comes in and goes out over this long
+
+
+def _dip_expr(dips: list, gain_db: float, ramp: float = EFFECT_RAMP) -> str:
+    """ffmpeg volume expression of t: gain_db, and sfx.DIP_DB lower over each dip (from, to: a word's loudest part,
+    on the draft's clock), with short ramps."""
+    import sfx
+    if not dips:
+        return f"{10 ** (gain_db / 20):.6f}"
+    parts = [f"clip(min((t-{a - ramp:.3f})/{ramp},({b + ramp:.3f}-t)/{ramp}),0,1)" for a, b in dips]
+    while len(parts) > 1:
+        parts = [f"max({x},{y})" if y else x for x, y in itertools.zip_longest(parts[::2], parts[1::2])]
+    return f"pow(10,({gain_db:.2f}-{sfx.DIP_DB:.2f}*{parts[0]})/20)"
+
+
+def voice_peak_db(voice, words: list[dict], rate: int = RATE) -> float | None:
+    """The loud parts of his voice: the 95th percentile of its 50 ms levels while he talks (K-weighted)."""
+    import numpy as np
+    v = _read_raw(voice) if isinstance(voice, Path) else voice
+    parts = [v[int(w["start"] * rate):int(w["end"] * rate)] for w in words]
+    levels = np.concatenate([_window_db(p, rate) for p in parts if len(p)]) if any(len(p) for p in parts) else []
+    levels = [x for x in levels if x > -70]
+    return round(float(np.percentile(levels, 95)), 1) if levels else None
+
+
+def effects_stem(effects: list[dict], voice_raw: Path, words: list[dict], total: float, below: float | None,
+                 out: Path) -> dict:
+    """The sound effects on the draft's clock as one raw stem: each from its moment, a short fade in and out, its
+    loudest 50 ms set `below` dB (settings.SFX_LEVEL_DB) under the loud parts of the levelled voice (voice_peak_db),
+    plus its own duck (sfx.DUCK_DB over a word) and its dips (sfx.DIP_DB more over a word's loudest part). Measured: the guard that can't regress turns them all down
+    when the loudest came out closer to the voice than asked (lowered_db, applied in the mix)."""
+    import numpy as np
+    below = settings.SFX_LEVEL_DB if below is None else below
+    voice = voice_peak_db(voice_raw, words) if words else None
+    ref = voice if voice is not None else VOICE_PEAK_DB
+    peaks = {}
+    for f in dict.fromkeys(str(e["file"]) for e in effects):
+        tmp = out.with_name(f"fx_{len(peaks)}.f32")
+        extract._run([settings.FFMPEG, "-y", "-v", "error", "-i", f, "-af", f"aresample={RATE},aformat=channel_layouts=stereo",
+                      "-f", "f32le", str(tmp)])
+        peaks[f] = float(_window_db(_read_raw(tmp)).max())
+        tmp.unlink(missing_ok=True)
+    args, graph = [settings.FFMPEG, "-y", "-v", "error"], []
+    for i, e in enumerate(effects):
+        sec = max(float(e["seconds"]), 0.05)
+        fade = round(min(0.15, sec * 0.4), 3)
+        gain = ref - below - float(e.get("duck_db") or 0) - peaks[str(e["file"])]
+        ms = max(0, round(e["at"] * 1000))
+        args += ["-i", str(e["file"])]
+        graph.append(f"[{i}:a]aresample={RATE},aformat=channel_layouts=stereo,atrim=end={sec:.3f},afade=t=in:d=0.01,"
+                     f"afade=t=out:st={sec - fade:.3f}:d={fade:.3f},adelay={ms}:all=1,asetnsamples=n=256,"
+                     f"volume='{_dip_expr(e.get('dips') or [], gain)}':eval=frame[e{i}]")
+    graph.append("".join(f"[e{i}]" for i in range(len(effects))) + f"amix=inputs={len(effects)}:duration=longest:"
+                 f"normalize=0,apad=whole_len={round(total * RATE)},atrim=end_sample={round(total * RATE)}[fx]")
+    extract._run(args + ["-filter_complex", ";".join(graph), "-map", "[fx]", "-f", "f32le", "-ar", str(RATE), "-ac", "2",
+                         str(out)])
+    stem = _read_raw(out)
+    for e in effects:  # measured where it plays at its own level (not over a word's loudest part, where it dips)
+        for a, b in e.get("dips") or []:
+            stem[max(0, int((a - EFFECT_RAMP) * RATE)):int((b + EFFECT_RAMP) * RATE)] = 0.0
+    loudest = max(float(_window_db(stem[int(e["at"] * RATE):int((e["at"] + e["seconds"]) * RATE) + 1]).max())
+                  + float(e.get("duck_db") or 0) for e in effects)
+    lowered = round(max(0.0, below - (ref - loudest)), 1) if ref - loudest < below - 1.0 else 0.0
+    return {"count": len(effects), "voice_peak_db": voice, "effect_peak_db": round(loudest - lowered, 1),
+            "below_db": round(ref - loudest + lowered, 1), "asked_below_db": below, "lowered_db": lowered}
 
 
 def fix_loudness(final: Path, measured: dict) -> bool:
@@ -3065,6 +3158,14 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
     previous = json.loads(production.get("edl") or "{}")
     if notes and previous.get("cuts"):
         edl["picture_asks"] = pictures.apply_asks(edl, pictures.asks_from_notes(notes, previous))
+    # A note on the sound effects ("no sound effects", "the whoosh is too loud") holds for this post from then on.
+    if settings.SFX:
+        import sfx
+        pref, did = sfx.pref_from_notes(notes, previous.get("sfx_pref"))
+        if did or previous.get("sfx_pref"):
+            edl["sfx_pref"] = pref
+        if did:
+            edl["sfx_asks"] = did
     if fresh:
         edl["fresh"] = True
     _render(conn, production, clips, edl, plan, version, find_track, client=client)
@@ -3341,6 +3442,8 @@ def self_revise(conn, production_id: int, fixes: list[dict], round_no: int, clie
     edl["cuts"] = _cut(edl, clips, client, self_fix.ref(production_id), [f["body"] for f in fixes])
     if previous.get("look"):
         edl["look"] = previous["look"]
+    if previous.get("sfx_pref"):
+        edl["sfx_pref"] = previous["sfx_pref"]
     _keep_corrections(edl, production)
     _keep_picture(edl, production, clips)
     find_track, plan = _same_music(production, plan, find_track)
@@ -3433,6 +3536,7 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
     # sound fixes (the recording's level, not an editing mistake).
     checks = [{"did": c, "counted": True} for c in edl.get("checks") or []]
     checks += [{"did": c, "counted": False} for c in edl.pop("picture_asks", None) or []]  # Bryan's asks, not slips
+    checks += [{"did": c, "counted": False} for c in edl.pop("sfx_asks", None) or []]
     # Captions say what Bryan meant: the draft's corrections, and the spell-check's (words it
     # already checked in this draft aren't sent again).
     import spelling
@@ -3613,6 +3717,13 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
 
         layers = {"inserts": [(insert_file(g), g["start"]) for g in sorted(scenes + pics, key=lambda g: g["start"])]} \
             if scenes or pics else {}
+        # Soft sound effects on the graphics (sfx.py): a whoosh as each comes in, ticks on a numbers panel, the end
+        # card's chime; sparse, clear of his loud words, well under his voice. None (and no edl["sfx"]) when off.
+        import sfx
+        effects, fx_notes = sfx.plan(edl, graphics, end, cuts, words, total, production["brand"], look["titles"], picture)
+        if effects:
+            layers.update(effects=effects, effects_below=edl["sfx"]["level_db"])
+        checks += [{"did": n, "counted": False} for n in fx_notes]
         # The shot's own sound fades out at the end of the footage, after the last word (never over it).
         speech_end = close.get("speech_end")
         fade = min(0.3, footage - speech_end - 0.05) if speech_end is not None else 0.0
@@ -3625,6 +3736,9 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         if sound.get("voice_gain_db", 0) >= 6:
             checks.append({"did": f"brought your voice up {sound['voice_gain_db']:.0f} dB to a steady level "
                                   "and cleaned up the background noise", "counted": False})
+        if (sound.get("sfx") or {}).get("lowered_db"):
+            checks.append({"did": f"turned the sound effects down {sound['sfx']['lowered_db']:.0f} dB more so they stay "
+                                  "well under your voice", "counted": False})
         if sound.get("music_lowered_db"):
             checks.append({"did": f"turned the music down {sound['music_lowered_db']:.0f} dB more so it stays "
                                   "under your voice", "counted": False})

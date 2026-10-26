@@ -75,6 +75,12 @@ def record(kind: str, ref: str, response) -> float:
 
 def record_image(ref: str, model: str, meta: dict | None, usd: float) -> float:
     """Log one picture Gemini drew (usageMetadata from its answer). Never raises."""
+    return record_gemini("image", ref, model, meta, usd)
+
+
+def record_gemini(kind: str, ref: str, model: str, meta: dict | None, usd: float) -> float:
+    """Log one Gemini call at a set price (a picture, or a YouTube reference watched: kind 'style',
+    so it counts toward the reference budget), with its tokens from usageMetadata. Never raises."""
     try:
         import catalog
         meta = meta if isinstance(meta, dict) else {}
@@ -82,15 +88,15 @@ def record_image(ref: str, model: str, meta: dict | None, usd: float) -> float:
         try:
             conn.executescript(_SCHEMA)
             conn.execute("""INSERT INTO usage (at, kind, ref, model, input_tokens, output_tokens, cache_read,
-                                cache_write, cost_usd) VALUES (?, 'image', ?, ?, ?, ?, 0, 0, ?)""",
-                         (catalog.now(), ref, model, int(meta.get("promptTokenCount") or 0),
-                          int(meta.get("candidatesTokenCount") or 0), usd))
+                                cache_write, cost_usd) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)""",
+                         (catalog.now(), kind, ref, model, int(meta.get("promptTokenCount") or 0),
+                          int(meta.get("candidatesTokenCount") or 0) + int(meta.get("thoughtsTokenCount") or 0), usd))
             conn.commit()
         finally:
             conn.close()
         return usd
     except Exception as e:
-        log.warning("Couldn't record a picture's cost for %s: %s", ref, e)
+        log.warning("Couldn't record a Gemini call's cost for %s: %s", ref, e)
         return 0.0
 
 

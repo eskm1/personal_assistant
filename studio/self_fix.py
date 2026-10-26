@@ -177,6 +177,8 @@ def same_fix(a: dict, b: dict) -> bool:
                 return False
         if kind in ("hook_text", "music_level"):
             return True
+        if kind == "sound_effects":
+            return aa.get("item") == ab.get("item")
         if kind == "slide_text" and aa.get("item") == ab.get("item") and aa.get("field") == ab.get("field"):
             return True
     if a.get("slide") and b.get("slide") and a["slide"] != b["slide"]:

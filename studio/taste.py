@@ -100,6 +100,34 @@ def compact(ref: dict, a: dict, followers: dict | None = None) -> dict:
         out["transcript"] = (m.get("transcript") or "")[:300]
         out["look"] = {k: look.get(k) for k in ("hook", "first_frame", "captions", "layouts", "broll", "graphics",
                                                 "cta", "standout", "design") if look.get(k) not in (None, "", [])}
+        if m.get("estimated_by"):
+            out["estimated"] = True  # a YouTube reference: Gemini's numbers, kept out of the medians
+        arc = arc_of(look)
+        if arc:
+            out["arc"] = arc
+    return out
+
+
+def arc_of(look: dict) -> dict | None:
+    """A reel's structure read, compact (about 90 tokens): each part's pattern, where it turns,
+    what was inferred rather than seen or heard, the parts in a few words and the strongest
+    observation. None for a reel analysed before the beat timeline (2026-10-26)."""
+    arc = look.get("arc") if isinstance(look.get("arc"), dict) else None
+    if not arc:
+        return None
+    out = {}
+    for part in ("open", "turn", "close"):
+        p = arc.get(part) or {}
+        out[part] = {"pattern": p.get("pattern"), "what": (p.get("what") or "")[:90]}
+        if p.get("at") is not None:
+            out[part]["at"] = p["at"]
+    out["holds"] = (arc.get("hold") or {}).get("devices") or []
+    inferred = [part for part in ("open", "hold", "turn", "close") if (arc.get(part) or {}).get("basis") == "inferred"]
+    if inferred:
+        out["inferred"] = inferred
+    obs = [o for o in look.get("observations") or [] if isinstance(o, dict)]
+    if obs:
+        out["signal"] = {"at": obs[0].get("at"), "text": (obs[0].get("text") or "")[:120], "basis": obs[0].get("basis")}
     return out
 
 
@@ -120,6 +148,24 @@ FEATURES = {
 }
 
 
+def structure_of(group: list[dict]) -> dict | None:
+    """style_study.structure_summary over compact items (their arc_of): how the reels open,
+    hold, turn and close, counted."""
+    import style_study
+    looks = []
+    for i in group:
+        a = i.get("arc")
+        if not a:
+            looks.append((None, None))
+            continue
+        arc = {part: {"pattern": (a.get(part) or {}).get("pattern"), "at": (a.get(part) or {}).get("at"),
+                      "basis": "inferred" if part in (a.get("inferred") or []) else "seen"}
+               for part in ("open", "turn", "close")}
+        arc["hold"] = {"devices": a.get("holds") or [], "basis": "inferred" if "hold" in (a.get("inferred") or []) else "seen"}
+        looks.append(({"arc": arc}, i["numbers"].get("duration")))
+    return style_study.structure_summary(looks)
+
+
 def stats(items: list[dict]) -> dict:
     """The numbers the report quotes, measured here rather than guessed: what the library
     holds, its typical pace and length, and the better-performing quarter vs the rest."""
@@ -132,14 +178,20 @@ def stats(items: list[dict]) -> dict:
         if not group:
             continue
         block = {"posts": len(group)}
+        sure = [i for i in group if not i.get("estimated")]  # Gemini's estimates (YouTube) stay out of medians
+        if len(sure) < len(group):
+            block["estimated_not_measured"] = len(group) - len(sure)
         for key, label in FEATURES[kind]:
-            block[label] = {"median": _median([i["numbers"].get(key) for i in group]),
-                            "measured": sum(1 for i in group if _num(i["numbers"].get(key)) is not None)}
+            block[label] = {"median": _median([i["numbers"].get(key) for i in sure]),
+                            "measured": sum(1 for i in sure if _num(i["numbers"].get(key)) is not None)}
         if kind == "images":
             block["words per slide"] = {"median": _median([(i["look"] or {}).get("words_per_slide") for i in group])}
         else:
             block["has captions"] = _share(group, lambda i: ((i["look"].get("captions") or {}).get("present")) is True)
             block["captions in capitals"] = _share(group, lambda i: (i["look"].get("captions") or {}).get("case") == "upper")
+            structure = structure_of(group)
+            if structure:
+                block["structure"] = structure
         out[kind] = block
     # Engagement: who has which numbers, then the top quarter vs the rest per kind of post.
     have = lambda k: sum(1 for i in items if _num(i["engagement"].get(k)) is not None)  # noqa: E731
@@ -158,7 +210,8 @@ def stats(items: list[dict]) -> dict:
         top, rest = scored[:cut], scored[cut:]
         cmp = {}
         for key, label in FEATURES[kind]:
-            a, b = _median([i["numbers"].get(key) for i in top]), _median([i["numbers"].get(key) for i in rest])
+            a = _median([i["numbers"].get(key) for i in top if not i.get("estimated")])
+            b = _median([i["numbers"].get(key) for i in rest if not i.get("estimated")])
             if a is not None and b is not None:
                 cmp[label] = {"top": a, "rest": b}
         if kind == "video":
@@ -167,6 +220,17 @@ def stats(items: list[dict]) -> dict:
                                                                     for l in i["look"].get("layouts") or [])),
                                 ("before/after", lambda i: "before_after" in (i["look"].get("layouts") or []))):
                 cmp[label] = {"top": _share(top, test), "rest": _share(rest, test), "share": True}
+            # The structure: each open / close pattern at least 3 reads have, top quarter vs the rest.
+            read = [i for i in scored if i.get("arc")]
+            for part in ("open", "close"):
+                seen = {}
+                for i in read:
+                    p = (i["arc"].get(part) or {}).get("pattern")
+                    seen[p] = seen.get(p, 0) + 1
+                for pattern in sorted(p for p, c in seen.items() if p and c >= 3):
+                    test = lambda i, part=part, pattern=pattern: ((i.get("arc") or {}).get(part) or {}).get("pattern") == pattern  # noqa: E731
+                    cmp[f"{part}s: {pattern}"] = {"top": _share([i for i in top if i.get("arc")], test),
+                                                  "rest": _share([i for i in rest if i.get("arc")], test), "share": True}
         else:
             cmp["text-led slides (over 15 words)"] = {
                 "top": _share(top, lambda i: (_num((i["look"] or {}).get("words_per_slide")) or 0) > 15),
@@ -241,7 +305,9 @@ or slides, the caption, and whatever engagement Instagram showed). This is part 
 Write short, specific notes (Markdown bullets, numbers and post ids like #123) on:
 - design: palettes, materials, lighting, camera work, framing, shot types, on-screen text and fonts, \
 caption styling, carousel layouts;
-- content: formats, hook patterns, structures, topics, length and pace, calls to action, voice;
+- content: formats, hook patterns, structures, topics, length and pace, calls to action, voice; where a \
+reel has an arc (its structure read from a timeline of beats: open, holds, turn, close, the strongest \
+signal with its time; "inferred" names the parts not seen or heard), the typical patterns with counts;
 - engagement: which of these posts did better (per view or per follower where given) and what they share; \
 say when the numbers are missing.
 - hooks: up to 12 of the strongest opening lines, quoted exactly from a transcript, caption or cover \
@@ -250,6 +316,7 @@ say when the numbers are missing.
 idea, hook or structure) or engagement (it clearly did better). The team didn't tag them: this is your \
 inference from the analysis.
 - fonts_seen: the type styles you read about (e.g. "rounded geometric sans, bold, lower case").
+A post marked "estimated" was a YouTube video Gemini watched: its numbers are estimates, not measured.
 Never invent numbers or quotes; use only what is in the evidence."""
 
 _REPORT_SYSTEM = """You are the editor-in-chief for the Instagram of {brand_name}, a Singapore \
@@ -278,7 +345,9 @@ Write (Markdown in every text field; plain words for Bryan, the owner, who isn't
 - summary: the 5 to 7 things the library says about the team's taste, in bullets.
 - design / content / engagement: each a section of short headed bullets with numbers, quotes (hooks \
 quoted exactly with the post id) and examples (post ids with a short note: they show as thumbnails \
-linking to the post). Engagement: what the higher-engagement posts share versus the rest, with the \
+linking to the post). Content includes the structure: how the Reels typically open, hold attention, turn \
+and close, with the counts from stats.video.structure (how many of the Reels had a structure read; say \
+where most findings were inferred), and in engagement the "opens:" / "closes:" rows where given. Engagement: what the higher-engagement posts share versus the rest, with the \
 numbers from stats and the caveats (how many posts had views or followers, saved posts are a biased \
 sample, accounts differ in size, correlation is not cause).
 - fonts: the type styles seen and the closest free font for each, what to use it for (Reel captions, \

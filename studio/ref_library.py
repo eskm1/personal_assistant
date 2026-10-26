@@ -32,7 +32,7 @@ import settings
 
 log = logging.getLogger("studio.refs")
 
-PER_POST_USD = 0.05          # Claude's look at one post, until enough real costs are known
+PER_POST_USD = 0.06          # Claude's look at one post (a reel ~0.065 with its beat timeline, a carousel ~0.05), until real costs are known
 SECONDS_PER_POST = 80        # download + measuring + Claude + the pause between, on the server
 GAP_SECONDS = (45, 90)       # between two downloads (random within)
 BACKOFF_FIRST = 600          # after Instagram refuses: 10 minutes, doubling each time

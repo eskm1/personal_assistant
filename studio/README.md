@@ -446,7 +446,8 @@ The jump cuts, reframing and punch-ins are settings in `.env` (all on by default
 sentences only), `STUDIO_END_CARD` (default on),
 `STUDIO_EDIT_REFRAME`, `STUDIO_EDIT_PUNCH_INS`, `STUDIO_EDIT_PUNCH_ZOOM` (default 1.12), `STUDIO_EDIT_SCENES`,
 `STUDIO_EDIT_SCENES_MAX` (default 3; `0` = none), `STUDIO_REEL_PICTURES` (AI pictures, below; default on),
-`STUDIO_REEL_PICTURES_MAX` (default 4). The fix rounds,
+`STUDIO_REEL_PICTURES_MAX` (default 4), `STUDIO_SFX` (sound effects, below; default on), `STUDIO_SFX_LEVEL_DB`
+(default 24), `STUDIO_SFX_MAX` (default 5). The fix rounds,
 learning, caption font and music gap are too: `STUDIO_SELF_FIX_ROUNDS`, `STUDIO_SELF_FIX_MAX_USD`, `STUDIO_FINAL_CHECK`,
 `STUDIO_SPELL_CHECK`, `STUDIO_SPELL_MODEL`, `STUDIO_LEARN_RULES`,
 `STUDIO_LEARNED_RULES_MAX`, `STUDIO_CAPTION_FONT`, `STUDIO_TITLE_STYLE` (`site`, the default, `gallery` or `classic`),
@@ -501,6 +502,33 @@ layers, measurements, comparisons and numbers stay drawings.
   for it, or its words as a headline), and "What the editor did" says so once. A draft is never held up by a picture.
 - Studio's read and its watch-through treat a picture like a drawing (long enough to see, clear of your face, gone
   before the close). The DaVinci Resolve project has the pictures on the drawn animations' track.
+
+### Sound effects
+
+A Reel used to have your voice and the music only. Now a few **soft sound effects** come with the graphics (your
+"yes ok" of 2026-10-26: "a gentle whoosh as a label slides in, a tick on the numbers panel, a soft chime on the end
+card. Calm, never jarring"):
+
+- **Where**: a soft whoosh as a label, card or callout slides in; a soft tick as each bar of a numbers panel grows
+  (at most 3); a very soft air whoosh as a drawing or a picture comes in; one soft chime on the end card as the mark
+  rises. Sparse on purpose: never two within 1.5 seconds, none in the first second, none within 0.4 seconds of a cut
+  in your speech, at most one every 6 seconds (`STUDIO_SFX_MAX`, default 5, a draft). Never riding on the loud part of a word
+  you say: it moves into the nearest gap (at most 0.3 seconds); with no gap near, it dips well under that moment, or
+  it's left out when it would mostly sit on your words. One that touches a word at all plays a little quieter.
+- **How loud**: well under your voice: each effect's loudest moment `STUDIO_SFX_LEVEL_DB` (default 24) dB under the
+  loud parts of your levelled voice, with a short fade in and out, mixed in the same one encode as the voice and the
+  music. Studio measures them after and turns them down if one came out louder.
+- **Where they come from**: Epidemic Sound's own sound effects (your subscription) when its connection offers them;
+  Studio asks it what it offers each time it needs a new one. Otherwise Openverse (openverse.org, free, no account),
+  and only effects marked **CC0** or public domain, never anything that needs credit or bars commercial use. Never
+  made up by a generator. Each effect is fetched once and kept in `Studio\SoundEffects` (with `index.json`: where it
+  came from, its id, title, maker and licence), so every draft after uses the same ones. The draft's **Checks** list
+  each effect and where it came from; so does its plan (`sfx` in the edit).
+- **Your say**: a note like "**no sound effects**", "the whoosh is too loud" or "no chime" turns them off, down or
+  that one off for that post from then on ("bring back the sound effects" puts them back). Studio's read knows they're
+  deliberate and may flag one as too loud or jarring; its own round then takes that one off or turns them all down.
+- **Turning them off**: `STUDIO_SFX=0` (then a draft is made exactly as before). Slideshow Reels get none. Free: Epidemic's
+  are in your subscription, Openverse's are CC0. The DaVinci Resolve project doesn't carry them yet.
 
 ### Voice-overs: film on site, talk in the studio
 
@@ -993,6 +1021,24 @@ it becomes a reference and moves to `Studio\References`. Then, on the laptop, au
 - when Bryan approves a draft, the laptop writes it into `playbook.md` (replacing the previous
   house style) on its next sync.
 
+How Studio "watches" a reel (since 2026-10-26): before concluding anything it lines up the stills
+and the timed transcript as one timeline of beats (each still, what is said until the next one, the
+cuts in between), then reads the structure from it: how the reel opens, holds attention, turns and
+closes. Each finding says whether a still showed it, the words said it, or it is Studio's inference;
+what the stills could have missed (shots no still landed in) is listed as a gap; and it ends with the
+three strongest observations and their times. The style guide and the taste report count the patterns
+across references ("8 of 12 open with the result first"). Same single Claude look per reel (about
+US$0.065 instead of 0.05: ~650 more output tokens, ~500 more input). References analysed before keep
+their old read.
+
+YouTube links (watch, youtu.be, Shorts) aren't downloaded (YouTube blocks servers): Gemini watches the
+video from its link and answers in the same shape, with its numbers marked as estimates (kept out of
+the averages) and YouTube's thumbnail as the still. It uses the Gemini key (`setup.sh key gemini`),
+costs about US$0.05 each (`STUDIO_REFERENCE_VIDEO_COST_USD`, counted in the reference budget), watches
+at most the first 3 minutes (`STUDIO_REFERENCE_VIDEO_MAX_SECONDS`); the model is
+`STUDIO_REFERENCE_VIDEO_MODEL`. A video Gemini refuses or can't open fails with the reason and isn't
+tried again by itself.
+
 Retire a reference rather than deleting it when it no longer represents the style.
 
 ### Many references at once, and the taste report
@@ -1006,7 +1052,7 @@ page: a progress line ("312 of 814 analysed · 40 couldn't be downloaded"), a pa
 filter by kind of post and account, and each post's own page.
 
 **Nothing is downloaded or spent until Bryan presses Analyse.** The Library shows the cost first:
-**Analyse all** (about US$0.05 a post: US$41 and about 18 hours for 814) or **Analyse a sample of
+**Analyse all** (about US$0.06 a post: about US$49 and about 18 hours for 814) or **Analyse a sample of
 150 first** (about US$7.50 and 3 hours, spread across kinds of post and accounts, at most two per
 account). Studio then works through them on the server one every minute or so, so Instagram
 doesn't block it: when Instagram refuses, it waits longer each time (10 minutes, then 20, 40 …), and
@@ -1224,7 +1270,8 @@ Files the worker can't use are moved out of the inbox, not deleted. They go to
 Whisper runs locally for free. Each clip is one Claude call with up to 20 small frames
 plus the transcript. AI concept pictures for carousels, and the pictures a Reel shows instead of a drawing, are Google
 Gemini's, about US$0.03 each (`STUDIO_IMAGE_COST_USD`; a Reel at most 4 new ones, `STUDIO_REEL_PICTURES_MAX`); the
-dashboard shows them next to the Claude cost. Suggested topics are one Claude
+dashboard shows them next to the Claude cost. Sound effects on the Reels' graphics cost nothing (Epidemic Sound's are
+in the subscription, Openverse's are CC0, each fetched once). Suggested topics are one Claude
 call a week (plus any when the month falls behind or someone presses Suggest topics), a few cents each. Check the first week's usage in the Anthropic console before you
 send it a backlog of hundreds of clips. The words filter (section 17) adds about a cent per draft or idea run when a
 rewrite is needed, and the voice file about 10 cents each time it's written. To spend less, set `STUDIO_CLAUDE_EFFORT=low` or

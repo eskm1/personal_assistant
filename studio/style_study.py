@@ -27,6 +27,22 @@ and Claude reads their layout, type, palette, text density, slide structure,
 cover hook and call to action. Whatever the post's metadata says about how it did
 (likes, comments, views, upload date) comes back as "engagement".
 
+Before Claude concludes anything about a reel, the stills and the timed transcript
+are merged into one timeline of beats (a still's time, what is said from then to
+the next still, the cuts in between; merge_beats). Claude says what is on screen in
+each beat and what changed since the last, then reads the structure from the
+timeline (arc: how it opens, holds attention, turns and closes), marks each finding
+seen, heard, both or inferred, lists what the sampling could have missed (gaps:
+Studio measures the shots no still landed in, Claude adds the rest) and ends with
+the three highest-signal observations and their times. All of it is kept in the
+analysis's look (look.beats, compact; look.arc, look.gaps, look.observations), and
+the style guide and the taste report count the open / turn / close patterns across
+references (structure_summary). Same one call per reel.
+
+YouTube links (youtube.com/watch, youtu.be, youtube.com/shorts) aren't downloaded
+(YouTube blocks servers): Gemini watches them from the link and answers in the
+same shape (ref_youtube.py).
+
 The same pieces run the online "Reference guides" (cloud/CONTRACT.md): the
 worker's sync analyses each reference the team adds with analyse(), and drafts
 the brand's style guide with draft_guide() whenever the set of references
@@ -57,8 +73,12 @@ START, END = "<!-- style-study:start -->", "<!-- style-study:end -->"
 SCENE_THRESHOLD = 0.3   # a cut to different footage
 JUMP_MIN, JUMP_RATIO = 0.004, 4  # a jump cut / punch-in: a smaller spike, well above its neighbours
 MAX_STILLS = 12
+EARLY_SHOTS = 5         # shots that always get a still (the hook); the rest are spread to the close
+LONG_STRETCH = 8.0      # seconds between two stills with no cut in them: a slow change could be missed
 # Bump when measure()/look() change: the sync re-analyses references made by an older one
-# (reference_analysis.analyser).
+# (reference_analysis.analyser). Not bumped for the beat timeline (2026-10-26): that would pay to
+# analyse every done reference again (the library alone is ~US$41-49), which is the owner's call;
+# references analysed from now on carry it, older ones read as "no structure read".
 ANALYSER = 2  # 2: downloads on the server found ffmpeg (every reel there had failed)
 # Instagram sign-in for downloads on a machine with no browser (the server): a
 # Netscape-format cookies.txt exported from a browser signed in to a spare account.
@@ -507,6 +527,10 @@ def measure(video: Path) -> dict:
             t = transcribe.transcribe(wav)
         words = t.get("words", [])
         out["transcript"] = t.get("text", "")[:3000]
+        # The timed words, for the beat timeline only (analyse() takes them out before anything is kept).
+        out["_speech"] = {"words": [[w["start"], w["word"]] for w in words if w.get("word")]
+                          or [[s["start"], s["text"]] for s in t.get("segments") or [] if s.get("text")],
+                          "join": "" if t.get("language") == "zh" else " "}
         if len(words) >= 5:
             span = words[-1]["end"] - words[0]["start"]
             gaps = [b["start"] - a["end"] for a, b in zip(words, words[1:])]
@@ -526,21 +550,208 @@ def measure(video: Path) -> dict:
     return out
 
 
-def stills(video: Path, cuts: list[float], duration: float, out_dir: Path) -> list[tuple[float, Path]]:
-    """The first frame plus one frame inside each early shot (what a viewer sees)."""
-    out_dir.mkdir(parents=True, exist_ok=True)
+def still_times(cuts: list[float], duration: float) -> list[float]:
+    """The first frame plus one frame inside each shot: every shot when they fit, else the
+    first EARLY_SHOTS (the hook) and the rest spread to the end, the last shot always (the
+    close), so the timeline sees how a reel turns and ends, not only how it starts."""
     edges = [0.0, *cuts, duration]
-    times = [0.15] + [round((a + b) / 2, 2) for a, b in zip(edges, edges[1:])][: MAX_STILLS - 1]
+    mids = [round((a + b) / 2, 2) for a, b in zip(edges, edges[1:])]
+    room = MAX_STILLS - 1
+    if len(mids) > room:
+        rest, k = mids[EARLY_SHOTS:], room - EARLY_SHOTS
+        mids = mids[:EARLY_SHOTS] + [rest[round(j * (len(rest) - 1) / (k - 1))] for j in range(k)]
+    times = sorted({0.15, *mids})
     if len(times) < 6:  # few cuts: spread evenly instead
         times = sorted({0.15, *[round(duration * k / 7, 2) for k in range(1, 7)]})
+    return times[:MAX_STILLS]
+
+
+def stills(video: Path, cuts: list[float], duration: float, out_dir: Path) -> list[tuple[float, Path]]:
+    """The frames of still_times() as small JPEGs (what a viewer sees)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
     frames = []
-    for t in times[:MAX_STILLS]:
+    for t in still_times(cuts, duration):
         path = out_dir / f"{t:07.2f}.jpg"
         extract._run([settings.FFMPEG, "-y", "-v", "error", "-ss", f"{t:.2f}", "-i", str(video), "-frames:v", "1",
                       "-vf", "scale=540:-2", "-q:v", "4", str(path)])
         if path.exists():
             frames.append((t, path))
     return frames
+
+
+# ── The beat timeline (no API cost) ───────────────────────────────────────────
+
+MAX_GAPS = 8
+
+
+def _clip(text, n: int) -> str:
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    return text if len(text) <= n else text[:n - 1].rstrip() + "…"
+
+
+def merge_beats(times: list[float], speech: dict | None, cuts: list[float], duration: float) -> list[dict]:
+    """One beat per still, in time order: {t, end, said, cuts}. A beat runs from its still to
+    the next one; said is every word that starts in it (exactly as transcribed; words before
+    the first still go to the first beat), cuts the hard cuts inside it."""
+    times = sorted(times)
+    beats = [{"t": round(t, 2), "end": round(times[i + 1] if i + 1 < len(times) else duration, 2), "said": [],
+              "cuts": [c for c in cuts if t <= c < (times[i + 1] if i + 1 < len(times) else duration + 1)]}
+             for i, t in enumerate(times)]
+    if not beats:
+        return []
+    speech = speech or {}
+    for start, text in sorted(speech.get("words") or [], key=lambda w: w[0]):
+        i = max((k for k, b in enumerate(beats) if b["t"] <= start), default=0)
+        beats[i]["said"].append(str(text).strip())
+    join = speech.get("join", " ")
+    for b in beats:
+        b["said"] = join.join(w for w in b["said"] if w)
+    return beats
+
+
+def sampling_gaps(times: list[float], cuts: list[float], duration: float, heard: bool) -> list[str]:
+    """What the stills can't have shown, measured: runs of shots no still landed in, long
+    stretches with one still, and no speech to read."""
+    times = sorted(times)
+    edges = [0.0, *cuts, duration]
+    shots = [(a, b) for a, b in zip(edges, edges[1:]) if b - a > 0.05]
+    unseen = [not any(a <= t < b for t in times) for a, b in shots]
+    out, k = [], 0
+    while k < len(shots):
+        if not unseen[k]:
+            k += 1
+            continue
+        j = k
+        while j + 1 < len(shots) and unseen[j + 1]:
+            j += 1
+        n = j - k + 1
+        out.append(f"{shots[k][0]:.1f}-{shots[j][1]:.1f} s: {n} shot{'s' if n > 1 else ''} no still landed in "
+                   "(what they show is unknown)")
+        k = j + 1
+    for a, b in zip(times, times[1:] + [duration]):
+        if b - a > LONG_STRETCH and not any(a < c < b for c in cuts):
+            out.append(f"{a:.1f}-{b:.1f} s: one still for {b - a:.0f} s (a slow change inside it could be missed)")
+    if not heard:
+        out.append("no speech was transcribed: what is said can't be read (music only, or missed)")
+    return out
+
+
+# The structure read: Claude (or Gemini, for YouTube) names a pattern for each part, so the style
+# guide and the taste report can count them across references.
+OPEN_PATTERNS = ("question", "bold_claim", "result_first", "problem", "mistake_warning", "number_or_price",
+                 "list_promise", "story", "before_after", "visual_only", "other")
+HOLD_DEVICES = ("fast_cuts", "numbered_steps", "open_loop", "progress_reveal", "text_on_screen", "broll_variety",
+                "direct_address", "demonstration", "humour", "music_beat", "other")
+TURN_PATTERNS = ("reveal", "answer", "twist", "before_after", "next_step", "none", "other")
+CLOSE_PATTERNS = ("ask_follow", "ask_comment", "ask_save_share", "ask_dm_or_book", "final_reveal", "summary", "loop",
+                  "end_card", "just_stops", "other")
+BASIS = ("seen", "heard", "both", "inferred")
+_BASIS = {"type": "string", "enum": list(BASIS)}
+_AT = {"anyOf": [{"type": "number"}, {"type": "null"}]}
+
+
+def _part(patterns: tuple, key: str = "pattern", many: bool = False) -> dict:
+    field = {"type": "array", "items": {"type": "string", "enum": list(patterns)}} if many \
+        else {"type": "string", "enum": list(patterns)}
+    props = {key: field, "what": {"type": "string"}, "basis": _BASIS}
+    if not many:
+        props["at"] = _AT
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+
+
+ARC_SCHEMA = {
+    "type": "object",
+    "properties": {"open": _part(OPEN_PATTERNS), "hold": _part(HOLD_DEVICES, "devices", many=True),
+                   "turn": _part(TURN_PATTERNS), "close": _part(CLOSE_PATTERNS)},
+    "required": ["open", "hold", "turn", "close"],
+    "additionalProperties": False,
+}
+OBSERVATIONS_SCHEMA = {"type": "array", "items": {
+    "type": "object", "properties": {"at": {"type": "number"}, "text": {"type": "string"}, "basis": _BASIS},
+    "required": ["at", "text", "basis"], "additionalProperties": False}}
+
+
+def _at(v, duration: float | None):
+    if not isinstance(v, (int, float)) or isinstance(v, bool) or v != v:
+        return None
+    v = max(float(v), 0.0)
+    return round(min(v, duration) if duration else v, 1)
+
+
+def tidy_read(seen: dict, beats: list[dict], gaps: list[str], duration: float | None) -> dict:
+    """Claude's (or Gemini's) read made safe to keep: the beats merged with the code's own (what
+    is said is the transcript's, never a model's paraphrase, when there is a transcript), the
+    structure's patterns and bases checked, times inside the reel, the measured gaps first, at
+    most three observations. Short texts: this sits in every reference's row."""
+    out = dict(seen)
+    theirs = [b for b in seen.get("beats") or [] if isinstance(b, dict)]
+
+    def nearest(t):
+        if not theirs:
+            return {}
+        return min(theirs, key=lambda b: abs((b.get("t") if isinstance(b.get("t"), (int, float)) else 1e9) - t))
+
+    kept = []
+    for b in beats or theirs:
+        t = _at(b.get("t"), duration) or 0.0
+        mine = nearest(t) if beats else b
+        said = b.get("said") if beats else mine.get("said")
+        row = {"t": t, "screen": _clip(mine.get("on_screen"), 140), "said": _clip(said, 220),
+               "changed": _clip(mine.get("changed"), 100)}
+        if beats and b.get("cuts"):
+            row["cuts"] = len(b["cuts"])
+        kept.append(row)
+    out["beats"] = sorted(kept, key=lambda b: b["t"])
+    arc = seen.get("arc") if isinstance(seen.get("arc"), dict) else {}
+    tidy_arc = {}
+    for part, patterns, key in (("open", OPEN_PATTERNS, "pattern"), ("hold", HOLD_DEVICES, "devices"),
+                                ("turn", TURN_PATTERNS, "pattern"), ("close", CLOSE_PATTERNS, "pattern")):
+        p = arc.get(part) if isinstance(arc.get(part), dict) else {}
+        item = {"what": _clip(p.get("what"), 200), "basis": p.get("basis") if p.get("basis") in BASIS else "inferred"}
+        if key == "devices":
+            item["devices"] = [d for d in dict.fromkeys(p.get("devices") or []) if d in patterns]
+        else:
+            item["pattern"] = p.get("pattern") if p.get("pattern") in patterns else "other"
+            item["at"] = None if item["pattern"] == "none" else _at(p.get("at"), duration)
+        tidy_arc[part] = item
+    out["arc"] = tidy_arc
+    theirs_gaps = [_clip(g, 160) for g in seen.get("gaps") or [] if isinstance(g, str) and g.strip()]
+    out["gaps"] = list(dict.fromkeys([_clip(g, 160) for g in gaps] + theirs_gaps))[:MAX_GAPS]
+    obs = []
+    for o in seen.get("observations") or []:
+        if isinstance(o, dict) and str(o.get("text") or "").strip():
+            obs.append({"at": _at(o.get("at"), duration), "text": _clip(o["text"], 240),
+                        "basis": o.get("basis") if o.get("basis") in BASIS else "inferred"})
+    out["observations"] = obs[:3]
+    return out
+
+
+def structure_summary(items: list[tuple[dict | None, float | None]]) -> dict | None:
+    """How references open, hold attention, turn and close, counted: items are (look,
+    duration). None when none of them has a structure read (analysed before 2026-10-26)."""
+    from collections import Counter
+    arcs = [(look["arc"], d) for look, d in items if isinstance(look, dict) and isinstance(look.get("arc"), dict)]
+    if not arcs:
+        return None
+
+    def count(part, key="pattern"):
+        c = Counter()
+        for arc, _ in arcs:
+            p = arc.get(part) or {}
+            for v in (p.get(key) or []) if key == "devices" else [p.get(key)]:
+                if v:
+                    c[v] += 1
+        return dict(c.most_common())
+
+    turns = [(arc["turn"].get("at"), d) for arc, d in arcs if isinstance(arc.get("turn"), dict)
+             and isinstance(arc["turn"].get("at"), (int, float)) and arc["turn"].get("pattern") != "none"]
+    shares = [a / d for a, d in turns if d]
+    return {"read": len(arcs), "of": len(items), "opens": count("open"), "holds": count("hold", "devices"),
+            "turns": count("turn"), "closes": count("close"),
+            "turn_at_s_median": _pct([a for a, _ in turns], 50) if turns else None,
+            "turn_at_share_median": round(float(np.median(shares)), 2) if shares else None,
+            "inferred": {part: sum(1 for arc, _ in arcs if (arc.get(part) or {}).get("basis") == "inferred")
+                         for part in ("open", "hold", "turn", "close")}}
 
 
 # ── Looking (Claude) ──────────────────────────────────────────────────────────
@@ -588,8 +799,16 @@ LOOK_SCHEMA = {
         "cta": {"type": "string"},
         "standout": {"type": "string"},
         "design": DESIGN_SCHEMA,
+        "beats": {"type": "array", "items": {
+            "type": "object", "properties": {"t": {"type": "number"}, "on_screen": {"type": "string"},
+                                             "changed": {"type": "string"}},
+            "required": ["t", "on_screen", "changed"], "additionalProperties": False}},
+        "arc": ARC_SCHEMA,
+        "gaps": {"type": "array", "items": {"type": "string"}},
+        "observations": OBSERVATIONS_SCHEMA,
     },
-    "required": ["layouts", "captions", "hook", "first_frame", "broll", "graphics", "cta", "standout", "design"],
+    "required": ["layouts", "captions", "hook", "first_frame", "broll", "graphics", "cta", "standout", "design",
+                 "beats", "arc", "gaps", "observations"],
     "additionalProperties": False,
 }
 
@@ -610,7 +829,21 @@ lamps, moody, flash); camera (handheld, gimbal glide, locked off, slow push-in, 
 (symmetry, low angle, close details, wide room reveals); shot_types (wide reveal, detail macro, \
 walk-through, hands at work, before/after); text_style: on-screen text and caption type (serif or sans, \
 weight, rounded or geometric, letter spacing, case); closest_free_fonts: the nearest free fonts \
-(Google Fonts / SIL Open Font License) to the type you see, e.g. "Figtree", "DM Serif Display"."""
+(Google Fonts / SIL Open Font License) to the type you see, e.g. "Figtree", "DM Serif Display".
+
+The reel comes as a timeline of beats: each beat is a still, what is said from that moment to the next \
+still (the transcript, exact) and the cuts in between. Go through the timeline before concluding anything:
+- beats: one per still, in order, with its time t: on_screen (what the still shows, under 15 words) and \
+changed (what changed since the beat before: a cut to what, new text, a reveal; "first beat" for the first; \
+under 10 words).
+- arc: the structure, read from the timeline. open: how the first 3 seconds stop the scroll (pattern, what, at). \
+hold: how it keeps attention through the middle (devices, what). turn: the moment it shifts (the reveal, the \
+answer, the after; at = its time; pattern "none" with at null when it never turns). close: how it ends (pattern, \
+what, at). basis for each: seen (a still shows it), heard (the transcript says it), both, or inferred (your \
+conclusion beyond what is shown or said: mark it so, never present it as seen).
+- gaps: what the sampling could have missed beyond the measured gaps listed after the timeline (each short).
+- observations: the three highest-signal observations about why this reel works or doesn't, most important \
+first, each with the time it happens and its basis. Short."""
 
 SLIDES_SCHEMA = {
     "type": "object",
@@ -659,17 +892,38 @@ choice that makes this post work.
 low angle, flat lay), framing, shot_types, text_style and closest_free_fonts."""
 
 
-def look(frames: list[tuple[float, Path]], transcript: str, ref: str, client=None) -> dict:
+def look(frames: list[tuple[float, Path]], transcript: str, ref: str, client=None, *, speech: dict | None = None,
+         cuts: list[float] | None = None, duration: float | None = None) -> dict:
+    """Claude's read of a reel from its beat timeline: the stills in time order, each with what
+    is said until the next still and the cuts in between, then the measured sampling gaps. With
+    no timed words (speech) the whole transcript goes after the stills, as before. One call,
+    about US$0.065 a reel (the beats and the structure add ~650 output and ~500 input tokens
+    to the ~US$0.05 read)."""
     import anthropic
 
     import usage
     from settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
+    times = [t for t, _ in frames]
+    duration = duration or (times[-1] + 1.0 if times else 0.0)
+    timed = bool(speech and speech.get("words"))
+    beats = merge_beats(times, speech if timed else None, cuts or [], duration)
+    gaps = sampling_gaps(times, cuts or [], duration, bool((transcript or "").strip()))
+    if (transcript or "").strip() and not timed:
+        gaps.append("the transcript has no times: what is said isn't placed in the beats")
     content = []
-    for t, path in frames:
-        content.append({"type": "text", "text": f"Still at {t:.1f}s"})
+    for (t, path), b in zip(frames, beats):
+        head = f"Beat at {t:.1f}s (to {b['end']:.1f}s)"
+        if b["cuts"]:
+            head += " · cuts at " + ", ".join(f"{c:.1f}" for c in b["cuts"][:8]) + "s"
+        if timed:
+            head += " · said: " + (f"\"{b['said']}\"" if b["said"] else "(nothing)")
+        content.append({"type": "text", "text": head})
         content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                     "data": base64.standard_b64encode(path.read_bytes()).decode()}})
-    content.append({"type": "text", "text": "Transcript:\n" + (transcript or "(no speech)")})
+    if not timed:
+        content.append({"type": "text", "text": "Transcript (not timed):\n" + (transcript or "(no speech)")})
+    content.append({"type": "text", "text": f"Length {duration:.1f}s. Measured sampling gaps:\n"
+                                            + ("\n".join(f"- {g}" for g in gaps) or "- none")})
     client = client or anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or None)
     response = client.beta.messages.create(
         model=CLAUDE_MODEL, max_tokens=8000, betas=["server-side-fallback-2026-07-01"], fallbacks="default",
@@ -678,7 +932,8 @@ def look(frames: list[tuple[float, Path]], transcript: str, ref: str, client=Non
     usage.record("style", ref, response)
     if response.stop_reason in ("refusal", "max_tokens"):
         raise RuntimeError(f"Claude couldn't describe this reel ({response.stop_reason})")
-    return json.loads(next(b.text for b in response.content if b.type == "text"))
+    seen = json.loads(next(b.text for b in response.content if b.type == "text"))
+    return tidy_read(seen, beats, gaps, duration)
 
 
 def look_slides(frames: list[tuple[float, Path]], caption: str, ref: str, client=None) -> dict:
@@ -712,13 +967,16 @@ def analyse(source: str | Path, stills_dir: Path | None = None, *, download_dir:
     """Analyse one post: a link (downloaded, then deleted unless keep_video) or a
     local video file (never deleted). kind: "images" for a carousel or photo post,
     "video" for a reel; None = from the link (Instagram /p/ links are tried as
-    pictures first). Returns {kind, measured, look, stills: [local paths in order],
-    engagement (links only)}. Raises RuntimeError (DownloadFailed for downloads)
+    pictures first; YouTube links are watched by Gemini, ref_youtube). Returns {kind,
+    measured, look, stills: [local paths in order], engagement (links only)}. Raises RuntimeError (DownloadFailed for downloads)
     with a readable reason."""
+    import ref_youtube
     is_url = isinstance(source, str) and URL_RE.match(source.strip())
     slug = re.sub(r"[^A-Za-z0-9]+", "_", str(source))[-60:].strip("_") or "reel"
     stills_dir = stills_dir or STUDIES / "stills" / slug
     work = download_dir or STUDIES / "downloads"
+    if is_url and ref_youtube.is_youtube(source):
+        return ref_youtube.analyse(source.strip(), stills_dir, ref)  # Gemini watches it: nothing is downloaded
     if is_url and (kind == "images" or (kind is None and is_post_link(source))):
         post = fetch_slides(source.strip(), work / f"slides_{slug[-24:]}")
         if post["kind"] == "images":
@@ -742,7 +1000,9 @@ def analyse(source: str | Path, stills_dir: Path | None = None, *, download_dir:
         frames = stills(video, measured["cut_times"], measured["duration"], stills_dir)
         if not frames:
             raise RuntimeError("couldn't take any stills from the video")
-        seen = look(frames, measured.get("transcript", ""), ref, client)
+        speech = measured.pop("_speech", None)
+        seen = look(frames, measured.get("transcript", ""), ref, client, speech=speech,
+                    cuts=measured.get("cut_times"), duration=measured.get("duration"))
     finally:
         if is_url and not keep_video:
             video.unlink(missing_ok=True)
@@ -795,21 +1055,34 @@ def _side(r: dict) -> str:
     return r.get("side") or r.get("group") or "inspiration"
 
 
+def estimated(measured: dict | None) -> bool:
+    """Numbers a model estimated by watching (a YouTube reference), not measured here."""
+    return bool((measured or {}).get("estimated_by"))
+
+
 def summarise(reels: list[dict]) -> dict:
-    """Median and range of each measurement, per side (ours / inspiration)."""
+    """Median and range of each measurement, per side (ours / inspiration); the numbers Gemini
+    estimated for a YouTube reference stay out of them (counted apart). With the structure
+    reads counted (structure_summary)."""
     out = {}
     for side in ("ours", "inspiration"):
         mine = [r for r in reels if _side(r) == side and r.get("measured")]
         if not mine:
             continue
         stats = {"reels": len(mine)}
+        if any(estimated(r["measured"]) for r in mine):
+            stats["estimated_not_measured"] = sum(1 for r in mine if estimated(r["measured"]))
         for key in NUMBERS:
-            vals = [r["measured"][key] for r in mine if isinstance(r["measured"].get(key), (int, float))]
+            vals = [r["measured"][key] for r in mine if isinstance(r["measured"].get(key), (int, float))
+                    and not estimated(r["measured"])]
             if vals:
                 stats[key] = {"median": _pct(vals, 50), "low": _pct(vals, 10), "high": _pct(vals, 90)}
         layouts = [lay for r in mine for lay in (r.get("look") or {}).get("layouts", [])]
         if layouts:
             stats["layout_share"] = {k: round(layouts.count(k) / len(layouts), 2) for k in sorted(set(layouts))}
+        structure = structure_summary([(r.get("look"), (r.get("measured") or {}).get("duration")) for r in mine])
+        if structure:
+            stats["structure"] = structure
         out[side] = stats
     return out
 
@@ -829,7 +1102,12 @@ _GUIDE_SYSTEM = """You are the editor-in-chief for the Instagram Reels of {brand
 a library of reference reels: their own best ones ("ours") and other accounts' they admire \
 ("inspiration"), each with the team's note on why it works. Every reel was measured on the laptop \
 (cuts, shot lengths, speaking pace, pauses, loudness, how far the music sits under the voice) and its \
-stills were described (captions, layouts, B-roll, hook, call to action). Write the house style for \
+stills were described (captions, layouts, B-roll, hook, call to action). Reels analysed since \
+2026-10-26 also carry a structure read from a timeline of beats (look.arc: how it opens, holds attention, \
+turns and closes, each marked seen, heard, both or inferred; look.observations: the three strongest, \
+with times; look.gaps: what the sampled stills could have missed); summary.<side>.structure counts the \
+patterns across references ("read" of "of" had one). A YouTube reference was watched by Gemini instead: \
+its numbers are estimates ("measured_by"), kept out of the summary's medians. Write the house style for \
 {brand_name} from the active references.
 
 {brands}
@@ -846,13 +1124,16 @@ Write three Markdown texts:
 - content: the "## House style (measured)" playbook section the editor will follow: concrete, \
 measurable rules with numbers and ranges (first cut, shot lengths, longest shot, speaking pace, \
 pauses, music level under the voice, loudness, caption chunking/case/accents/box/position, layout \
-mix, hook and first frame, B-roll order of preference, call to action). Fit renovation and the \
+mix, hook and first frame, B-roll order of preference, call to action) and the structure: how to \
+open, hold, turn and close, with the counts behind each ("8 of 12 open result-first") where there \
+are structure reads; an inferred finding weighs less than a seen or heard one. Fit renovation and the \
 brand's own voice; don't copy devices that only suit other niches. Where our reels and the \
 inspiration disagree, say which to follow and why (our own best reels are proof it works for this \
 audience; the team's notes say what they admire). Mark numbers as targets, not laws. Under 60 lines.
 - report: for the team to read in two minutes. What our best reels have in common, how the \
 inspiration differs, and the 5 to 8 changes most likely to improve our reels, each tied to evidence \
-(numbers or what the stills show) and to the team's notes. Plain words, short bullets, no hype.
+(numbers, what the stills show, or the structure counts and observations with their times) and to the \
+team's notes. Plain words, short bullets, no hype.
 - changes: what changed since the house style in force and why, one short bullet per change, each \
 tied to the references added or retired and their notes, naming them by title, for example: \
 "Added 'kitchen reveal' (ours, most saves): first cut moved earlier, from 1.5 s to 0.8 s." Say when \
@@ -882,8 +1163,12 @@ def _evidence(r: dict, full: bool = True) -> dict:
            "why": r.get("why") or r.get("note") or "", "source": r.get("url") or r.get("file_name") or r.get("file")}
     if full and m:
         out["measured"] = {k: m.get(k) for k in NUMBERS if m.get(k) is not None}
+        if estimated(m):
+            out["measured_by"] = f"estimated by {m['estimated_by']} from watching (not measured)"
         out["transcript_start"] = (m.get("transcript") or "")[:400]
-        out["look"] = r.get("look")
+        # The read without its beat timeline (the structure, gaps and observations stand for it).
+        look = r.get("look")
+        out["look"] = {k: v for k, v in look.items() if k != "beats"} if isinstance(look, dict) else look
     return out
 
 
