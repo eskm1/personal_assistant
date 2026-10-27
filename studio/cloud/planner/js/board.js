@@ -740,6 +740,23 @@ async function saveProject(fields, message, write = true) {
   if (message) toast(message);
 }
 
+
+// New idea: a title, or a whole structure or script. The first line (up to TITLE_MAX) is the title; anything more
+// is kept, as written, in a comment Claude reads (comments hold up to 4,000 characters).
+const TITLE_MAX = 300;
+const FULL_LABEL = "The idea in full:";
+const IDEA_MAX = 4000 - FULL_LABEL.length - 1;
+function ideaText(value) {
+  const text = value.replace(/\r/g, "").trim();
+  const first = (text.split("\n").find((l) => l.trim()) || "").replace(/\s+/g, " ").trim();
+  let title = first;
+  if (title.length > TITLE_MAX) {
+    const cut = title.slice(0, TITLE_MAX - 1);
+    title = `${cut.slice(0, cut.lastIndexOf(" ") > TITLE_MAX / 2 ? cut.lastIndexOf(" ") : cut.length).trim()}…`;
+  }
+  return { title, full: text.replace(/\s+/g, " ") === title ? "" : text.slice(0, IDEA_MAX) };
+}
+
 function archiveProject() {
   const p = currentProject();
   if (!p) return;
@@ -803,7 +820,8 @@ export function openQuickAdd(opts = {}) {
     <form class="form" id="qa-form">
       ${projectField}
       <div class="form" id="qa-one">
-        <label>Idea<textarea id="qa-text" rows="3" maxlength="300" placeholder="e.g. Why we flood-test every bathroom for 24 hours"></textarea></label>
+        <label>Idea<textarea id="qa-text" rows="3" maxlength="${IDEA_MAX}" placeholder="e.g. Why we flood-test every bathroom for 24 hours"></textarea></label>
+        <p class="muted small">Write as much as you like. The first line is the title. The rest is saved on the idea for Claude.</p>
         ${schema.kinds ? `<label>Kind of post<select id="qa-kind">${options(POST_TYPES, POST_TYPE, preset, "Let Studio decide")}</select></label>
           ${preset && !opts.kind ? `<p class="muted small qa-kind-why">The month is shortest of ${esc(POST_TYPE[preset])} posts.</p>` : ""}` : ""}
         <details class="qa-more" id="qa-more">
@@ -847,7 +865,7 @@ export function openQuickAdd(opts = {}) {
       return;
     }
     if (t.id !== "qa-add") return;
-    const title = $("#qa-text").value.replace(/\s+/g, " ").trim().slice(0, 300);
+    const { title, full } = ideaText($("#qa-text").value);
     const raw = $("#qa-link").value.trim();
     if (!title) { $("#qa-text").focus(); return formError("Write the idea first."); }
     const link = raw ? httpsUrl(/^[a-z]+:/i.test(raw) ? raw : `https://${raw}`) : "";
@@ -861,8 +879,13 @@ export function openQuickAdd(opts = {}) {
       const kind = $("#qa-kind")?.value || null;
       const carousel = document.querySelector("input[name=qa-format]:checked")?.value === "carousel";
       row = must(await sb.from("ideas").insert({ project_id: target, title, brand: p?.brand || "urban_makers", arc_id: $("#qa-arc").value ? Number($("#qa-arc").value) : null, position: pos, ...(kind ? { post_type: kind } : {}), ...(carousel ? { format: "carousel" } : {}) }).select("id").single());
+      // The whole text, as written, is the idea's first comment: Claude reads comments when it plans or writes slides.
+      if (full) {
+        const res = await sb.from("comments").insert({ idea_id: row.id, body: `${FULL_LABEL}\n${full}` });
+        if (res.error) { await sb.from("ideas").delete().eq("id", row.id); throw res.error; }
+      }
       if (link) must(await sb.from("comments").insert({ idea_id: row.id, body: `Link: ${link}` }));
-      mark("idea_created", { kind: !!kind, carousel, preset: !!kind && kind === preset, more: !!$("#qa-more")?.open });
+      mark("idea_created", { kind: !!kind, carousel, preset: !!kind && kind === preset, more: !!$("#qa-more")?.open, long: !!full });
       if (kind) mark("idea_kind", { at: "new" });
     } catch (err) { t.disabled = false; return formError(err.message); }
     closeModal();
@@ -887,6 +910,12 @@ export function openQuickAdd(opts = {}) {
   }
   $("#qa-project")?.addEventListener("change", fillArcs);
   fillArcs();
+  // The box grows with a long script (up to most of the screen, then it scrolls).
+  $("#qa-text").addEventListener("input", (e) => {
+    const t = e.target;
+    t.style.height = "auto";
+    t.style.height = `${Math.min(t.scrollHeight + 2, Math.round(innerHeight * 0.6))}px`;
+  });
   if (opts.mode === "many") setMode("many");
 }
 
