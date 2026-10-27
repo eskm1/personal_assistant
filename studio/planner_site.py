@@ -71,9 +71,13 @@ def here() -> bool:
 @bp.get("/static/help.js")
 @bp.get("/static/help.css")
 @bp.get("/static/capture.js")
+@bp.get("/static/marks.js")
+@bp.get("/static/marks.css")
 def shell_file():
     """The top bar and phone tab bar shared by Review and Plan, the look (theme.css), the
-    posting dialogs (post-ui.*), help and feedback (help.*) and usage capture (capture.js): one copy, in the planner's folder (Netlify serves it from there too)."""
+    posting dialogs (post-ui.*), help and feedback (help.*), usage capture (capture.js) and the status marks
+    (marks.*: Posted, Scheduled, Approved, Draft in Review, Idea, Needs a fact): one copy, in the planner's folder
+    (Netlify serves it from there too)."""
     return webassets.send(PLANNER / Path(request.path).name)
 
 

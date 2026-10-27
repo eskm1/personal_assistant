@@ -508,7 +508,9 @@ def prompt(ctx: dict) -> str:
             f"{ctx.get('wiki_text') or '(none)'}\n\n"
             f"Saved references (format and tone):\n{ctx['references_text']}\n\n"
             f"Shoot calendar (next four weeks):\n{ctx['calendar_text']}\n\n"
-            f"Posts already planned or made (never repeat these):\n{_list_text(ctx['planned'])}\n\n"
+            + (f"What's working on Instagram (Studio's Monday memo from the numbers; lean on it lightly, never "
+               f"against the content plan or the playbook):\n{ctx['insights_text']}\n\n" if ctx.get("insights_text") else "")
+            + f"Posts already planned or made (never repeat these):\n{_list_text(ctx['planned'])}\n\n"
             f"Dismissed before (never suggest these again, even reworded):\n{_list_text(ctx['dismissed'], False)}")
 
 
@@ -802,8 +804,18 @@ def context(api, conn, now: datetime | None = None) -> dict:
             "clips": clips, "uses": uses, "transcripts_text": _transcripts_text(clips, uses),
             "questions": questions, "questions_text": _questions_text(questions, names),
             "references_text": _references_text(api), "calendar_text": _calendar_text(_calendar(api, now)),
-            "wiki_text": wiki_text, "wiki": wiki_articles,
+            "wiki_text": wiki_text, "wiki": wiki_articles, "insights_text": _insights_text(),
             "names": project_names, "allowed": allowed}
+
+
+def _insights_text() -> str:
+    """The Monday memo's top lines (insights.py): what kinds of posts work on the account, small."""
+    try:
+        import insights
+        return insights.prompt_lines()
+    except Exception as e:  # a nicety: never stops a run
+        log.debug("No insights for the topics: %s", e)
+        return ""
 
 
 def run(api, conn, trigger: str, client=None, now: datetime | None = None) -> dict:

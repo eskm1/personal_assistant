@@ -8,13 +8,13 @@ import {
   nameOf, state, prepShots, progress, bestTake, takeRetake, retakeBadge, signPaths, stillUrl,
   takePaths, jobView, jobActive, kickDevelop, laptopWait, httpUrl, httpsUrl, openModal, closeModal, syncInert,
   missingTable, dayLabel, folderLineHTML, pageMode, PHONE, POST_TYPES, POST_TYPE, KIND_INFO, kindDot, sentence,
-  isCarousel, REEL_FORMATS, schema, liveClips, isFilmed, todayISO, shortDay, askFirst, mark, offWhy, setCall } from "./core.js";
+  isCarousel, REEL_FORMATS, schema, liveClips, isFilmed, todayISO, shortDay, askFirst, mark, offWhy, setCall, ideaMarks } from "./core.js";
 import { plan, selectProject } from "./board.js";
 import { uploadButtonsHTML, rememberShot, canUpload, shotUploadState } from "./upload.js";
 import { openSchedule, canSchedule } from "./posting.js";
 import {
   prepSlides, slidePaths, slidesMainHTML, writeSlidesHTML, saveSlideField, slidesClick, slidesLocked,
-  conceptsMakeLine,
+  conceptsMakeLine, photosHTML, photosClick, photoSorter, isPhotoLayout,
 } from "./slides.js";
 
 // clips(*): its "flagged" column (needs a retake) comes with a database update.
@@ -227,7 +227,7 @@ function render(force = false) {
     d.shots.map((s) => s.takes.map((t) => stillUrl(...takePaths(t)))), d.slides.map((x) => stillUrl(x.image?.thumb_path)),
     d.shots.map((s) => upState(s, d))]);
   if (!force && sig === view.panelSig) return;
-  if (!force && typingIn(inner())) { view.pending = true; return; }
+  if (phSort?.held() || (!force && typingIn(inner()))) { view.pending = true; return; }
   renderPanel();
   view.panelSig = sig;
   view.pending = false;
@@ -246,6 +246,11 @@ inner().addEventListener("click", (e) => {
   row.classList.add("flash");
   if (go.dataset.gotoSlide) row.querySelector("input, textarea")?.focus({ preventScroll: true });
 });
+
+// A carousel's photos: drag to reorder (slides.js). A live update waits while a photo is in hand.
+const phSort = photoSorter(inner(), () => view.d, () => loadIdea(true));
+// A press let go without a drag: a live update that waited for it, now.
+for (const ev of ["pointerup", "touchend", "touchcancel"]) window.addEventListener(ev, () => setTimeout(() => { if (view.pending && !phSort.held() && !typingIn(inner())) render(); }, 60));
 
 // ── Quality notes on a take ─────────────────────────────────────────────────
 
@@ -514,6 +519,9 @@ function nextStep(d) {
   const dev = jobView(d.jobs.develop), writing = jobActive(dev);
   const make = (on, why) => `<button class="btn act lg" id="plan-make" ${offWhy(on ? "" : why)}>Make this</button>`;
   if (carousel) {
+    if (d.slides.length < 2 && !slidesLocked(d) && isPhotoLayout(d)) {
+      return { primary: `<button class="btn act lg" data-ph-add>Add photos</button>`, hint: `Make this unlocks with two photos or more.${failed}` };
+    }
     if (d.slides.length < 2 && !slidesLocked(d)) {
       return { primary: `<button class="btn act lg" id="refine-go-main" ${offWhy(writing ? "Claude is writing the slides now. About a minute; this page updates by itself." : "")}>${writing ? "Writing slides…" : d.slides.length ? "Rewrite slides" : "Write slides"}</button>`,
         hint: (writing ? "Claude is writing the slides. About a minute." : "Make this unlocks with a cover and one more slide.") + failed };
@@ -591,11 +599,25 @@ function bannerHTML(d) {
     return `<div class="box bad-box idea-banner"><p><strong>Dismissed.</strong> It's off the board${owner ? "." : `; ${esc(ownerName())} can put it back.`}</p>
       ${owner ? `<button class="btn small" data-plan-decision="restore">Put back on the board</button>` : ""}</div>`;
   }
+  const fact = factBannerHTML(d);
+  if (fact) return fact;
   const s = d.suggestion && typeof d.suggestion === "object" ? d.suggestion : null;
   if (!s?.why) return "";
   const from = s.source === "transcript" && isCarousel(d) ? "From what you said on site." : SUGGEST_FROM[s.source] || "";
   return `<div class="box sugg-box idea-banner"><p><strong>Studio suggested this.</strong> ${esc(s.why)}</p>
     ${from ? `<p class="muted small">${esc(from)}${s.source === "question" ? ` <a href="#/questions">Client questions</a>` : ""}</p>` : ""}</div>`;
+}
+
+// Needs a fact from Bryan (the profile grid's mark): the idea's flag with what's missing, or [check] in its words
+// where a figure goes (Studio writes those instead of guessing). Anyone clears the flag once it's filled in.
+function factBannerHTML(d) {
+  const words = [d.title, d.hook, d.caption, d.cta, ...d.slides.flatMap((x) => [x.heading, x.body])].some((w) => /\[check\]/i.test(String(w || "")));
+  const flagged = "needs_fact" in d && d.needs_fact != null;
+  if (!flagged && !words) return "";
+  return `<div class="box fact-box idea-banner">${window.StudioMarks?.fact("", { title: false }) || ""}<div>
+    <p><strong>Needs a fact from ${esc(ownerName())}.</strong> ${flagged && d.needs_fact ? esc(/[.?!]$/.test(d.needs_fact) ? d.needs_fact : `${d.needs_fact}.`) : ""}</p>
+    ${words ? `<p class="muted small">The words have [check] where a figure goes. Put the real one in before it's made.</p>` : ""}
+    ${flagged ? `<button type="button" class="btn small" data-fact-done>It's filled in</button>` : ""}</div></div>`;
 }
 
 // "Michelle liked it", "Michelle and Bryan liked it · Sam isn't keen".
@@ -610,6 +632,7 @@ function metaLineHTML(d) {
   const arc = d.arcs.find((a) => a.id === d.arc_id);
   const parts = ["post_type" in d ? POST_TYPE[d.post_type] || "Kind not set" : "", FORMAT[d.format] || "",
     carousel ? plural(d.slides.length, "slide") : `${Math.round(d.est_seconds || 30)} s`, arc ? arc.title : "Unsorted",
+    d.post_on ? `Post ${dayLabel(d.post_on)}` : "",
     oneBrand ? "" : BRAND[d.brand] || ""].filter(Boolean);
   return `<button type="button" class="meta-line" data-details aria-haspopup="dialog" aria-label="Details: ${esc(parts.join(", "))}. Edit">
     ${kindDot(d.post_type)}<span class="meta-text">${esc(parts.join(" · "))}</span><span class="meta-edit" aria-hidden="true">Edit</span></button>`;
@@ -664,7 +687,8 @@ function foldsHTML(d) {
   const musicFold = carousel ? "" : foldHTML("music", "Music",
     esc(jobActive(music) ? "Shortlisting…" : m.chosen?.title || m.mood || "Not picked"), musicHTML(d));
   const comments = foldHTML("comments", "Comments", esc(d.notes.length || "None"), commentsHTML(d.notes));
-  const claude = carousel ? writeSlidesHTML(d) : refineHTML(d);
+  // Photos filling the slides aren't written by Claude: the photos are the post.
+  const claude = carousel ? (isPhotoLayout(d) ? "" : writeSlidesHTML(d)) : refineHTML(d);
   const change = claude ? foldHTML("claude", "Change it with Claude",
     jobActive(dev) ? `<span class="spin"></span>Working…` : dev?.state === "failed" ? `<span class="bad-text">Failed</span>` : "", claude) : "";
   return `<div class="folds">${caption}${musicFold}${comments}${change}</div>`;
@@ -676,12 +700,16 @@ function renderPanel() {
   // Folds as the person left them (a live update re-renders the page under them).
   for (const f of inner().querySelectorAll("details[data-fold-key]")) view.folds[f.dataset.foldKey] = f.open;
   const head = `${bannerHTML(d)}
-    <div class="idea-titles"><h1 class="idea-title">${esc(d.title)}</h1>${metaLineHTML(d)}</div>
+    <div class="idea-titles"><h1 class="idea-title">${esc(d.title)}</h1>
+      <div class="idea-status">${ideaMarks(d, d.post, { small: true })}<span class="muted small">${esc(window.StudioMarks?.of({ production: d.production, post: d.post, format: d.format, slides_count: d.slides.length }).text || "")}</span></div>
+      ${metaLineHTML(d)}</div>
     ${callHTML(d)}
     ${carousel ? "" : `<section class="hook-card" data-saved-scope aria-label="Hook">
       <h3 class="um-label"><label for="f-hook">Hook</label> <span class="saved" aria-live="polite"></span></h3>
       <textarea id="f-hook" class="hook-input" data-idea-field="hook" rows="1" maxlength="1000" data-orig="${esc(d.hook)}" placeholder="The line or moment that stops the scroll">${esc(d.hook)}</textarea>${hookExtrasHTML(d)}</section>`}`;
-  const main = carousel ? slidesMainHTML(d) : shotsHTML(d);
+  // A carousel: its photos as a strip (add many at once, drag to reorder, the cover); the words editor
+  // under it unless each photo fills its slide.
+  const main = carousel ? (d.slidesOnline ? photosHTML(d) : "") + (isPhotoLayout(d) ? "" : slidesMainHTML(d)) : shotsHTML(d);
   const rest = foldsHTML(d) + actionHTML(d);
   // Two columns (a computer): the post and its shots on the left, the folds and the next step on the
   // right. One column (a phone): all of it in that order, the next step stuck above the tab bar.
@@ -788,6 +816,7 @@ function detailsHTML(d) {
       <textarea class="title-input" id="f-title" data-idea-field="title" rows="1" maxlength="300" data-orig="${esc(d.title)}">${esc(d.title)}</textarea></div>
     ${kinds}
     ${format}
+    ${"post_on" in d ? planFieldsHTML(d) : ""}
     <div class="sheet-two" data-saved-scope>
       ${carousel ? `<div class="field"><h3>Slides</h3><span class="num-field">${esc(plural(d.slides.length, "slide"))}</span></div>`
         : `<label class="field"><span class="um-label">Length</span><span class="num-field"><input type="number" min="3" max="180" step="1" data-idea-field="est_seconds" value="${esc(Math.round(d.est_seconds || 30))}" data-orig="${esc(Math.round(d.est_seconds || 30))}" aria-label="Length in seconds"> s</span></label>`}
@@ -802,6 +831,22 @@ function detailsHTML(d) {
         : `<button type="button" class="btn-link danger" data-plan-decision="dismissed">Dismiss idea</button>`) : ""}
     </div>
   </div>`;
+}
+
+// The profile grid's fields: the day it's meant to go out (a scheduled post's own time wins), a Reel in the
+// grid or only in the Reels tab, and Needs a fact from Bryan.
+function planFieldsHTML(d) {
+  const reel = !isCarousel(d);
+  const flagged = d.needs_fact != null;
+  const scheduled = d.post && ["scheduled", "publishing", "posted"].includes(d.post.state);
+  return `<div class="sheet-two" data-saved-scope>
+      <label class="field"><span class="um-label">Posting date</span><input type="date" data-idea-field="post_on" value="${esc(d.post_on || "")}" data-orig="${esc(d.post_on || "")}" aria-label="Posting date"></label>
+      ${reel ? `<label class="field check-field"><input type="checkbox" data-idea-field="in_grid" ${d.in_grid === false ? "" : "checked"}><span>Show it in the profile grid</span></label>` : ""}
+      <span class="saved" aria-live="polite"></span>
+    </div>
+    <p class="muted small">${scheduled ? "It's scheduled: its post's own time wins. " : ""}The <a href="#/grid">Grid</a> shows every post in order${reel ? "; a Reel out of the grid shows only in the Reels tab" : ""}.</p>
+    <div class="field" data-saved-scope><h3><label class="check-field"><input type="checkbox" data-idea-field="needs_fact_on" ${flagged ? "checked" : ""}> Needs a fact from ${esc(ownerName())}</label> <span class="saved" aria-live="polite"></span></h3>
+      ${flagged ? `<input type="text" data-idea-field="needs_fact" maxlength="300" value="${esc(d.needs_fact)}" data-orig="${esc(d.needs_fact)}" placeholder="What's missing, e.g. how long it cures" aria-label="What's missing">` : ""}</div>`;
 }
 
 function openDetails() {
@@ -905,6 +950,17 @@ async function saveIdeaField(el) {
   let value = el.value;
   if (key === "arc_id") value = value ? Number(value) : null;
   else if (key === "post_type") value = value || null;
+  else if (key === "post_on") value = value || null;
+  else if (key === "in_grid") value = el.checked;
+  else if (key === "needs_fact_on") {
+    value = el.checked ? (d.needs_fact ?? "") : null;
+    must(await sb.from("ideas").update({ needs_fact: value }).eq("id", d.id));
+    d.needs_fact = value;
+    if (el.checked) mark("fact_flagged", { at: "idea" });
+    flashSaved(el);
+    renderDetails();
+    return;
+  } else if (key === "needs_fact") value = value.trim().slice(0, 300);
   else if (key === "est_seconds") {
     value = Number(value);
     if (!(value >= 3 && value <= 180)) { toast("Length must be between 3 and 180 seconds."); el.value = el.dataset.orig; return; }
@@ -958,7 +1014,8 @@ inner().addEventListener("focusout", async (e) => {
   // Catch up on changes held back while typing.
   setTimeout(() => { if (view.pending && !typingIn(inner())) render(); }, 0);
 });
-const isTextField = (el) => el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && el.type !== "checkbox");
+// A date saves as it's picked (a phone's date wheel never leaves the box), so it isn't a text field here.
+const isTextField = (el) => el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && el.type !== "checkbox" && el.type !== "date");
 // The Details sheet's fields (title, length, series, account) save the same way.
 const inDetails = (el) => !!el.closest?.("#details-sheet") && !!el.dataset?.ideaField && !!view.d;
 $("#modal").addEventListener("focusout", async (e) => {
@@ -1063,6 +1120,16 @@ inner().addEventListener("click", async (e) => {
   if (ds.hookMore != null) { view.hookOpen = !view.hookOpen; render(true); return; }
   const shotId = Number(t.closest("[data-shot]")?.dataset.shot);
   try {
+    const ph = await photosClick(t, d);
+    if (ph === "picker") return;
+    if (ph === "render") { render(true); return; }
+    if (ph) { await loadIdea(true); return; }
+    if (ds.factDone != null) {
+      must(await sb.from("ideas").update({ needs_fact: null }).eq("id", d.id));
+      toast("Marked as filled in.");
+      await loadIdea(true);
+      return;
+    }
     if (await slidesClick(t, d)) { await loadIdea(true); return; }
     if (ds.attach != null) { openPicker(shotId); return; }
     if (ds.hookUse != null) { await useHook(d, Number(ds.hookUse)); await loadIdea(true); return; }

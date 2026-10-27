@@ -358,8 +358,22 @@ INSTAGRAM_CAROUSEL_MAX = min(max(int(_env("STUDIO_INSTAGRAM_CAROUSEL_MAX", "10")
 # The handle on the animated explainers' end card (motion.py), small under the mark. The connected
 # Instagram account's own name wins when there is one; "off" = no handle.
 INSTAGRAM_HANDLE = _env("STUDIO_INSTAGRAM_HANDLE", "urbanmakers_sg").strip().lstrip("@")
+# The planner's profile grid draws the bio header from the connected account (read with the results);
+# until Instagram is connected, from these.
+INSTAGRAM_NAME = _env("STUDIO_INSTAGRAM_NAME", "Urban Makers").strip()[:60]
+INSTAGRAM_BIO = _env("STUDIO_INSTAGRAM_BIO", "").replace("\\n", "\n").strip()[:300]
+# Small stills of the account's posts (and its picture), read with the results: the planner's grid shows
+# them (thumbs bucket results/<media id>.jpg), because Instagram's own links to them run out.
+IG_THUMBS = ROOT / "IGThumbs"
 # The files of a post on its way to Instagram (the checked video, the slides as JPEGs).
 POSTING_DIR = ROOT / "Posting"
 # Results: every post of the last 90 days is read once a day at this hour (Singapore), and each
 # new post again about an hour after it went out.
 RESULTS_HOUR = min(max(int(_env("STUDIO_RESULTS_HOUR", "9")), 0), 23)
+# What kinds of posts work (insights.py): each post scored against the account's typical post, the features
+# Studio knows compared, and a memo once a week on this day at this hour (Singapore; before the suggested
+# topics), one Claude call (INSIGHTS_MODEL, usage kind "insights"). STUDIO_INSIGHTS=0 turns it all off.
+INSIGHTS = _flag("STUDIO_INSIGHTS", True)
+INSIGHTS_DAY = _env("STUDIO_INSIGHTS_DAY", "monday").lower()
+INSIGHTS_HOUR = min(max(int(_env("STUDIO_INSIGHTS_HOUR", "7")), 0), 23)
+INSIGHTS_MODEL = _env("STUDIO_INSIGHTS_MODEL", CLAUDE_MODEL)

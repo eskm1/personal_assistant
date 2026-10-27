@@ -15,11 +15,15 @@ import { shoot, onShootRefresh } from "./shoot.js";
 import { month, monthRoute, showMonth, hideMonth, monthOpen, loadMonthPage } from "./month.js";
 import { onUploadRow, renderTray, studioBase, studioApi } from "./upload.js";
 import { postingRoute, showPosting, hidePosting, postingOpen, loadPostingPage } from "./posting.js";
+import { gridRoute, showGrid, hideGrid, gridOpen, loadGridPage } from "./grid.js";
 
 // References, the style guide, the library and the taste report (refs.js, library.js, refimport.js: a
 // third of the planner's code) load the first time one of their pages opens, not with Plan.
 let refsMod = null;
 const refsLoad = () => (refsMod ||= import("./refs.js"));
+// Insights (#/insights, what kinds of posts work) loads the first time it opens too.
+let insMod = null;
+const insLoad = () => (insMod ||= import("./insights.js"));
 const refsOpen = () => !$("#refs").hidden;
 // #/references, #/references/<id>, #/style, #/style/<brand>, #/taste (as refs.js reads them), or null.
 function refsRoute(hash) {
@@ -167,7 +171,8 @@ function stop() {
   if (session.topicChannel) sb.removeChannel(session.topicChannel);
   if (session.libChannel) sb.removeChannel(session.libChannel);
   if (session.postChannel) sb.removeChannel(session.postChannel);
-  session.channel = session.refChannel = session.shootChannel = session.planChannel = session.topicChannel = session.libChannel = session.postChannel = null;
+  if (session.gridChannel) sb.removeChannel(session.gridChannel);
+  session.channel = session.refChannel = session.shootChannel = session.planChannel = session.topicChannel = session.libChannel = session.postChannel = session.gridChannel = null;
   session.started = false;
   hideViewer();
   hideChecklist();
@@ -175,6 +180,7 @@ function stop() {
   resetRefs();
   hideMonth();
   hidePosting();
+  hideGrid();
   Object.assign(month, { data: null, plan: null, loaded: false });
   $("#app").hidden = true;
   state.me = null;
@@ -209,6 +215,8 @@ function pageNow() {
   if (h === "#" || h === "#/") return { key: "home", route, pending: !home.data, flags: { calls: !!q("#home [data-sugg-act]") } };
   if (/^#\/(today|checklist)\//.test(h)) return { key: "today", route, flags: { film: !!q("#checklist .cl-shot:not([aria-pressed=true])") } };
   if (h === "#/team") return { key: "team", route };
+  if (gridRoute(h)) return { key: "grid", route };
+  if (h === "#/insights") return { key: "insights", route };
   const post = postingRoute(h);
   if (post) return { key: post.page, route };
   const month = monthRoute(h);
@@ -413,6 +421,36 @@ async function doRoute() {
   const refRoute = refsRoute(h);
   const planRoute = monthRoute(h);
   const postRoute = postingRoute(h);
+  if (h === "#/insights") {
+    hideViewer();
+    hideChecklist();
+    hideTeam();
+    hideRefs();
+    hideHome();
+    hideMonth();
+    hidePosting();
+    hideGrid();
+    $("#planner").hidden = true;
+    setSection("insights");
+    const mod = await insLoad();
+    if (location.hash === "#/insights") await mod.showInsights();   // not if the page was left while it loaded
+    return;
+  }
+  insMod?.then((mod) => mod.hideInsights());
+  if (gridRoute(h)) {
+    hideViewer();
+    hideChecklist();
+    hideTeam();
+    hideRefs();
+    hideHome();
+    hideMonth();
+    hidePosting();
+    $("#planner").hidden = true;
+    setSection("grid");
+    await showGrid();
+    return;
+  }
+  hideGrid();
   if (postRoute) {
     hideViewer();
     hideChecklist();
@@ -547,6 +585,7 @@ const SHOOT_TABLES = ["phases", "site_days", "shot_uploads"];
 const PLAN_TABLES = ["content_plan"];
 const TOPIC_TABLES = ["client_questions"];
 const POST_TABLES = ["posts", "post_results", "account_results"];
+const GRID_TABLES = ["grid_pins"];
 let refreshTimer = null;
 let refreshing = false;
 let again = false;
@@ -611,6 +650,13 @@ function startRealtime() {
   }
   postChannel.subscribe();
   session.postChannel = postChannel;
+  // The profile grid's pins, on their own channel for the same reason.
+  const gridChannel = sb.channel("studio-grid");
+  for (const table of GRID_TABLES) {
+    gridChannel.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => onChange(table, payload));
+  }
+  gridChannel.subscribe();
+  session.gridChannel = gridChannel;
 }
 
 // The Studio machine's heartbeat, without what changes on every one (when, and the sync's own counts).
@@ -649,6 +695,7 @@ async function refreshNow() {
     if (refsOpen()) tasks.push(loadRefs());
     if (monthOpen()) tasks.push(loadMonthPage());
     if (postingOpen()) tasks.push(loadPostingPage());
+    if (gridOpen()) tasks.push(loadGridPage());
     await Promise.all(tasks.map((t) => t.catch(() => {})));
   } finally {
     refreshing = false;

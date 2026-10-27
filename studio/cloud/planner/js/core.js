@@ -71,13 +71,28 @@ export async function kindsQuery(run) {
   for (;;) {
     try { return await run(); } catch (err) {
       if (!missingTable(err)) throw err;
-      if (schema.suggestion && /suggestion/.test(err?.message || "")) schema.suggestion = false;
+      if (schema.grid && /post_on|needs_fact|in_grid|slide_layout/.test(err?.message || "")) schema.grid = false;
+      else if (schema.suggestion && /suggestion/.test(err?.message || "")) schema.suggestion = false;
       else if (schema.slides && /slides/.test(err?.message || "")) schema.slides = false;
       else if (schema.kinds) schema.kinds = false;
       else throw err;
     }
   }
 }
+// The profile grid's columns (migration 20261028000000: an idea's posting date, Needs a fact, in the grid,
+// photos-only slides) come with a later database update: lists ask for them, and without them once refused.
+schema.grid = true;
+export const gridCols = () => (schema.grid ? ",post_on,needs_fact,in_grid,slide_layout" : "");
+// The status marks (../marks.js, shared with Review): an idea's mark, and Needs a fact beside it when it does.
+// post: its Instagram post ({state, scheduled_at, posted_at}), if the page knows it.
+export function ideaMarks(i, post = null, opts = {}) {
+  const M = window.StudioMarks;
+  if (!M || !i) return "";
+  M.setOwner(ownerName());
+  const m = M.of({ production: i.production, post, format: i.format, slides_count: i.slideCount ?? i.slides_count ?? (Array.isArray(i.slides) ? i.slides.length : 0) });
+  return M.html(m, opts) + (M.needsFact(i) ? M.fact(typeof i.needs_fact === "string" ? i.needs_fact : "", opts) : "");
+}
+export const marksKey = (opts) => window.StudioMarks?.legendHTML(opts) || "";
 // clips.archived_at (Review's clean-up) comes with a later database update: footage pickers ask for
 // it and leave archived clips out; until it's there they ask without it.
 schema.archived = true;

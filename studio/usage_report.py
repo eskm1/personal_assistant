@@ -67,6 +67,24 @@ FEATURES = [
      "events": [("action", r"^stage_menu$"), ("click", r"^#tabs-more$")]},
     {"key": "slideshow", "name": "Make a slideshow Reel (a carousel with music)", "shipped": "2026-10-21",
      "events": [("click", r"^#make-slideshow$"), ("action", r"^slideshow_made$")]},
+    {"key": "insights", "name": "Insights: what kinds of posts work (the Monday memo)", "shipped": "2026-10-27",
+     "events": [("view", r"^insights$"), ("click", r"^#pr-insights$"), ("action", r"^insights_(memo|all)$")]},
+    {"key": "grid", "name": "The profile grid (Plan > More > Grid)", "shipped": "2026-10-28",
+     "events": [("view", r"^grid$"), ("action", r"^grid_panel$")]},
+    {"key": "grid_order", "name": "Drag to reorder the grid, Save this order", "shipped": "2026-10-28",
+     "events": [("action", r"^grid_(drag|saved|undo|undo_saved)$")]},
+    {"key": "grid_spread", "name": "Spread these (many posting dates at once)", "shipped": "2026-10-28",
+     "events": [("action", r"^grid_spread$"), ("click", r"^\[data-pg-spread")]},
+    {"key": "grid_pins", "name": "Pins in the grid (and the reminder to pin in the app)", "shipped": "2026-10-28",
+     "events": [("action", r"^grid_(pin|unpin)$"), ("click", r"^\[data-pg-pinned")]},
+    {"key": "photos_many", "name": "Add many photos at once, drag to reorder, Confirm photos", "shipped": "2026-10-28",
+     "events": [("action", r"^photos_(added|reordered|confirmed)$")]},
+    {"key": "photo_layout", "name": "Photos fill the slide (photo-only carousels)", "shipped": "2026-10-28",
+     "events": [("action", r"^photo_layout$")]},
+    {"key": "needs_fact", "name": "Needs a fact from Bryan", "shipped": "2026-10-28",
+     "events": [("action", r"^fact_flagged$"), ("click", r"^\[data-(fact-done|pg-fact)")]},
+    {"key": "status_marks", "name": "The status marks' key", "shipped": "2026-10-28",
+     "events": [("click", r"sm-legend")]},
 ]
 
 # The golden paths. Each step: alternatives (kind, regex on the target, or on the page for views[, detail k=v]).
@@ -96,7 +114,7 @@ FUNNELS = [
     ]},
     {"key": "G5", "name": "Schedule an approved post", "who": "owner", "steps": [
         {"name": "Opened an approved draft", "match": [("view", r"^(draft|carousel|idea)$", "approved=true")]},
-        {"name": "Pressed Schedule", "match": [("click", r"^\[data-post-schedule")]},
+        {"name": "Pressed Schedule", "match": [("click", r"^\[data-post-schedule"), ("click", r"^\[data-pg-schedule")]},
         {"name": "Scheduled it", "match": [("action", r"^post_scheduled$")]},
     ]},
 ]

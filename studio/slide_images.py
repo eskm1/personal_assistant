@@ -30,7 +30,7 @@ log = logging.getLogger("studio.slides")
 
 PHOTOS = settings.ROOT / "Photos"       # uploaded photos, <photo id>.jpg
 STILLS = settings.ROOT / "Stills"       # stills grabbed from clips, cached by clip and moment
-PHOTO_MAX = 2400                        # longest side kept of an uploaded photo (px)
+PHOTO_MAX = 2700                        # longest side kept of an uploaded photo (px): 2160x2700 (4:5) stays as it is
 PREVIEW_WIDTH = 540                     # the planner's preview of a picture
 SHARP_WINDOW = 0.5                      # look this many seconds either side of the moment
 SHARP_FRAMES = 7                        # frames compared for sharpness

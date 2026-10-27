@@ -409,6 +409,12 @@ _ADDED_COLUMNS = {
         "folder": "TEXT",        # its post folder in the inbox (Inbox/<project>/<folder>/), if it has one
         "post_type": "TEXT",     # knowhow | ideas | onsite | finished | offer: the job the post does (content_plan.py)
         "slides": "TEXT",        # JSON: a carousel's slides, as in the planner (carousel.py)
+        # The profile grid (migration 20261028000000): the day it's meant to go out (YYYY-MM-DD), whether a
+        # Reel shows in the grid (1/0: Instagram's share_to_feed; null = not known yet = yes), and how a
+        # carousel's slides are laid out (null = words on the slides, 'photos' = each photo fills its slide).
+        "post_on": "TEXT",
+        "in_grid": "INTEGER",
+        "slide_layout": "TEXT",
     },
     "feedback": {"author": "TEXT",
                  "slide": "INTEGER",   # a carousel note about one slide (1 = the cover), if any
@@ -421,6 +427,10 @@ _ADDED_COLUMNS = {
     "arcs": {"remote_id": "INTEGER"},
     "takes": {"remote_id": "INTEGER"},
     "post_results": {"cloud_hash": "TEXT"},
+    # The profile grid: a small still of each post on the account (IGThumbs/<media id>.jpg; Instagram's own
+    # link to it runs out), whether a Reel shows in the grid (is_shared_to_feed: 1/0, null = not a Reel or
+    # unknown), the whole caption, and which still the planner has (cloud_sync).
+    "ig_media": {"thumb": "TEXT", "in_grid": "INTEGER", "full_caption": "TEXT", "thumb_pushed": "TEXT"},
     # 1 = this email is proven to be theirs in the planner (they signed in with the planner's
     # password), so the dashboard may open the planner for them (planner_site.py).
     "users": {"planner_ok": "INTEGER"},

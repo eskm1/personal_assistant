@@ -7,7 +7,10 @@ from). Read with the same connection as posting (instagram.py):
   - about an hour after Studio posts something, that post again (its first hour).
 
 Each read is kept per post per day (post_results), so a post's numbers can be followed as
-they grow; the account in account_results. The planner gets the latest numbers of each post
+they grow; the account in account_results. The daily read also keeps a small still of each post
+(IGThumbs/<media id>.jpg, from Instagram's media_url / a Reel's thumbnail_url, whose links run out),
+whether a Reel shows in the profile grid (is_shared_to_feed), and the account as its profile shows it
+(name, handle, bio, counts, picture: profile_info()), for the planner's profile grid. The planner gets the latest numbers of each post
 and the account's days (Supabase post_results / account_results, mirror()). summary() groups
 them by kind of post, format and month for Review and the API.
 
@@ -20,8 +23,10 @@ A metric Instagram stops offering is dropped for that post (instagram.media_insi
 again without it), so a renamed metric costs one number, not the whole read.
 """
 import hashlib
+import io
 import json
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
 
 import instagram
@@ -45,6 +50,10 @@ NUMBERS = ["views", "reach", "likes", "comments", "saves", "shares", "interactio
            "total_watch_ms", "follows", "profile_visits"]
 FIRST_HOUR_AFTER = timedelta(minutes=55)    # a new post is read again this long after it went out
 FIRST_HOUR_UNTIL = timedelta(hours=6)
+
+THUMB_WIDTH = 540                          # the grid's tiles are about 130 px wide; 540 covers a sharp phone
+THUMB_MAX_BYTES = 20 * 1024 * 1024         # a picture from Instagram bigger than this isn't read
+_MEDIA_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 _state: dict = {"daily": None, "early": [], "last_error": None, "last_ok": None}
 
@@ -79,7 +88,8 @@ def _load_state() -> dict:
 
 def _save_state() -> None:
     try:
-        _state_file().write_text(json.dumps({k: _state[k] for k in ("daily", "early", "last_ok")}), encoding="utf-8")
+        _state_file().write_text(json.dumps({k: _state.get(k) for k in ("daily", "early", "last_ok", "avatar_pushed")}),
+                                 encoding="utf-8")
     except OSError as e:
         log.debug("Results state not saved: %s", e)
 
@@ -96,14 +106,130 @@ def fmt(media: dict) -> str:
 
 def _save_media(conn, m: dict) -> None:
     post = conn.execute("SELECT id FROM posts WHERE media_id = ?", (str(m["id"]),)).fetchone()
-    conn.execute("""INSERT INTO ig_media (media_id, post_id, media_type, product_type, permalink, caption, posted_at, seen_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (media_id) DO UPDATE SET
+    reel = fmt(m) == "reel"
+    shared = m.get("is_shared_to_feed")
+    in_grid = (1 if shared else 0) if reel and isinstance(shared, bool) else None
+    conn.execute("""INSERT INTO ig_media (media_id, post_id, media_type, product_type, permalink, caption, posted_at, seen_at,
+                        in_grid, full_caption)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (media_id) DO UPDATE SET
                     post_id = COALESCE(excluded.post_id, ig_media.post_id), media_type = excluded.media_type,
                     product_type = excluded.product_type, permalink = COALESCE(excluded.permalink, ig_media.permalink),
-                    caption = excluded.caption, posted_at = COALESCE(excluded.posted_at, ig_media.posted_at)""",
+                    caption = excluded.caption, posted_at = COALESCE(excluded.posted_at, ig_media.posted_at),
+                    in_grid = COALESCE(excluded.in_grid, ig_media.in_grid), full_caption = excluded.full_caption""",
                  (str(m["id"]), post["id"] if post else None, m.get("media_type"), m.get("media_product_type"),
                   m.get("permalink"), (m.get("caption") or "")[:500], _iso(_parse(m.get("timestamp")) or _now()),
-                  _iso(_now())))
+                  _iso(_now()), in_grid, (m.get("caption") or "")[:5000]))
+    _keep_thumb(conn, m)
+
+
+def _picture_url(m: dict) -> str:
+    """Where Instagram has the post's picture: a Reel's (a video's) cover, else the picture (a carousel's
+    media_url is its first slide). Only https links."""
+    url = m.get("thumbnail_url") if fmt(m) == "reel" or (m.get("media_type") or "").upper() == "VIDEO" else None
+    url = url or m.get("media_url") or m.get("thumbnail_url") or ""
+    return url if str(url).startswith(("https://", "http://127.0.0.1", "http://localhost")) else ""
+
+
+def small_jpeg(data: bytes, width: int = THUMB_WIDTH) -> bytes:
+    """A picture as a small JPEG (never made bigger than it is)."""
+    from PIL import Image, ImageOps
+    with Image.open(io.BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img).convert("RGB")
+        if img.width > width:
+            img = img.resize((width, round(img.height * width / img.width)), Image.LANCZOS)
+        out = io.BytesIO()
+        img.save(out, "JPEG", quality=82, optimize=True)
+        return out.getvalue()
+
+
+def _download(url: str) -> bytes | None:
+    import requests
+    try:
+        r = requests.get(url, timeout=(10, 30), stream=True)
+        if r.status_code != 200:
+            return None
+        data = r.raw.read(THUMB_MAX_BYTES + 1, decode_content=True)
+        return data if 0 < len(data) <= THUMB_MAX_BYTES else None
+    except Exception as e:  # a picture is a nicety: never stops the read
+        log.debug("Picture not fetched: %s", type(e).__name__)
+        return None
+
+
+def _keep_thumb(conn, m: dict) -> bool:
+    """A small still of the post, fetched once (IGThumbs/<media id>.jpg)."""
+    media_id = str(m.get("id") or "")
+    if not _MEDIA_ID.match(media_id):
+        return False
+    path = settings.IG_THUMBS / f"{media_id}.jpg"
+    if path.is_file():
+        conn.execute("UPDATE ig_media SET thumb = ? WHERE media_id = ? AND thumb IS NULL", (path.name, media_id))
+        return True
+    url = _picture_url(m)
+    data = _download(url) if url else None
+    if not data:
+        return False
+    try:
+        small = small_jpeg(data)
+    except Exception as e:
+        log.debug("Picture of %s not readable: %s", media_id, type(e).__name__)
+        return False
+    settings.IG_THUMBS.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}")
+    tmp.write_bytes(small)
+    tmp.replace(path)
+    conn.execute("UPDATE ig_media SET thumb = ? WHERE media_id = ?", (path.name, media_id))
+    return True
+
+
+# ── The account as its profile shows it ──────────────────────────────────────
+
+def _profile_file():
+    return settings.ROOT / "instagram_profile.json"
+
+
+def read_profile(now: datetime | None = None) -> dict | None:
+    """Name, handle, bio, counts and picture of the connected account (with the daily read). Kept in
+    ROOT/instagram_profile.json and IGThumbs/avatar.jpg; nothing secret."""
+    try:
+        p = instagram.profile()
+    except IgError as e:
+        if e.kind in ("token", "offline"):
+            raise
+        log.debug("Profile not read: %s", e)
+        return None
+    num = lambda k: int(p[k]) if isinstance(p.get(k), (int, float)) else None
+    out = {"username": str(p.get("username") or "")[:30], "name": str(p.get("name") or "")[:60],
+           "biography": str(p.get("biography") or "")[:300], "followers": num("followers_count"),
+           "follows": num("follows_count"), "media_count": num("media_count"), "read_at": _iso(now or _now())}
+    pic = p.get("profile_picture_url") or ""
+    data = _download(pic) if str(pic).startswith(("https://", "http://127.0.0.1", "http://localhost")) else None
+    if data:
+        try:
+            settings.IG_THUMBS.mkdir(parents=True, exist_ok=True)
+            (settings.IG_THUMBS / "avatar.jpg").write_bytes(small_jpeg(data, 240))
+            out["avatar"] = hashlib.sha256((settings.IG_THUMBS / "avatar.jpg").read_bytes()).hexdigest()[:12]
+        except Exception as e:
+            log.debug("Profile picture not readable: %s", type(e).__name__)
+    _profile_file().write_text(json.dumps(out), encoding="utf-8")
+    return out
+
+
+def profile_info() -> dict:
+    """For laptop_status.info.instagram.profile (the grid's header): the account's own when Studio has read
+    it, else from settings (STUDIO_INSTAGRAM_HANDLE / _NAME / _BIO). avatar_path once it's in the bucket."""
+    try:
+        saved = json.loads(_profile_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        saved = None
+    if isinstance(saved, dict) and saved.get("username") and instagram.connected():
+        out = {k: saved.get(k) for k in ("username", "name", "biography", "followers", "follows", "media_count", "read_at")}
+        out["source"] = "account"
+        pushed = _load_state().get("avatar_pushed")
+        if saved.get("avatar") and pushed == saved["avatar"]:
+            out["avatar_path"] = f"profile/{pushed}.jpg"
+        return out
+    handle = settings.INSTAGRAM_HANDLE if settings.INSTAGRAM_HANDLE.lower() != "off" else ""
+    return {"source": "settings", "username": handle, "name": settings.INSTAGRAM_NAME, "biography": settings.INSTAGRAM_BIO}
 
 
 def read_post(conn, media_id: str, media: dict | None = None, day: date | None = None) -> dict:
@@ -166,7 +292,8 @@ def pull(conn, now: datetime | None = None) -> dict:
             failed += 1
             log.info("Results for %s not read: %s", m.get("id"), e)
     account = read_account(conn, now)
-    return {"posts": done, "failed": failed, "account": account}
+    profile = read_profile(now)
+    return {"posts": done, "failed": failed, "account": account, "profile": bool(profile)}
 
 
 def tick(conn, now: datetime | None = None) -> None:
@@ -262,8 +389,10 @@ def summary(conn, days: int = DAYS) -> dict:
 
 # ── The planner's copy (cloud_sync) ───────────────────────────────────────────
 
-def mirror(api, conn) -> int:
-    """The latest numbers of each post and the account's days, to the planner."""
+def mirror(api, conn, grid: bool = False) -> int:
+    """The latest numbers of each post and the account's days, to the planner. grid: the profile grid's
+    migration is online, so each post's still (results/<media id>.jpg), whether it shows in the grid and its
+    whole caption go too, and the account's picture (profile/<hash>.jpg)."""
     n = 0
     for m in conn.execute("""SELECT m.*, p.post_type, p.title, p.idea_remote FROM ig_media m
                              LEFT JOIN posts p ON p.id = m.post_id""").fetchall():
@@ -276,6 +405,10 @@ def mirror(api, conn) -> int:
                   "post_type": m["post_type"], "title": (m["title"] or (m["caption"] or "")[:120])[:300],
                   "permalink": m["permalink"], "posted_at": m["posted_at"], "day": latest_row["day"],
                   **{k: latest_row[k] for k in NUMBERS}, "pulled_at": latest_row["pulled_at"]}
+        if grid:
+            values.update(in_grid=None if m["in_grid"] is None else bool(m["in_grid"]),
+                          caption=(m["full_caption"] or m["caption"] or "")[:5000],
+                          thumb_path=_push_thumb(api, conn, m))
         digest = hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()[:16]
         if digest == latest_row["cloud_hash"]:
             continue
@@ -294,4 +427,41 @@ def mirror(api, conn) -> int:
         conn.execute("UPDATE account_results SET cloud_hash = ? WHERE day = ?", (digest, r["day"]))
         conn.commit()
         n += 1
+    if grid:
+        _push_avatar(api)
     return n
+
+
+def _push_thumb(api, conn, m) -> str | None:
+    """The post's still in the thumbs bucket (uploaded once), or None when Studio has none."""
+    name = m["thumb"]
+    path = settings.IG_THUMBS / name if name else None
+    if not path or not path.is_file() or not _MEDIA_ID.match(str(m["media_id"])):
+        return None
+    key = f"results/{m['media_id']}.jpg"
+    if m["thumb_pushed"] != name:
+        try:
+            api.upload(key, path.read_bytes())
+        except Exception as e:
+            log.debug("Still of %s not uploaded: %s", m["media_id"], e)
+            return None
+        conn.execute("UPDATE ig_media SET thumb_pushed = ? WHERE media_id = ?", (name, m["media_id"]))
+        conn.commit()
+    return key
+
+
+def _push_avatar(api) -> None:
+    try:
+        saved = json.loads(_profile_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    tag, path = saved.get("avatar"), settings.IG_THUMBS / "avatar.jpg"
+    if not tag or _load_state().get("avatar_pushed") == tag or not path.is_file():
+        return
+    try:
+        api.upload(f"profile/{tag}.jpg", path.read_bytes())
+    except Exception as e:
+        log.debug("Profile picture not uploaded: %s", e)
+        return
+    _state["avatar_pushed"] = tag
+    _save_state()

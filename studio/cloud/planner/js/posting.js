@@ -6,12 +6,12 @@
 // the Studio machine through the shared dialogs in ../post-ui.js (window.StudioPost).
 import {
   $, esc, sb, must, toast, isOwner, ownerName, missingTable, plural, mmss, state, underPlan, cfg,
-  POST_TYPE, POST_TYPES, kindDot, signPaths, stillUrl, openModal, closeModal,
+  POST_TYPE, POST_TYPES, kindDot, signPaths, stillUrl, openModal, closeModal, schema, isoDay, ideaMarks, marksKey,
 } from "./core.js";
 import { studioApi, studioBase } from "./upload.js";
 
 const root = () => $("#posting");
-export const posts = { route: null, list: null, results: null, account: null, missing: false, sig: "", tab: 0 };
+export const posts = { route: null, list: null, results: null, account: null, missing: false, sig: "", tab: 0, planned: [] };
 export const postingOpen = () => !root().hidden;
 const SP = () => window.StudioPost;
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -115,10 +115,29 @@ export function hidePosting() {
   posts.route = null;
   posts.sig = "";
 }
+// Ideas with a posting date (the profile grid's, migration 20261028000000) in this month and next that aren't
+// scheduled yet: the calendar shows them as planned. Nothing before that update.
+async function loadPlanned() {
+  if (!schema.grid) return [];
+  const t = new Date();
+  const from = isoDay(new Date(t.getFullYear(), t.getMonth(), 1)), to = isoDay(new Date(t.getFullYear(), t.getMonth() + 2, 0));
+  try {
+    return must(await sb.from("ideas").select("id,title,format,post_type,production,post_on,needs_fact,status,slides")
+      .not("post_on", "is", null).gte("post_on", from).lte("post_on", to).neq("status", "dismissed").order("post_on").limit(200));
+  } catch (err) {
+    if (missingTable(err)) { schema.grid = false; return []; }
+    throw err;
+  }
+}
+
 export async function loadPostingPage() {
   const route = posts.route;
   if (!route) return;
-  if (route.page === "calendar") await loadPosts();
+  if (route.page === "calendar") {
+    const [, planned] = await Promise.all([loadPosts(), loadPlanned().catch(() => [])]);
+    const live = new Set((posts.list || []).filter((p) => p.idea_id).map((p) => p.idea_id));
+    posts.planned = planned.filter((i) => !live.has(i.id) && !["posted", "rejected"].includes(i.production?.status));
+  }
   if (route.page === "results") {
     // Both at once; the results' tables missing still counts once the posts are in.
     const [, missing] = await Promise.all([loadPosts(), loadResults()]);
@@ -147,7 +166,7 @@ function render() {
   const el = root();
   const r = posts.route;
   if (!r) return;
-  const sig = JSON.stringify([r, posts.list, posts.results, posts.account, posts.missing, posts.tab, igInfo()]);
+  const sig = JSON.stringify([r, posts.list, posts.results, posts.account, posts.missing, posts.tab, igInfo(), posts.planned]);
   if (sig === posts.sig && el.firstChild) return;
   posts.sig = sig;
   if (r.page === "instagram") {
@@ -169,7 +188,12 @@ function render() {
 
 // ── Calendar ────────────────────────────────────────────────────────────────
 
-function monthGrid(y, m, byDay) {
+const postMark = (p) => window.StudioMarks?.html(window.StudioMarks.of({ post: p }), { small: true, title: false }) || "";
+function plannedHTML(i) {
+  return `<a class="pc-post planned ${esc(i.post_type || "none")}" href="#/idea/${esc(i.id)}" title="${esc(`Planned: ${i.title}`)}" aria-label="${esc(`Planned for this day, not scheduled yet: ${i.title}`)}">
+    <span class="pc-time">${ideaMarks(i, null, { small: true, title: false })}</span><span class="pc-title">${esc(i.title)}</span></a>`;
+}
+function monthGrid(y, m, byDay, planned = new Map()) {
   const first = new Date(Date.UTC(y, m, 1));
   const days = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
   const lead = (first.getUTCDay() + 6) % 7;   // Monday first
@@ -179,12 +203,14 @@ function monthGrid(y, m, byDay) {
   for (let d = 1; d <= days; d++) {
     const key = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     const list = byDay.get(key) || [];
-    const label = `${d} ${MONTHS[m]}${list.length ? `: ${plural(list.length, "post")}` : ""}`;
+    const plan = planned.get(key) || [];
+    const label = `${d} ${MONTHS[m]}${list.length ? `: ${plural(list.length, "post")}` : ""}${plan.length ? `${list.length ? "," : ":"} ${plan.length} planned` : ""}`;
     cells += `<div class="pc-cell${key === today ? " today" : ""}${key < today ? " past" : ""}" aria-label="${esc(label)}">
       <span class="pc-day">${d}</span>
       ${list.map((p) => `<button type="button" class="pc-post ${esc(p.post_type || "none")} ${esc(p.state)}" data-post="${esc(p.id)}"
         title="${esc(`${STATE_LABEL[p.state]}: ${p.title}`)}" aria-label="${esc(`${STATE_LABEL[p.state]} ${SP()?.whenText(outAt(p)) || ""}: ${p.title}`)}">
-        <span class="pc-time">${esc(SP()?.shortTime(outAt(p)) || "")}</span><span class="pc-title">${esc(p.title)}</span></button>`).join("")}
+        <span class="pc-time">${postMark(p)}${esc(SP()?.shortTime(outAt(p)) || "")}</span><span class="pc-title">${esc(p.title)}</span></button>`).join("")}
+      ${plan.map(plannedHTML).join("")}
     </div>`;
   }
   return `<section class="pc-month" aria-label="${esc(`${MONTHS[m]} ${y}`)}">
@@ -210,16 +236,21 @@ function calendarHTML() {
   const done = list.filter((p) => p.state === "posted").sort((a, b) => Date.parse(outAt(b)) - Date.parse(outAt(a))).slice(0, 8);
   const failed = failedPosts(list);
   const tab = posts.tab || 0;
+  const planned = new Map();
+  for (const i of posts.planned || []) { if (!planned.has(i.post_on)) planned.set(i.post_on, []); planned.get(i.post_on).push(i); }
   const legend = `<div class="pc-legend" aria-label="Key">${POST_TYPES.map((k) => `<span>${kindDot(k)}${esc(POST_TYPE[k])}</span>`).join("")}
-    <span><i class="pc-key posted" aria-hidden="true"></i>Posted</span><span><i class="pc-key scheduled" aria-hidden="true"></i>Scheduled</span></div>`;
+    <span><i class="pc-key posted" aria-hidden="true"></i>Posted</span><span><i class="pc-key scheduled" aria-hidden="true"></i>Scheduled</span>
+    ${schema.grid ? `<span><i class="pc-key planned" aria-hidden="true"></i>Planned (a posting date, not scheduled yet)</span>` : ""}</div>
+    ${marksKey({ cls: "pc-marks" })}`;
   return `<div class="pp-wrap">
     ${backHTML()}
     <div class="pp-head"><h1 tabindex="-1">Posting calendar</h1>
-      <span class="muted">${esc(plural(next.length, "post"))} scheduled</span></div>
+      <span class="muted">${esc(plural(next.length, "post"))} scheduled${posts.planned?.length ? `, ${esc(posts.planned.length)} more planned` : ""}</span>
+      <a class="btn pp-grid-link" href="#/grid">See it as the grid</a></div>
     ${connectionLine()}
     ${failed.length ? `<section class="pp-card pp-failed" aria-labelledby="pp-failed"><h2 id="pp-failed">Couldn't post</h2>${failed.map(agendaRow).join("")}</section>` : ""}
     <div class="seg pc-tabs" role="group" aria-label="Which month">${months.map(([yy, mm], i) => `<button type="button" data-pc-tab="${i}" class="${i === tab ? "on" : ""}" aria-pressed="${i === tab}">${esc(MONTHS[mm])}</button>`).join("")}</div>
-    <div class="pc-months" data-tab="${tab}">${months.map(([yy, mm]) => monthGrid(yy, mm, byDay)).join("")}</div>
+    <div class="pc-months" data-tab="${tab}">${months.map(([yy, mm]) => monthGrid(yy, mm, byDay, planned)).join("")}</div>
     ${legend}
     <div class="pp-cols">
       <section class="pp-card" aria-labelledby="pp-next"><h2 id="pp-next">Coming up</h2>
@@ -236,7 +267,7 @@ function agendaRow(p) {
     p.state === "failed" ? (p.error || "") : p.state === "scheduled" && p.error ? p.error : ""].filter(Boolean).join(" · ");
   return `<button type="button" class="pp-row" data-post="${esc(p.id)}">
     ${still ? `<img class="pp-thumb" src="${esc(still)}" alt="" loading="lazy">` : `<span class="pp-thumb none" aria-hidden="true"></span>`}
-    <span class="pp-row-text"><span class="pp-when ${esc(p.state)}">${kindDot(p.post_type)}${esc(SP()?.whenText(outAt(p)) || "")} · ${esc(STATE_LABEL[p.state])}</span>
+    <span class="pp-row-text"><span class="pp-when ${esc(p.state)}">${postMark(p)}${kindDot(p.post_type)}${esc(SP()?.whenText(outAt(p)) || "")} · ${esc(STATE_LABEL[p.state])}</span>
       <span class="pp-row-title">${esc(p.title)}</span>${sub ? `<span class="pp-sub">${esc(sub)}</span>` : ""}</span></button>`;
 }
 
@@ -348,7 +379,8 @@ function resultsHTML() {
       <span role="cell" class="mono pr-opt">${esc(secs(r.avg_watch_ms))}</span></div>`).join("");
   return `<div class="pp-wrap">
     ${backHTML()}
-    <div class="pp-head"><h1 tabindex="-1">Results</h1><span class="muted">${read ? `Read ${esc(SP()?.whenText(read) || "")}` : "Read every morning"}</span></div>
+    <div class="pp-head"><h1 tabindex="-1">Results</h1><span class="muted">${read ? `Read ${esc(SP()?.whenText(read) || "")}` : "Read every morning"}</span>
+      <a class="btn small" href="#/insights" id="pr-insights">What works: Insights ›</a></div>
     ${connectionLine()}
     ${rows.length ? `<div class="pr-tiles">${tiles}</div>
       ${groupTable("By kind of post", "pr-kind", byKind, (k) => POST_TYPE[k] || "Not sorted", true)}

@@ -6,9 +6,11 @@
 // the image key, laptop_status.info.concepts; never in a Finished homes post; marked "Concept").
 import {
   $, esc, sb, must, toast, plural, mmss, shortDate, signPaths, stillUrl, jobView, jobActive, retakeBadge,
-  openModal, closeModal, laptopWait, state, SLIDE_ROLE, PICTURE, liveClips,
+  openModal, closeModal, laptopWait, state, SLIDE_ROLE, PICTURE, liveClips, isOwner, ownerName, offWhy, mark, ago,
+  schema, PHONE,
 } from "./core.js";
-import { addPhoto, canUpload, studioApi } from "./upload.js";
+import { addPhoto, addPhotos, canUpload, studioApi, isPhoto, nameOrder, onPhotoDrop } from "./upload.js";
+import { sortable } from "./sortable.js";
 
 export const MAX_SLIDES = 12;
 const ROLES = ["cover", "point", "ask"];
@@ -372,4 +374,228 @@ async function showMoments(clipId) {
     <h3>Or tap a frame</h3>
     ${m.frames?.length ? `<div class="picker-grid frames-grid">${m.frames.map((f) => `<button class="pick frame-pick" ${at(f.at)} aria-label="The moment at ${esc(mmss(f.at))}"><img src="${esc(/^data:image\/jpeg;base64,/.test(f.src) ? f.src : "")}" alt=""><span class="pick-text"><span class="pick-meta">${esc(mmss(f.at))}</span></span></button>`).join("")}</div>` : `<p class="muted">No frames of this clip on Studio.</p>`}
     <p class="muted small" id="still-status" aria-live="polite"></p>`;
+}
+
+
+// ── Photos: many at once, in order (the profile grid's panel and the idea page) ──
+// A carousel's photos as a strip: add a folder (or many from the phone's Photos) in one go, in file-name order;
+// drag to reorder (hold a moment on a phone), or tap one for Move earlier / Move later / Make cover / Remove;
+// slide 1 is the cover. Instagram takes at most 10 in a carousel (laptop_status.info.instagram.carousel_max).
+// "Photos fill the slide" (ideas.slide_layout 'photos') makes each photo its whole slide, with slide 1's
+// heading as an optional small cover line; Bryan's Confirm photos says the set is the one he wants.
+
+export const isPhotoLayout = (d) => d?.slide_layout === "photos";
+export const carouselMax = () => Math.max(2, Number(state.laptop?.info?.instagram?.carousel_max) || 10);
+const phSel = new Map();   // idea id -> the photo key picked for its actions
+const shown = new Map();   // the ideas whose photo strips are on screen (by id), so a drop finds its idea
+const phNotes = new Map(); // idea id -> what the last Add photos said (kept when the strip is drawn again)
+const hasPhoto = (s) => s.image?.source === "photo" || s.image?.source === "clip" || s.image?.source === "concept";
+
+export function photosHTML(d, opts = {}) {
+  shown.set(d.id, d);
+  const locked = slidesLocked(d);
+  const max = carouselMax();
+  const n = d.slides.length;
+  const sel = phSel.get(d.id);
+  const pick = d.slides.find((x) => x.key === sel);
+  const owner = isOwner();
+  const grid = schema.grid && "slide_layout" in d;
+  const photos = isPhotoLayout(d);
+  const tiles = d.slides.map((x, i) => {
+    const thumb = stillUrl(x.image?.thumb_path);
+    const on = x.key === sel;
+    return `<li class="ph-item${on ? " on" : ""}" data-key="${esc(x.key)}">
+      <button type="button" class="ph-tile" data-ph-pick="${esc(x.key)}" aria-pressed="${on}"
+        aria-label="${esc(`Slide ${i + 1}${i === 0 ? ", the cover" : ""}${x.heading ? `: ${x.heading}` : ""}${thumb ? "" : ", no picture yet"}. ${locked ? "" : "Tap for its options, or hold and drag to move it"}`)}">
+        ${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy" draggable="false">` : `<span class="ph-none">${esc(x.heading || (hasPhoto(x) ? "Picture" : "Words"))}</span>`}
+        <span class="ph-num">${i + 1}</span>${i === 0 ? `<span class="ph-cover">Cover</span>` : ""}
+      </button></li>`;
+  }).join("");
+  const k = pick ? d.slides.indexOf(pick) : -1;
+  const actions = pick && !locked ? `<div class="ph-actions" role="group" aria-label="${esc(`Slide ${k + 1}`)}">
+      <button type="button" class="btn small" data-ph-move="-1" ${offWhy(k === 0 ? "It's already first." : "")}>Move earlier</button>
+      <button type="button" class="btn small" data-ph-move="1" ${offWhy(k === n - 1 ? "It's already last." : "")}>Move later</button>
+      <button type="button" class="btn small" data-ph-cover ${offWhy(k === 0 ? "It's the cover already." : "")}>Make cover</button>
+      <button type="button" class="btn small ghost danger" data-ph-remove>Remove</button></div>` : "";
+  const confirmed = d.photos_confirmed_at;
+  const confirm = !grid || locked || !n ? ""
+    : confirmed ? `<p class="ph-confirmed good-text small">Photos confirmed ${esc(ago(confirmed))}. Changing them asks again.</p>`
+      : `<button type="button" class="btn ${owner ? "good" : ""}" data-ph-confirm ${offWhy(owner ? "" : `${ownerName()} confirms the photos.`)}>Confirm photos</button>`;
+  const room = Math.max(0, max - n);
+  const cover = photos && n && !locked ? `<div class="ph-line" data-slide-key="${esc(d.slides[0].key)}" data-saved-scope>
+      <label class="um-label" for="ph-line-${esc(d.id)}">Cover line (optional, slide 1 only)</label> <span class="saved" aria-live="polite"></span>
+      <input id="ph-line-${esc(d.id)}" data-slide-field="heading" maxlength="120" value="${esc(d.slides[0].heading)}" data-orig="${esc(d.slides[0].heading)}" placeholder="A few words over the first photo"></div>` : "";
+  return `<section class="ph-box${opts.cls ? ` ${esc(opts.cls)}` : ""}" ${locked ? "" : `data-drop-photos="${esc(d.id)}"`} aria-label="Photos">
+    <div class="ph-head"><h3 class="um-label">Photos · ${esc(`${n} of ${max}`)}</h3>
+      ${grid && !locked ? `<div class="seg ph-layout" role="group" aria-label="Layout">
+        <button type="button" data-ph-layout="" class="${photos ? "" : "on"}" aria-pressed="${!photos}">Words on slides</button>
+        <button type="button" data-ph-layout="photos" class="${photos ? "on" : ""}" aria-pressed="${photos}">Photos fill the slide</button></div>` : ""}</div>
+    ${n ? `<ol class="ph-strip">${tiles}</ol>` : `<p class="muted small ph-empty">No photos yet.</p>`}
+    ${actions}
+    ${locked ? `<p class="muted small">These slides are in Review now. To change the photos, send the draft back with notes there.</p>`
+      : `<div class="ph-add">
+        <button type="button" class="btn${n ? "" : " primary"}" data-ph-add ${offWhy(!canUpload() ? `Adding photos needs Studio to be reachable. ${laptopWait()}` : room ? "" : `Instagram takes ${max} photos in a carousel. Remove one to add another.`)}>${n ? "Add more photos" : "Add photos"}</button>
+        <span class="muted small">${PHONE.matches ? "Pick several from Photos at once." : "Or drop a folder or several photos here."} Up to ${esc(max)}, in file-name order; then drag to change it.</span>
+      </div>`}
+    <p class="small ph-note" id="ph-note-${esc(d.id)}" aria-live="polite">${esc(phNotes.get(d.id) || "")}</p>
+    ${cover}
+    ${confirm ? `<div class="ph-foot">${confirm}</div>` : ""}
+  </section>`;
+}
+
+// One more photo at the end (a words carousel: before its ask), on the slides as they are now in the planner.
+async function appendPhoto(ideaId, photo) {
+  const row = must(await sb.from("ideas").select("id,slides").eq("id", ideaId).maybeSingle());
+  const slides = prepSlides(row?.slides);
+  if (slides.length >= Math.min(MAX_SLIDES, carouselMax())) {
+    toast(`A photo was left out: Instagram takes ${carouselMax()} in a carousel.`, 6000);
+    return;
+  }
+  const s = { key: newKey(), role: slides.length ? "point" : "cover", heading: "", body: "",
+    image: { source: "photo", photo_id: photo.id, ...(photo.thumb_path ? { thumb_path: photo.thumb_path } : {}) } };
+  const ask = slides.length > 1 && slides[slides.length - 1].role === "ask";
+  slides.splice(ask ? slides.length - 1 : slides.length, 0, s);
+  must(await sb.from("ideas").update({ slides }).eq("id", ideaId));
+  if (photo.thumb_path) await signPaths([photo.thumb_path]).catch(() => {});
+  document.dispatchEvent(new CustomEvent("studio:refresh"));
+}
+
+// Photos picked or dropped for an idea: the first that fit (Instagram's 10), in file-name order; the rest said.
+export function addPhotosTo(d, files) {
+  const note = document.getElementById(`ph-note-${d.id}`);
+  // Said under the photos when they're on screen, else in a toast.
+  const say = (text) => {
+    phNotes.set(d.id, text);
+    if (note?.closest(".ph-box")?.offsetParent) note.textContent = text; else toast(text, 7000);
+  };
+  if (!canUpload()) { say(`Adding photos needs Studio to be reachable. ${laptopWait()}`); return; }
+  const photos = nameOrder([...files].filter(isPhoto));
+  const other = files.length - photos.length;
+  const room = Math.max(0, carouselMax() - d.slides.length);
+  if (!photos.length) { say(other ? "Those aren't photos Studio can use (JPEG, PNG or HEIC)." : "No photos in that."); return; }
+  if (!room) { say(`This carousel has ${carouselMax()} photos, Instagram's most. Remove one first.`); return; }
+  const take = photos.slice(0, room), left = photos.slice(room);
+  const queued = addPhotos(d.id, take, `Photos for “${d.title}”`, (photo) => appendPhoto(d.id, photo));
+  mark("photos_added", { n: queued, left: left.length });
+  say([`Adding ${plural(queued, "photo")} in file-name order.`,
+    left.length ? `Instagram takes ${carouselMax()} in a carousel, so ${plural(left.length, "photo")} ${left.length === 1 ? "was" : "were"} left out: ${left.slice(0, 3).map((f) => f.name).join(", ")}${left.length > 3 ? "…" : ""}.` : "",
+    other ? `${plural(other, "file")} ${other === 1 ? "isn't a photo" : "aren't photos"}, skipped.` : ""].filter(Boolean).join(" "));
+}
+
+const manyInput = document.createElement("input");
+manyInput.type = "file";
+manyInput.multiple = true;
+manyInput.accept = "image/jpeg,image/png,image/heic,image/heif,.heic,.heif,.jpg,.jpeg,.png";
+manyInput.className = "up-picker";
+manyInput.tabIndex = -1;
+manyInput.setAttribute("aria-hidden", "true");
+document.body.appendChild(manyInput);
+let manyFor = null;
+manyInput.addEventListener("change", () => {
+  const files = [...manyInput.files];
+  manyInput.value = "";
+  const d = manyFor;
+  manyFor = null;
+  if (d && files.length) addPhotosTo(d, files);
+});
+
+onPhotoDrop((zone, files) => { const d = shown.get(Number(zone.dataset.dropPhotos)); if (d) addPhotosTo(d, files); });
+
+// Buttons in a photo strip. Returns true when it was one of them and changed something (the caller reloads the
+// idea), "render" for a change on screen only, "picker" when the photo picker opened (nothing to reload).
+export async function photosClick(t, d) {
+  const ds = t.dataset;
+  shown.set(d.id, d);
+  if (ds.phPick) { phSel.set(d.id, phSel.get(d.id) === ds.phPick ? null : ds.phPick); return "render"; }
+  if (ds.phAdd != null) {
+    if (t.getAttribute("aria-disabled") !== "true") { manyFor = d; manyInput.click(); }
+    return "picker";   // nothing changed yet: the page isn't drawn again under the open picker
+  }
+  if (ds.phLayout != null) {
+    const layout = ds.phLayout || null;
+    if ((d.slide_layout || null) === layout) return true;
+    must(await sb.from("ideas").update({ slide_layout: layout }).eq("id", d.id));
+    d.slide_layout = layout;
+    mark("photo_layout", { photos: !!layout });
+    toast(layout ? "Each photo fills its slide. Slide 1 can carry a short cover line." : "Back to words on the slides.");
+    return true;
+  }
+  if (ds.phConfirm != null) {
+    if (t.getAttribute("aria-disabled") === "true") return true;
+    const at = new Date().toISOString();
+    must(await sb.from("ideas").update({ photos_confirmed_at: at, photos_confirmed_by: state.me?.id || null }).eq("id", d.id));
+    d.photos_confirmed_at = at;
+    mark("photos_confirmed", { n: d.slides.length });
+    toast("Photos confirmed.");
+    return true;
+  }
+  const key = phSel.get(d.id);
+  if (!key) return false;
+  const before = copy(d);
+  const slides = copy(d);
+  const k = slides.findIndex((x) => x.key === key);
+  if (k < 0) return false;
+  if (ds.phMove) {
+    const j = k + Number(ds.phMove);
+    if (j < 0 || j >= slides.length || t.getAttribute("aria-disabled") === "true") return true;
+    [slides[k], slides[j]] = [slides[j], slides[k]];
+  } else if (ds.phCover != null) {
+    if (!k) return true;
+    slides.unshift(...slides.splice(k, 1));
+  } else if (ds.phRemove != null) {
+    slides.splice(k, 1);
+    phSel.delete(d.id);
+  } else return false;
+  await saveOrder(d, slides);
+  if (ds.phRemove != null) {
+    toast("Photo removed from the carousel.", 6000, { label: "Undo", mark: "photo_remove_undo", run: async () => {
+      try { await save(d, before); document.dispatchEvent(new CustomEvent("studio:refresh")); toast("Photo back."); } catch (err) { toast(`Couldn't put it back: ${err.message}`); }
+    } });
+  }
+  return true;
+}
+
+// The slides in a new order: the cover is whatever is first now, the ask stays last on a words carousel.
+async function saveOrder(d, slides) {
+  slides.forEach((x, i) => { if (i === 0) x.role = "cover"; else if (x.role === "cover") x.role = "point"; });
+  if (!isPhotoLayout(d) && slides.length > 1) {
+    const ask = slides.findIndex((x) => x.role === "ask");
+    if (ask >= 0 && ask !== slides.length - 1) slides.push(...slides.splice(ask, 1));
+  }
+  await save(d, slides);
+  d.photos_confirmed_at = null;
+}
+
+// Drag to reorder a strip (sortable.js), once per page region that shows strips: getD() is the idea on screen.
+export function photoSorter(region, getD, after) {
+  return sortable(region, {
+    item: ".ph-item",
+    key: (el) => el.dataset.key,
+    can: () => { const d = getD(); return !d ? "Loading." : slidesLocked(d) ? "These slides are in Review now: send it back there to change them." : ""; },
+    cols: () => {
+      const strip = region.querySelector(".ph-strip");
+      const first = strip?.children[0], all = strip ? [...strip.children] : [];
+      return Math.max(1, all.filter((x) => x.offsetTop === first?.offsetTop).length);
+    },
+    over: (key, to) => {
+      const strip = region.querySelector(".ph-strip");
+      const el = strip && [...strip.children].find((x) => x.dataset.key === key);
+      if (!el) return;
+      const rest = [...strip.children].filter((x) => x !== el);
+      strip.insertBefore(el, rest[to] || null);
+      [...strip.children].forEach((x, i) => { const num = x.querySelector(".ph-num"); if (num) num.textContent = String(i + 1); });
+    },
+    drop: async (key) => {
+      const d = getD();
+      const strip = region.querySelector(".ph-strip");
+      if (!d || !strip) return;
+      const order = [...strip.children].map((x) => x.dataset.key);
+      const slides = order.map((k) => copy(d).find((x) => x.key === k)).filter(Boolean);
+      if (slides.length !== d.slides.length) return;
+      try { await saveOrder(d, slides); mark("photos_reordered"); } catch (err) { toast(`Couldn't save the order: ${err.message}`); }
+      after?.();
+    },
+    cancel: () => after?.(),
+    why: (text) => toast(text),
+  });
 }

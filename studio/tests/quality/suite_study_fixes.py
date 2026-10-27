@@ -236,7 +236,7 @@ def over(m: dict) -> list[str]:
 
 
 import carousel, classify, concepts, content_plan, draft_review, editor, footage_ideas, help_desk, ideas, music
-import plan, slideshow, spelling, taste, topics, voiceover, wording
+import insights, plan, slideshow, spelling, taste, topics, voiceover, wording
 SCHEMAS = {  # module: {label: schema} (the editor's plan in its largest form: pictures and a voice-over on)
     "style_study": {"LOOK_SCHEMA (a reel)": style_study.LOOK_SCHEMA, "SLIDES_SCHEMA (a carousel)": style_study.SLIDES_SCHEMA,
                     "GUIDE_SCHEMA (draft_guide)": style_study.GUIDE_SCHEMA},
@@ -247,6 +247,7 @@ SCHEMAS = {  # module: {label: schema} (the editor's plan in its largest form: p
                "_JOIN_SCHEMA": editor._JOIN_SCHEMA},
     "carousel": {"REVISE_SCHEMA": carousel.REVISE_SCHEMA},
     "topics": {"_schema": topics._schema()},
+    "insights": {"_schema (the Monday memo)": insights._schema()},
     "footage_ideas": {"_schema": footage_ideas._schema()},
     "classify": {"SCHEMA": classify.SCHEMA},
     "content_plan": {"_SCHEMA": content_plan._SCHEMA},

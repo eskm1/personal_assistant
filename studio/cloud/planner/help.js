@@ -79,6 +79,21 @@ window.StudioHelp = (() => {
       ["[data-up-film], [data-up-choose]", "Film or upload a take for that shot."],
       ["#cl-only", "Show only the shots still to film."],
     ] },
+    grid: { name: "Grid", lines: [
+      "The Instagram profile as a phone shows it: posted, scheduled and planned posts, newest at the top.",
+      "Drag a post to change the order (on a phone, hold it a moment first). The dates stay; the posts move through them. **Swap two** trades two dates instead.",
+      "Nothing changes until **Save this order**. Undo goes back to the last saved order.",
+      "Tap a post for its slides, caption and photos. Posting stays Approve, then Schedule.",
+      "**Spread these** gives many ideas a date at once: pick them in order, a start day and the weekdays.",
+      "Pins: Instagram can't pin for Studio, so Plan reminds you to pin it in the app.",
+    ], tour: [
+      [".pg-profile", "The profile's header, as the account shows it."],
+      ["#pg-tiles", "The grid, three to a row, newest first. Drag a post to move it."],
+      [".pg-mode", "When you drop a post: shift the rest along, or swap the two."],
+      ["[data-pg-spread]", "Give many ideas their dates in one go."],
+      [".pg-key", "What each mark in a tile's corner means."],
+      ["#pg-savebar", "Save this order keeps the new dates. Undo forgets them."],
+    ] },
     calendar: { name: "Posting calendar", lines: [
       "What goes out on Instagram, day by day.",
       "Scheduled posts show at their time. Tap one to change or cancel it.",
@@ -94,6 +109,17 @@ window.StudioHelp = (() => {
     ], tour: [
       [".pp-card", "One post's numbers."],
       ["#pr-all", "Every post, not just the latest."],
+    ] },
+    insights: { name: "Insights", lines: [
+      "What kinds of posts work, from the account's own numbers.",
+      "Each post is scored at day 7 against a typical post of its format: 100 is typical.",
+      "Proven needs 8 posts on each side. An early signal is a hunch to test.",
+      "Every Monday a memo says what to do more of, less of and try next.",
+    ], tour: [
+      ["#ins-grade", "Whether Studio's forecasts beat average yet. Until they do, treat suggestions as hunches."],
+      ["#ins-memo-h", "This week's memo. Earlier ones are under it."],
+      ["#ins-find-h", "Features that stand out, with how many posts each."],
+      ["#ins-posts-h", "Every post's score."],
     ] },
     instagram: { name: "Instagram", lines: [
       "The Instagram account Studio posts to.",

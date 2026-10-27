@@ -18,6 +18,7 @@
   <link rel="stylesheet" href="/static/style.css">
   <link rel="stylesheet" href="/static/shell.css">
   <link rel="stylesheet" href="/static/post-ui.css">
+  <link rel="stylesheet" href="/static/marks.css">
 </head>
 <body>
   <div class="shell" id="shell" data-half="review"></div>
@@ -35,6 +36,7 @@
 
   <main>
     <p class="stage-hint" id="stage-hint"></p>
+    <div class="stage-key" id="stage-key" hidden></div>
     <div class="toolbar" id="toolbar" hidden>
       <input id="idea-focus" type="text" maxlength="500" placeholder="Focus (optional), e.g. kitchen projects this month">
       <button class="btn primary" id="suggest">Suggest posts</button>
@@ -74,6 +76,7 @@
   <div class="toast" id="toast" role="status" hidden></div>
   <script src="/static/shell.js"></script>
   <script src="/static/post-ui.js"></script>
+  <script src="/static/marks.js"></script>
   <script src="/static/capture.js" async></script>
   <script src="/static/app.js"></script>
   <!-- Help and its look, fetched by shell.js the first time Help is pressed. -->

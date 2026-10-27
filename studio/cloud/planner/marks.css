@@ -1,0 +1,37 @@
+/* The status marks (marks.js), the same in Plan and Review: one round icon each, on the theme's colours.
+   A thin white ring keeps a mark readable over a photo. The key (.sm-legend) opens under its summary. */
+.sm-mark {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 22px; height: 22px;
+  border-radius: var(--um-radius-pill); border: 1px solid transparent; color: #fff; background: var(--um-ink);
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .92); vertical-align: middle;
+}
+.sm-mark svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.sm-mark.sm-small { width: 16px; height: 16px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .92); }
+.sm-mark.sm-small svg { width: 11px; height: 11px; stroke-width: 2.4; }
+.sm-posted { background: var(--um-success); }
+.sm-scheduled { background: var(--um-info); }
+.sm-approved { background: var(--um-card); border-color: var(--um-success); color: var(--um-success); }
+.sm-approved svg { stroke-width: 1.9; }
+.sm-review { background: var(--um-ink); }
+.sm-idea { background: var(--um-card); border-color: var(--um-line); color: var(--ink-soft); }
+.sm-fact { background: var(--act-fill); }
+.sm-fact svg { stroke-width: 2.6; }
+.sm-mark.sm-bad { background: var(--um-danger); border-color: var(--um-danger); color: #fff; }
+
+/* The key: a small "Key" button; open, every mark with its meaning. */
+.sm-legend { font-size: var(--um-fs-meta); color: var(--ink-soft); }
+.sm-legend > summary {
+  display: inline-flex; align-items: center; gap: 6px; min-height: var(--um-h-sm); padding: 0 8px; cursor: pointer;
+  border: 1px solid var(--um-line); border-radius: var(--um-radius-sm); background: var(--um-card); color: var(--um-ink);
+  font-size: var(--um-fs-ui); font-weight: 500; list-style: none; user-select: none;
+}
+.sm-legend > summary::-webkit-details-marker { display: none; }
+.sm-legend > summary:hover { background: var(--um-paper-mid); }
+.sm-legend-dots { display: inline-flex; gap: 2px; }
+.sm-legend-dots .sm-mark { box-shadow: none; }
+.sm-legend-list { list-style: none; margin: 8px 0 0; padding: 10px 12px; display: grid; gap: 8px;
+  background: var(--um-card); border: 1px solid var(--um-line); border-radius: var(--um-radius); max-width: 420px; }
+.sm-legend-list li { display: flex; gap: 10px; align-items: flex-start; line-height: 1.4; }
+.sm-legend-list strong { color: var(--um-ink); font-weight: 600; }
+.sm-legend-means { color: var(--ink-soft); }
+@media (pointer: coarse) { .sm-legend > summary { min-height: var(--um-touch); padding: 0 12px; } }

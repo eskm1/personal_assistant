@@ -271,9 +271,22 @@ def _when(value, now: datetime) -> datetime:
     return t.replace(second=0, microsecond=0)
 
 
+def _idea_row(conn, production_id: int):
+    """The planner idea the draft was made from (the local copy cloud_sync keeps), or None."""
+    remote = _idea_remote(conn, production_id)
+    return conn.execute("SELECT * FROM ideas WHERE remote_id = ?", (remote,)).fetchone() if remote else None
+
+
+def grid_default(conn, production_id: int) -> bool:
+    """Does a Reel show in the profile grid? The idea's flag (the planner's grid), else yes."""
+    idea = _idea_row(conn, production_id)
+    return not (idea is not None and idea["in_grid"] == 0)
+
+
 def schedule(conn, production_id: int, when=None, caption: str | None = None, cover_ms=None,
-             share_to_feed: bool = True, collaborators=None, by: str = "", now: datetime | None = None) -> dict:
-    """Schedule an approved draft (when=None or "now" = Post now). Raises PostError."""
+             share_to_feed: bool | None = None, collaborators=None, by: str = "", now: datetime | None = None) -> dict:
+    """Schedule an approved draft (when=None or "now" = Post now). Raises PostError. share_to_feed None: the
+    idea's "in the profile grid" flag."""
     now = now or _now()
     prod = _production(conn, production_id)
     why = can_post(conn, prod)
@@ -290,6 +303,8 @@ def schedule(conn, production_id: int, when=None, caption: str | None = None, co
     at = _when(when, now)
     kind = _kind(prod)
     cover = None if kind == "carousel" or cover_ms in (None, "") else max(0, int(float(cover_ms)))
+    if share_to_feed is None:
+        share_to_feed = grid_default(conn, production_id)
     if cover is not None and prod["duration"] and cover > prod["duration"] * 1000:
         raise PostError("The cover moment is past the end of the video.")
     stamp = _iso(now)
@@ -375,6 +390,11 @@ def plan_for(conn, production_id: int) -> dict:
     post = latest_for(conn, production_id)
     n = per_week()
     nxt = suggest(conn, n=n, exclude=post["id"] if post else None)
+    # The day the planner gave it (the profile grid, Spread these): suggested at the usual time while it's ahead.
+    idea = _idea_row(conn, production_id)
+    planned = _planned_at(idea["post_on"]) if idea is not None and idea["post_on"] else None
+    if planned and planned > _now() + timedelta(minutes=30):
+        nxt = planned
     import carousel
     import previews
     return {"production": {"id": prod["id"], "title": prod["title"], "format": prod["format"], "kind": _kind(prod),
@@ -388,9 +408,50 @@ def plan_for(conn, production_id: int) -> dict:
                            if prod["video_path"] else None},
             "why_not": can_post(conn, prod), "post": view(post) if post else None,
             "suggested": _iso(nxt), "suggested_text": when_text(nxt), "per_week": n,
+            "planned_on": idea["post_on"] if idea is not None and idea["post_on"] else None,
+            "in_grid": not (idea is not None and idea["in_grid"] == 0),
             "taken": sorted(_iso(t) for t in taken(conn, post["id"] if post else None) if t > _now() - timedelta(days=14)),
             "connected": instagram.connected(), "posting_on": settings.POSTING,
             "limits": caption_check("")["limits"], "collaborators_max": COLLABORATORS_MAX}
+
+
+def _planned_at(day: str) -> datetime | None:
+    """A planner posting date ("2026-11-02") at the usual time, Singapore."""
+    try:
+        d = date.fromisoformat(str(day)[:10])
+    except ValueError:
+        return None
+    h, mi = _post_time()
+    return datetime(d.year, d.month, d.day, h, mi, tzinfo=SGT).astimezone(timezone.utc)
+
+
+def follow_grid(conn) -> int:
+    """A scheduled Reel follows its idea's "in the profile grid" flag (the planner's grid; the Schedule dialog
+    writes the same flag), until it starts going out. Returns how many posts changed."""
+    rows = conn.execute("""SELECT p.id, p.share_to_feed, i.in_grid FROM posts p JOIN ideas i ON i.remote_id = p.idea_remote
+                           WHERE p.state = 'scheduled' AND p.kind = 'reel' AND i.in_grid IS NOT NULL
+                             AND p.share_to_feed <> i.in_grid""").fetchall()
+    for r in rows:
+        conn.execute("UPDATE posts SET share_to_feed = ?, updated_at = ? WHERE id = ? AND state = 'scheduled'",
+                     (int(r["in_grid"]), _iso(_now()), r["id"]))
+        log.info("Post %s: %s the profile grid (the planner's flag)", r["id"], "in" if r["in_grid"] else "out of")
+    if rows:
+        conn.commit()
+    return len(rows)
+
+
+def set_grid_flag(conn, idea_remote: int, on: bool) -> None:
+    """Write an idea's "in the profile grid" flag here and in the planner (best effort: the sync carries on)."""
+    conn.execute("UPDATE ideas SET in_grid = ? WHERE remote_id = ?", (int(on), idea_remote))
+    conn.commit()
+    try:
+        import cloud_sync
+        if cloud_sync.enabled():
+            api = cloud_sync.Client()
+            if cloud_sync.check_grid(api):
+                api.update("ideas", {"id": f"eq.{int(idea_remote)}"}, {"in_grid": bool(on)})
+    except Exception as e:
+        log.info("The idea's grid flag wasn't written to the planner (%s); the post keeps its own", e)
 
 
 def listing(conn, since: datetime | None = None) -> list[dict]:
@@ -897,4 +958,11 @@ def mirror(api, conn, remote_ideas: list[dict] | None = None) -> int:
 def info() -> dict:
     """For laptop_status.info (the planner): connected or not, who, any problem. No secrets."""
     st = instagram.status()
-    return {k: st.get(k) for k in ("connected", "username", "expired", "problem", "days_left")} | {"posting": settings.POSTING}
+    import post_results
+    try:
+        profile = post_results.profile_info()
+    except Exception as e:
+        log.debug("No profile for the grid: %s", e)
+        profile = None
+    return {k: st.get(k) for k in ("connected", "username", "expired", "problem", "days_left")} | {
+        "posting": settings.POSTING, "carousel_max": settings.INSTAGRAM_CAROUSEL_MAX, "profile": profile}

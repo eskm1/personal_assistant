@@ -937,3 +937,6 @@ button.concept-tag:disabled { opacity: .6; cursor: progress; }
 /* A dialog's title with a button beside it (Playbook · Your voice). */
 .modal-head-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-right: 40px; }
 .modal-head-row h2 { margin: 0; }
+
+/* The status marks' key under a stage's line (marks.css draws it). */
+.stage-key { margin: -4px 0 12px; }

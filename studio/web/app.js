@@ -187,8 +187,16 @@ function brandField(id, current) {
     : `<label>Account<select id="${id}">${options(brands(), BRAND, current)}</select></label>`;
 }
 
+// The status mark Plan uses for the same post (Posted, Scheduled, Approved, Draft in Review: /static/marks.js).
+const MARKED = new Set(["ready", "planned", "producing", "revising", "approved", "posted", "failed"]);
+function statusMark(item) {
+  if (item.kind !== "production" || !window.StudioMarks || !MARKED.has(item.status)) return "";
+  const post = item.post ? { state: item.post.state, scheduled_at: item.post.at, posted_at: item.post.at } : null;
+  return window.StudioMarks.html(window.StudioMarks.of({ production: item.status, post }), { small: true });
+}
+
 function chips(item, short = false) {
-  const out = [];
+  const out = [statusMark(item)];
   if (item.archived) out.push(`<span class="chip archived">Archived</span>`);
   if (item.removed) out.push(`<span class="chip archived">Files removed</span>`);
   if (item.freed) out.push(`<span class="chip archived" title="Studio's own copy of the original was deleted; OneDrive keeps it, and Studio fetches it back when an edit needs it">Original in OneDrive</span>`);
@@ -510,6 +518,11 @@ function renderTabs() {
   $("#stage-hint").textContent = state.stage === "plan" && state.cloud
     ? "The team plans on the online planner. Footage dropped in a project's inbox folder is still matched to its shots here, and shows up there."
     : state.stage === "cloud" ? cloudHint() : STAGES.find((s) => s.key === state.stage).hint;
+  // The status marks' key (the same marks as Plan's), where drafts' tiles carry them.
+  const key = $("#stage-key");
+  const marked = ["review", "producing", "done"].includes(state.stage) && !!window.StudioMarks;
+  key.hidden = !marked;
+  if (marked && !key.firstChild) key.innerHTML = window.StudioMarks.legendHTML();
   renderToolbar();
 }
 

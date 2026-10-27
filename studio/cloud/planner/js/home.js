@@ -7,7 +7,8 @@
 // on its own address does without, from ideas.production.
 import {
   $, esc, sb, must, toast, cfg, state, isOwner, ownerName, plural, mmss, todayISO, parseDay, dayLabel, dayOf,
-  POST_TYPES, POST_TYPE, kindDot, missingTable, underPlan, isFilmed, openModal, closeModal, formError, offWhy, mark
+  POST_TYPES, POST_TYPE, kindDot, missingTable, underPlan, isFilmed, openModal, closeModal, formError, offWhy, mark,
+  ideaMarks, marksKey,
 } from "./core.js";
 import { plan, loadProjects, fromFootage, openQuickAdd, openNewProject, setKindHint } from "./board.js";
 import { month, loadMonth } from "./month.js";
@@ -29,7 +30,7 @@ const FOOTAGE_DAYS = 14;   // footage ideas newer than this count as waiting for
 // later database updates are dropped one by one when they aren't there yet.
 async function ideasFor(ids) {
   if (!ids.length) return [];
-  const optional = ["post_type", "suggestion"];
+  const optional = ["post_type", "suggestion", "needs_fact"];
   let shots = "shots(id,phase_id,shoot_on,filmed_at,takes(id,clips(recorded_at)))";
   for (;;) {
     const cols = ["id,title,project_id,arc_id,format,decision,status,production,created_at,updated_at", ...optional, shots].join(",");
@@ -62,7 +63,7 @@ export async function loadHome() {
   await loadProjects();
   const active = plan.projects.filter((p) => p.status === "active");
   const ids = active.map((p) => p.id);
-  const [ideas, arcs, days, phases, guides, reports, dismissed, api, , posts] = await Promise.all([
+  const [ideas, arcs, days, phases, guides, reports, dismissed, api, , posts, pins] = await Promise.all([
     ideasFor(ids),
     ids.length ? sb.from("arcs").select("id,project_id,title").in("project_id", ids).then(must) : [],
     ids.length ? maybe(sb.from("site_days").select("id,project_id,day,phase_id").in("project_id", ids).gte("day", todayISO()).order("day").limit(40)) : [],
@@ -74,9 +75,11 @@ export async function loadHome() {
     queue,
     loadMonth().catch(() => null),
     loadPosts().catch(() => []),
+    // Pins from the profile grid still to do in the Instagram app (Studio can't pin): after the grid's update only.
+    isOwner() ? maybe(sb.from("grid_pins").select("id,idea_id,media_id").is("done_at", null)) : [],
   ]);
   if (seq !== home.seq) return;
-  home.data = { active, ideas, arcs, days, phases, guides, reports, dismissed, api, posts };
+  home.data = { active, ideas, arcs, days, phases, guides, reports, dismissed, api, posts, pins };
 }
 
 // The kind of post the month is shortest of (most slots still to plan): New idea's kind by default.
@@ -149,6 +152,12 @@ function needs(d) {
   for (const f of failed) out.push({ type: "failed", key: `x${f.id}`, title: f.title, error: f.error, href: reviewHref(f.id, f.idea?.id) });
   // Posts that couldn't go out to Instagram: Try again (Bryan).
   for (const p of failedPosts(d.posts || [])) out.push({ type: "postfail", key: `pf${p.id}`, post: p });
+  // A post pinned in the grid that's out now: pin it in the Instagram app.
+  for (const pin of d.pins || []) {
+    const post = pin.idea_id ? (d.posts || []).find((p) => p.idea_id === pin.idea_id && p.state === "posted") : null;
+    if (pin.idea_id && !post) continue;
+    out.push({ type: "pin", key: `pin${pin.id}`, title: post?.title || d.ideas.find((i) => i.id === pin.idea_id)?.title || "A post you pinned in the grid" });
+  }
   for (const g of d.guides) out.push({ type: "guide", key: `g${g.id}`, version: g.version });
   for (const r of d.reports) out.push({ type: "taste", key: `t${r.id}`, version: r.version });
   return out;
@@ -157,7 +166,7 @@ function needs(d) {
 // The team's own jobs (Bryan, 2026-10-20: Michelle's Plan leads with what she can do): shots to film,
 // Studio's suggestions and new ideas to Go or Park, drafts to watch and leave notes on. What only Bryan
 // can do (failed edits and posts, the style guide, the taste report) folds under "Waiting for Bryan".
-const BRYAN_ONLY = new Set(["failed", "postfail", "guide", "taste"]);
+const BRYAN_ONLY = new Set(["failed", "postfail", "guide", "taste", "pin"]);
 function teamJobs(d, list) {
   const out = [];
   // Shots to film: the next site days with shots still to film, then Go posts part-filmed elsewhere.
@@ -299,7 +308,7 @@ function needHTML(x) {
   if (x.type === "draft") {
     return `<article class="hm-row" data-need="${esc(x.key)}">
       ${x.thumb ? `<img class="hm-thumb" src="${esc(x.thumb)}" alt="" loading="lazy">` : `<span class="hm-thumb none" aria-hidden="true"></span>`}
-      <div class="hm-text"><span class="hm-label good-text">${x.team ? `Draft for ${esc(ownerName())} to approve` : "Draft ready to review"}</span>
+      <div class="hm-text"><span class="hm-label good-text">${window.StudioMarks?.html(window.StudioMarks.of({ production: "ready" }), { small: true }) || ""}${x.team ? `Draft for ${esc(ownerName())} to approve` : "Draft ready to review"}</span>
         <span class="hm-name">${esc(x.title)}</span>
         ${x.meta.length ? `<span class="hm-sub">${esc((x.team ? ["Watch it, add notes or send it back", ...x.meta] : x.meta).join(" · "))}</span>` : x.team ? `<span class="hm-sub">Watch it, add notes or send it back</span>` : ""}</div>
       ${x.href ? `<a class="btn hm-act" href="${esc(x.href)}">${x.team ? "Watch" : "Review"}</a>` : ""}
@@ -311,7 +320,7 @@ function needHTML(x) {
     const kind = i.post_type ? `${kindDot(i.post_type)}` : "";
     const what = ["Studio suggests", POST_TYPE[i.post_type], i.format === "carousel" ? "Carousel" : i.suggestion?.clip_id ? "Reel from your footage" : "Reel"].filter(Boolean).join(" · ");
     return `<article class="hm-row" data-sugg="${esc(i.id)}">
-      <div class="hm-text"><span class="hm-label">${kind}${esc(what)}</span>
+      <div class="hm-text"><span class="hm-label">${ideaMarks(i, null, { small: true })}${kind}${esc(what)}</span>
         <a class="hm-name" href="#/idea/${esc(i.id)}">${esc(i.title)}</a>
         ${i.suggestion?.why ? `<span class="hm-sub">${esc(i.suggestion.why)}</span>` : ""}</div>
       <div class="hm-btns">
@@ -332,7 +341,7 @@ function needHTML(x) {
   if (x.type === "postfail") {
     const p = x.post;
     return `<article class="hm-row" data-need="${esc(x.key)}">
-      <div class="hm-text"><span class="hm-label bad-text">${kindDot(p.post_type)}Couldn't post to Instagram</span>
+      <div class="hm-text"><span class="hm-label bad-text">${window.StudioMarks?.html(window.StudioMarks.of({ post: p }), { small: true }) || ""}${kindDot(p.post_type)}Couldn't post to Instagram</span>
         <span class="hm-name">${esc(p.title)}</span>
         ${p.error ? `<span class="hm-sub">${esc(p.error)}</span>` : ""}</div>
       ${canSchedule() ? `<button type="button" class="btn hm-act" data-post-retry="${esc(p.production_id)}">Try again</button>`
@@ -345,6 +354,14 @@ function needHTML(x) {
         <span class="hm-name">${esc(x.title)}</span>
         ${x.error ? `<span class="hm-sub">${esc(x.error)}</span>` : ""}</div>
       ${x.href ? `<a class="btn hm-act" href="${esc(x.href)}">Open</a>` : ""}
+    </article>`;
+  }
+  if (x.type === "pin") {
+    return `<article class="hm-row" data-need="${esc(x.key)}">
+      <div class="hm-text"><span class="hm-label">Pin it on Instagram</span>
+        <span class="hm-name">${esc(x.title)}</span>
+        <span class="hm-sub">You pinned it in the grid and it's out now. Studio can't pin: hold the post in the Instagram app, then Pin to your profile.</span></div>
+      <a class="btn hm-act" href="#/grid">Open the grid</a>
     </article>`;
   }
   const guide = x.type === "guide";
@@ -364,7 +381,7 @@ function nextHTML(next) {
       return `<div class="hm-next" data-next="${esc(x.key)}">
         <span class="hm-when${day === todayISO() ? " soon" : ""}">${esc(when)}<br>${esc(sp?.timeOf(p.scheduled_at) || "")}</span>
         <a class="hm-next-text" href="#/calendar"><span class="hm-next-name">${esc(p.title)}</span>
-          <span class="hm-sub">${kindDot(p.post_type)} ${esc([p.state === "publishing" ? "Going out now" : "On Instagram", POST_TYPE[p.post_type], p.kind === "carousel" ? "Carousel" : "Reel"].filter(Boolean).join(" · "))}</span></a>
+          <span class="hm-sub">${window.StudioMarks?.html(window.StudioMarks.of({ post: p }), { small: true }) || ""}${kindDot(p.post_type)} ${esc([p.state === "publishing" ? "Going out now" : "On Instagram", POST_TYPE[p.post_type], p.kind === "carousel" ? "Carousel" : "Reel"].filter(Boolean).join(" · "))}</span></a>
       </div>`;
     }
     if (x.type === "day") {
@@ -384,13 +401,13 @@ function nextHTML(next) {
       : [POST_TYPE[i.post_type], `${x.filmed} of ${x.total} shots filmed`].filter(Boolean).join(" · ");
     return `<div class="hm-next" data-next="${esc(x.key)}">
       <span class="hm-when">${label}</span>
-      <a class="hm-next-text" href="#/idea/${esc(i.id)}"><span class="hm-next-name">${esc(i.title)}</span><span class="hm-sub">${esc(sub)}</span></a>
+      <a class="hm-next-text" href="#/idea/${esc(i.id)}"><span class="hm-next-name">${esc(i.title)}</span><span class="hm-sub">${ideaMarks(i, null, { small: true })}${esc(sub)}</span></a>
     </div>`;
   }).join("");
   return `<section class="hm-card hm-coming" aria-labelledby="hm-next">
     <h2 class="hm-card-head" id="hm-next">Coming up</h2>
     ${rows || `<p class="hm-empty">No posts, site days, edits or filming coming up.</p>`}
-    <div class="hm-foot"><a class="btn-link" href="#/calendar">Posting calendar</a></div>
+    <div class="hm-foot"><a class="btn-link" href="#/calendar">Posting calendar</a><a class="btn-link" href="#/grid">Grid</a>${marksKey({ cls: "hm-key" })}</div>
   </section>`;
 }
 

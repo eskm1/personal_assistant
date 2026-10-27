@@ -433,6 +433,9 @@ def pull(api: Client, conn) -> dict:
                     "decision": r["decision"], "status": status_, "position": r["position"],
                     "updated_at": r["updated_at"], "folder": r.get("folder") or "",
                     "post_type": r.get("post_type"),
+                    # the profile grid (migration 20261028000000): its posting date, in the grid or not, the layout
+                    "post_on": r.get("post_on"), "in_grid": None if r.get("in_grid") is None else int(bool(r["in_grid"])),
+                    "slide_layout": r.get("slide_layout"),
                     # a carousel's slides (migration 20261021000000), as the planner has them
                     "slides": json.dumps(r["slides"]) if r.get("slides") is not None else None}
         ideas, *stats["ideas"] = _mirror_table(
@@ -663,12 +666,14 @@ def run_jobs(api: Client, conn, idea_map: dict[int, int]) -> list[str]:
                 _finish(api, job, music_plan)
             elif job["kind"] == "carousel":  # lay out a carousel (carousel.py), from the slides as they are now
                 import carousel
-                rows = api.select("ideas", {"id": f"eq.{job['idea_id']}", "select": "id,format,slides,caption"})
+                cols = "id,format,slides,caption" + (",slide_layout" if check_grid(api) else "")
+                rows = api.select("ideas", {"id": f"eq.{job['idea_id']}", "select": cols})
                 if not rows or rows[0].get("format") != "carousel":
                     raise RuntimeError("this idea isn't a carousel")
                 caption = (job.get("payload") or {}).get("caption")
                 production_id = carousel.make(conn, local_id, rows[0].get("slides"),
-                                              caption if isinstance(caption, str) else rows[0].get("caption"))
+                                              caption if isinstance(caption, str) else rows[0].get("caption"),
+                                              layout=rows[0].get("slide_layout"))
                 api.update("ideas", {"id": f"eq.{job['idea_id']}"},
                            {"status": "made", "production": _production(conn, production_id)})
                 _finish(api, job, {"production_id": production_id})
@@ -870,6 +875,26 @@ def check_hook_options(api: Client) -> bool:
             raise
         log.warning("%s (hook scores wait for it)", NEEDS_UPDATE)
     return _hook_options_online
+
+
+_grid_online = False   # migration 20261028000000 (the profile grid: ideas.post_on, post_results' stills, pins) is online
+_grid_checked = 0.0
+
+
+def check_grid(api: Client) -> bool:
+    """Is the profile-grid migration online? Asked again every 10 minutes while it isn't."""
+    global _grid_online, _grid_checked
+    if _grid_online or time.time() - _grid_checked < SCHEMA_RECHECK_SECONDS:
+        return _grid_online
+    _grid_checked = time.time()
+    try:
+        api.request("GET", "/rest/v1/post_results", params={"select": "thumb_path", "limit": 1})
+        _grid_online = True
+    except CloudError as e:
+        if "HTTP 400" not in str(e) and not _missing_table(e):
+            raise
+        log.warning("%s (the planner's profile grid waits for it)", NEEDS_UPDATE)
+    return _grid_online
 
 
 def score_hooks(api: Client, ideas: list[dict]) -> int:
@@ -1476,6 +1501,7 @@ def sync_once(conn, api: Client | None = None) -> dict:
     topics_on = check_topics(api)
     check_cleanup(api)
     hooks_on = check_hook_options(api)
+    grid_on = check_grid(api)
     counts["pulled"] = pulled["stats"]
     counts["clips_pushed"] = push_clips(api, conn)
     new_takes = push_takes(api, conn)
@@ -1508,6 +1534,10 @@ def sync_once(conn, api: Client | None = None) -> dict:
     if content:  # older ideas get their kind of post, a batch at a time (content_plan.py)
         steps.append(("kinds of post", lambda: content_plan.backfill(api, remote["ideas"], remote["projects"],
                                                                      remote["arcs"])))
+    # What kinds of posts work: the ideas behind posts remembered, the Monday memo (insights.py; before topics,
+    # which read its top lines).
+    import insights
+    steps.append(("insights", lambda: insights.run_due(conn, remote["ideas"])))
     if content and topics_on:  # suggested topics for the month's gaps (weekly / behind; topics.py)
         steps.append(("suggested topics", lambda: topics.run_due(api, conn, remote["ideas"])))
     if hooks_on:  # hook options written online, scored here (hookscore)
@@ -1539,8 +1569,10 @@ def sync_once(conn, api: Client | None = None) -> dict:
         import post_results
         import posting
         if posting.online(api):
+            if grid_on:  # a scheduled Reel follows its idea's "in the profile grid" flag
+                posting.follow_grid(conn)
             counts["posts"] = posting.mirror(api, conn, remote["ideas"])
-            counts["results"] = post_results.mirror(api, conn)
+            counts["results"] = post_results.mirror(api, conn, grid=grid_on)
         else:
             status["note"] = NEEDS_UPDATE
     except Exception as e:
@@ -1558,7 +1590,7 @@ def sync_once(conn, api: Client | None = None) -> dict:
             log.warning("Cloud sync, references failed (will retry): %s", message)
         status["ref_problems"] = [message]
         refs = {}
-    if not shoot_plan or not footage or not content or not carousels or not topics_on or not hooks_on:
+    if not shoot_plan or not footage or not content or not carousels or not topics_on or not hooks_on or not grid_on:
         status["note"] = NEEDS_UPDATE
     jobs += refs.pop("lines", [])
     counts["refs"] = {k: v for k, v in refs.items() if k != "skipped"}

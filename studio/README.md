@@ -1188,6 +1188,57 @@ followers, views, reach, saves and shares, then by kind of post, by format (Reel
 every post. A posted draft in Review shows its own numbers. These are what the next phases (learning, the weekly
 review) work from.
 
+**Insights: what kinds of posts work** (Plan > More > **Insights**, or **What works: Insights** on Results). Each post
+is scored a week after it goes out against your typical post of the same format (the middle of the 20 before it): 100
+is typical, 150 half as good again. The score counts saves, shares, follows, profile visits and comments per 1,000
+people reached, and for Reels how much of each Reel people watch. Likes are shown but never judged. Studio then
+compares what it knows about each post because it made it (kind of post, format, hook formula, length or slides, look,
+voice-over, picture and drawn inserts, sound effects, music mood, first cut, cards, caption length, day and time, where
+the topic came from, your notes and rounds) with the rest. Small groups are pulled toward typical before anything is
+shown, every line says how many posts it rests on, and a finding is **proven** only with 8 or more posts on each side,
+very unlikely to be luck and at least 15% apart; otherwise it's an **early signal** (a hunch to test). One post is
+never a pattern. Posts from your phone count by format and time only.
+
+Every Monday at 7 (before the suggested topics) Studio first forecasts the week's scheduled posts, then grades past
+forecasts against their real numbers and against the plain guess "every post is typical". The grade sits at the top of
+the page and the memo: "beats average by X%", or "not better than average yet: treat suggestions as hunches" (the
+target is 25% better within 12 weeks). Then one Claude call (about US$0.10) writes the memo: Do more, Do less, Try
+next, each with its numbers and n, and what the numbers can't tell yet. Memos are kept (`Studio/insights/<date>.json`)
+and earlier ones are one tap away. Its top lines go to the suggested topics, and its Do more / Do less sit at the end of
+Studio's own playbook section as soft guidance, never rules: your playbook and your calls always win. Nothing on the
+page changes a post. Settings: `STUDIO_INSIGHTS=0` (off), `STUDIO_INSIGHTS_DAY` / `_HOUR` (monday, 7),
+`STUDIO_INSIGHTS_MODEL`.
+
+**The grid** (Plan > More > **Grid**, or **See it as the grid** on the posting calendar) shows the whole profile as a
+phone does, before anything goes out: the header (name, handle, bio, counts, read from the account each morning), then
+three posts to a row, newest at the top: pinned posts first, then what's planned (ideas with a posting date, drafts in
+Review, approved posts), what's scheduled, and what's already posted (phone posts too). A Reel kept out of the grid
+(Reels tab only) doesn't show; **Show them** dims them in place.
+
+- **Change the order**: drag a post (on the phone, hold it a moment first; on a keyboard, Space picks it up, the arrows
+  move it, Space drops it). The days stay where they are and the posts move through them; **Swap two** (or Alt while
+  dropping) makes two posts trade days instead. Posted and scheduled posts don't move. Nothing changes until **Save this
+  order**; **Undo** goes back to the last saved order (and the toast after saving has its own Undo). A fine line marks
+  each row, and a note says when the posts coming up don't fill whole rows.
+- **Spread these…**: pick a project's posts in the order they should go out (tick them, or type their numbers like
+  24-44), a start day and the weekdays (Mon, Wed, Fri), and each gets the next day in turn. Then Save this order.
+- **Tap a post**: its slides (swipe), caption, status and Studio's read. For a post that isn't made yet you can change
+  the caption, add many photos at once, drag them into order, make one the cover, remove one, and **Confirm photos**.
+  Changing the photos after confirming asks again. The posting date changes there too.
+- **Pins**: Instagram doesn't let Studio pin, so **Pin to the top** pins it in the grid and Plan reminds you to pin it in
+  the Instagram app once it's out (hold the post, then Pin to your profile). Three at most, as on Instagram.
+- **Show it in the profile grid** (a Reel): unticked, it goes out to the Reels tab only. Scheduling starts from it.
+- **Needs a fact from Bryan**: a post flagged this way (its Details), or whose words have a `[check]` where a figure goes,
+  shows an orange **?**. The **Key** button on every page with marks says what each one means: Posted, Scheduled,
+  Approved, Draft in Review, Idea, Needs a fact.
+
+**Photos only**: on a carousel, **Photos fill the slide** makes each photo the whole slide (4:5, never cropped or made
+bigger; 2160x2700 photos stay as they are), with an optional short **cover line** on slide 1 only. **Add photos** takes
+many at once (pick several from Photos on the phone, or drop a folder on a computer), in file-name order, up to 10, as
+Instagram allows; past 10 it says which were left out. Before the database update, the grid page says it needs
+`cloud_setup.py --update`; until Instagram is connected the header comes from `STUDIO_INSTAGRAM_HANDLE`,
+`STUDIO_INSTAGRAM_NAME` and `STUDIO_INSTAGRAM_BIO`.
+
 Settings in `.env` (then **Restart Studio**): `STUDIO_POSTING=0` stops all posting; `STUDIO_POSTS_PER_WEEK` (blank =
 the content plan's); `STUDIO_POST_TIME` (19:30); `STUDIO_RESULTS_HOUR` (9); `STUDIO_PUBLIC_URL` (blank = the
 dashboard address; Instagram fetches the files from it, so it must be the https address).
@@ -1277,7 +1328,7 @@ Whisper runs locally for free. Each clip is one Claude call with up to 20 small 
 plus the transcript. AI concept pictures for carousels, and the pictures a Reel shows instead of a drawing, are Google
 Gemini's, about US$0.03 each (`STUDIO_IMAGE_COST_USD`; a Reel at most 4 new ones, `STUDIO_REEL_PICTURES_MAX`); the
 dashboard shows them next to the Claude cost. Sound effects on the Reels' graphics cost nothing (Epidemic Sound's are
-in the subscription, Openverse's are CC0, each fetched once). Suggested topics are one Claude
+in the subscription, Openverse's are CC0, each fetched once). The Insights memo is one Claude call a week (about 10 cents). Suggested topics are one Claude
 call a week (plus any when the month falls behind or someone presses Suggest topics), a few cents each. Check the first week's usage in the Anthropic console before you
 send it a backlog of hundreds of clips. The words filter (section 17) adds about a cent per draft or idea run when a
 rewrite is needed, and the voice file about 10 cents each time it's written. To spend less, set `STUDIO_CLAUDE_EFFORT=low` or

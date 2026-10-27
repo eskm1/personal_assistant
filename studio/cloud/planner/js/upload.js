@@ -80,15 +80,36 @@ function explainNoAddress() {
 }
 
 // Drag a video file onto anything marked data-drop-shot (desktop). Other drags (a clip
-// from "Needs a home") go to the handler the shoot plan registers.
+// from "Needs a home") go to the handler the shoot plan registers. Photos (or a whole folder of them)
+// dropped on anything marked data-drop-photos go to the handler the carousel's photos register.
 let clipDrop = null;
 export function onClipDrop(fn) { clipDrop = fn; }
+let photoDrop = null;
+export function onPhotoDrop(fn) { photoDrop = fn; }
+// The files of a drop, a dropped folder's too (its photos, and its folders' photos).
+async function droppedFiles(dt) {
+  const entries = [...(dt.items || [])].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
+  if (!entries.some((e) => e.isDirectory)) return [...dt.files];
+  const out = [];
+  const walk = async (entry, depth = 0) => {
+    if (entry.isFile) { out.push(await new Promise((ok, no) => entry.file(ok, no)).catch(() => null)); return; }
+    if (!entry.isDirectory || depth > 3) return;
+    const reader = entry.createReader();
+    for (;;) {
+      const batch = await new Promise((ok) => reader.readEntries(ok, () => ok([])));
+      if (!batch.length) break;
+      for (const e of batch) await walk(e, depth + 1);
+    }
+  };
+  for (const e of entries) await walk(e);
+  return out.filter(Boolean);
+}
 const CLIP_TYPE = "application/x-studio-clip";
 const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
 const hasClip = (e) => [...(e.dataTransfer?.types || [])].includes(CLIP_TYPE);
 export const clipDragType = CLIP_TYPE;
 let lastZone = null;
-function zoneOf(e) { return e.target.closest?.("[data-drop-shot]") || null; }
+function zoneOf(e) { return e.target.closest?.("[data-drop-shot], [data-drop-photos]") || null; }
 function setZone(z) {
   if (lastZone && lastZone !== z) lastZone.classList.remove("drop-on");
   if (z) z.classList.add("drop-on");
@@ -109,6 +130,12 @@ document.addEventListener("drop", (e) => {
   const z = zoneOf(e);
   setZone(null);
   if (!z) { if (hasFiles(e)) toast("Drop the video on a shot to upload it to that shot."); return; }
+  if (z.dataset.dropPhotos != null) {
+    if (!hasFiles(e)) return;
+    if (!canUpload()) { explainNoAddress(); return; }
+    droppedFiles(e.dataTransfer).then((files) => photoDrop?.(z, files));
+    return;
+  }
   const sid = Number(z.dataset.dropShot);
   if (hasClip(e)) { const clip = Number(e.dataTransfer.getData(CLIP_TYPE)); if (clip && clipDrop) clipDrop(clip, sid); return; }
   if (!canUpload()) { explainNoAddress(); return; }
@@ -151,6 +178,21 @@ export function addPhoto(ideaId, file, label, onDone) {
   render();
   pump();
   return true;
+}
+
+// Many photos for one carousel at once (a folder, or many picked from Photos): in file-name order, the
+// numbers in a name read as numbers (IMG_2 before IMG_10), one after another like every upload here, each
+// onDone(photo, file) as it arrives. Files that aren't photos, are empty or too big are said and skipped.
+// Returns how many were queued.
+const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+export const nameOrder = (files) => [...files].sort((a, b) => byName.compare(a.name, b.name));
+export function addPhotos(ideaId, files, label, onDone) {
+  let n = 0;
+  for (const file of nameOrder(files)) if (addPhoto(ideaId, file, label, (p) => onDone(p, file))) n += 1;
+  // A batch: the tray stays one line (its head says how far along all of them are), not a row per photo
+  // over the page; tap it for each one.
+  if (n > 3) { trayOpen = false; render(); }
+  return n;
 }
 
 export function addFiles(shotId, files, label = "") {
@@ -369,6 +411,10 @@ async function donePhoto(u, r) {
   render();
   if (photo) {
     try { await u.photo.onDone(photo); } catch (err) { toast(`Couldn't put the photo on the slide: ${err.message}`, 6000); }
+  }
+  // Every photo in: the finished ones leave the tray after a moment (they're on the slides now).
+  if (!ups.some((x) => ACTIVE.has(x.state)) && ups.every((x) => x.photo && x.state === "done" && x.row?.state === "ingested")) {
+    setTimeout(() => { for (const x of [...ups]) if (x.photo && x.state === "done" && x.row?.state === "ingested") remove(x); }, 4000);
   }
 }
 

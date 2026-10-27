@@ -424,6 +424,15 @@ def publish(container_id: str) -> str:
 
 
 MEDIA_FIELDS = "id,caption,media_type,media_product_type,permalink,timestamp,shortcode"
+# The profile grid also wants each post's picture (media_url; a Reel's cover is thumbnail_url, both links run
+# out after a while, so post_results.py keeps a small copy) and whether a Reel shows in the grid
+# (is_shared_to_feed, Reels only). Asked with the rest; if Instagram refuses one of them, the plain fields.
+GRID_FIELDS = "media_url,thumbnail_url,is_shared_to_feed"
+_grid_fields = {"on": True}
+
+
+def _fields_refused(e: IgError, fields: str) -> bool:
+    return e.code == 100 and any(f in str(e) for f in fields.split(","))
 
 
 def media(media_id: str) -> dict:
@@ -434,7 +443,15 @@ def recent_media(since: datetime | None = None, limit: int = 200) -> list[dict]:
     """The account's posts, newest first, back to `since` (follows Instagram's paging)."""
     out, after = [], None
     while len(out) < limit:
-        body = call("GET", f"{_ig_id()}/media", {"fields": MEDIA_FIELDS, "limit": 50, "after": after})
+        fields = f"{MEDIA_FIELDS},{GRID_FIELDS}" if _grid_fields["on"] else MEDIA_FIELDS
+        try:
+            body = call("GET", f"{_ig_id()}/media", {"fields": fields, "limit": 50, "after": after})
+        except IgError as e:
+            if _grid_fields["on"] and _fields_refused(e, GRID_FIELDS):
+                log.info("Instagram refused the grid's fields (%s): reading posts without their pictures", e)
+                _grid_fields["on"] = False
+                continue
+            raise
         page = body.get("data") or []
         for m in page:
             t = _parse(m.get("timestamp"))
@@ -445,6 +462,26 @@ def recent_media(since: datetime | None = None, limit: int = 200) -> list[dict]:
         if not page or not after or not (body.get("paging") or {}).get("next"):
             return out
     return out
+
+
+# The account as its profile shows it (the planner's grid header). Instagram API with Instagram Login
+# documents these on the IG user; biography isn't on every account type's list, so a field Instagram
+# refuses is dropped and the rest asked again.
+PROFILE_FIELDS = ["user_id", "username", "name", "biography", "profile_picture_url", "followers_count",
+                  "follows_count", "media_count"]
+
+
+def profile() -> dict:
+    wanted = list(PROFILE_FIELDS)
+    while True:
+        try:
+            return call("GET", "me", {"fields": ",".join(wanted)})
+        except IgError as e:
+            bad = [f for f in wanted if f in str(e) and f not in ("user_id", "username")]
+            if e.code == 100 and bad:
+                wanted = [f for f in wanted if f not in bad]
+                continue
+            raise
 
 
 def media_insights(media_id: str, metrics: list[str]) -> dict[str, float]:

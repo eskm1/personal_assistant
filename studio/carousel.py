@@ -22,6 +22,10 @@ slides people swipe through, made without a shoot.
   5. Approved carousels are copied to OneDrive "Studio Ready to post/<title>/" as 01.png,
      02.png ... and caption.txt (onedrive.py), and Review offers them as a .zip.
 
+A carousel can also be photos only (the idea's slide_layout 'photos', the planner's "Photos fill the slide"):
+each photo is the slide as it is (4:5 photos are never cropped or made bigger), a JPEG, with slide 1's
+heading as an optional small cover line (lay_out_photos).
+
 English only. Only the offers listed in the planner, never a made-up price or promotion,
 and never a place name.
 """
@@ -51,6 +55,9 @@ W, H = 1080, 1350
 GRID_LEFT, GRID_RIGHT = round((W - H * 3 / 4) / 2), round(W - (W - H * 3 / 4) / 2)
 MAX_SLIDES = 12
 ROLES = ("cover", "point", "ask")
+PHOTOS = "photos"           # the photos-only layout (ideas.slide_layout)
+PHOTO_RATIO = 4 / 5         # Instagram's tallest feed shape, and the slides'
+PHOTO_MAX_W = 2160          # a photos-only slide is kept up to this wide (Instagram takes 1440; posting.py)
 RENDERS = settings.ROOT / "Renders"
 HERE = render.RENDER_DIR / "carousel"
 FONTS = {"display": HERE / "fonts" / "BricolageGrotesque-latin.woff2", "text": HERE / "fonts" / "Figtree-latin.woff2"}
@@ -158,10 +165,11 @@ def clean_slides(raw) -> list[dict]:
             continue
         # The safe fixes (wording.tidy: invisible characters, em dashes...) on words written online too.
         heading, body = wording.tidy(_text(s.get("heading"), 200)), wording.tidy(_text(s.get("body"), 800))
-        if not heading and not body:
-            continue
+        image = clean_image(s.get("image"))
+        if not heading and not body and image.get("source") == "text":
+            continue  # a slide with a picture and no words is a photo slide; one with neither is nothing
         out.append({"key": _text(s.get("key"), 40) or _key(), "role": s.get("role") if s.get("role") in ROLES else "point",
-                    "heading": heading, "body": body, "image": clean_image(s.get("image"))})
+                    "heading": heading, "body": body, "image": image})
     return out
 
 
@@ -230,9 +238,9 @@ def picture_text(image: dict, clips: dict[int, dict] | None = None) -> str:
 
 # ── Making one ────────────────────────────────────────────────────────────────
 
-def make(conn, idea_id: int, slides, caption: str | None = None) -> int:
+def make(conn, idea_id: int, slides, caption: str | None = None, layout: str | None = None) -> int:
     """"Make this" on a carousel: a 'planned' production for the editing queue, from the
-    idea's slides. Returns its id (the existing one if it's already made)."""
+    idea's slides (layout 'photos': photos only). Returns its id (the existing one if it's already made)."""
     idea = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
     if idea is None:
         raise KeyError(idea_id)
@@ -244,6 +252,8 @@ def make(conn, idea_id: int, slides, caption: str | None = None) -> int:
     plan = {"idea_id": idea_id, "title": idea["title"], "brand": idea["brand"], "format": "carousel",
             "post_type": idea["post_type"], "hook": idea["hook"] or slides[0]["heading"], "purpose": idea["purpose"] or "",
             "cta": idea["cta"] or "", "slides": slides}
+    if (layout or idea["slide_layout"]) == PHOTOS:
+        plan["layout"] = PHOTOS
     clip_ids = list(dict.fromkeys(s["image"]["clip_id"] for s in slides if s["image"].get("source") == "clip"))
     stamp = catalog.now()
     cur = conn.execute(
@@ -256,6 +266,14 @@ def make(conn, idea_id: int, slides, caption: str | None = None) -> int:
     conn.commit()
     log.info("Carousel %s queued: %s (%d slides)", cur.lastrowid, idea["title"], len(slides))
     return cur.lastrowid
+
+
+def layout_of(row) -> str | None:
+    """'photos' for a photos-only carousel (the plan says so), else None: words on the slides."""
+    try:
+        return PHOTOS if json.loads(row["plan"] or "{}").get("layout") == PHOTOS else None
+    except (ValueError, TypeError, IndexError, KeyError):
+        return None
 
 
 def current(row) -> dict:
@@ -443,9 +461,11 @@ def shoot(page: str, out_dir: Path) -> dict:
     return report
 
 
-def lay_out(conn, slides: list[dict], out_dir: Path, reel: bool = False) -> dict:
-    """Pictures, layout and PNGs for these slides (reel: for a slideshow Reel, no Swipe cue or counter).
-    Returns {files, layout, pictures}."""
+def lay_out(conn, slides: list[dict], out_dir: Path, reel: bool = False, layout: str | None = None) -> dict:
+    """Pictures, layout and PNGs for these slides (reel: for a slideshow Reel, no Swipe cue or counter;
+    layout 'photos': each photo is its slide, lay_out_photos). Returns {files, layout, pictures}."""
+    if layout == PHOTOS and not reel:
+        return lay_out_photos(conn, slides, out_dir)
     pictures, notes = [], []
     for n, s in enumerate(slides, 1):
         path, mark, why = slide_images.picture(s["image"], conn)
@@ -458,6 +478,113 @@ def lay_out(conn, slides: list[dict], out_dir: Path, reel: bool = False) -> dict
         raise RuntimeError("Chrome didn't save every slide")
     layout = [{k: v for k, v in s.items() if k != "file"} for s in report["slides"]]
     return {"files": files, "layout": layout, "pictures": notes, "fonts": report.get("fonts", [])}
+
+
+# ── Photos only ───────────────────────────────────────────────────────────────
+
+_COVER_LINE_CSS = """
+@font-face{font-family:"UM Display";src:url("%(display)s") format("woff2");font-weight:200 800;font-display:block}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1080px;background:#000}
+.slide{position:relative;width:1080px;height:1350px;overflow:hidden;background:%(bg)s}
+.pic{position:absolute;inset:0;width:1080px;height:1350px;object-fit:cover;display:block}
+.shade{position:absolute;left:0;right:0;bottom:0;height:420px;background:linear-gradient(rgba(10,16,14,0),rgba(10,16,14,.62))}
+.copy{position:absolute;left:84px;right:84px;bottom:96px;display:flex;flex-direction:column;justify-content:flex-end}
+.h{font-family:"UM Display",sans-serif;font-weight:700;font-size:var(--fs,54px);line-height:1.1;color:%(ink)s;
+  letter-spacing:-.01em;text-wrap:balance;overflow-wrap:break-word;text-shadow:0 2px 18px rgba(0,0,0,.35)}
+"""
+
+# The cover line's size, shrunk to fit at most three lines (the planner keeps it short).
+_COVER_FIT = """
+window.studioFit = () => [...document.querySelectorAll(".slide")].map((s) => {
+  const copy = s.querySelector(".copy"), h = s.querySelector(".h");
+  let px = 54;
+  const lines = () => Math.round(h.getBoundingClientRect().height / (px * 1.1));
+  while (lines() > 3 && px > 34) { px -= 2; s.style.setProperty("--fs", px + "px"); }
+  const t = s.getBoundingClientRect(), range = document.createRange();
+  range.selectNodeContents(h);
+  const rs = [...range.getClientRects()];
+  const ink = rs.length ? [Math.round(Math.min(...rs.map((r) => r.left)) - t.left), Math.round(Math.min(...rs.map((r) => r.top)) - t.top),
+    Math.round(Math.max(...rs.map((r) => r.right)) - t.left), Math.round(Math.max(...rs.map((r) => r.bottom)) - t.top)] : null;
+  return { n: Number(s.dataset.n), layout: "photo-cover-line", fit: px / 54, overflow: lines() > 3, heading_px: px, body_px: null,
+           boxes: { heading: ink } };
+});
+"""
+
+
+def photo_slide(src: Path, out: Path) -> dict:
+    """One photos-only slide: the photo as it is when it's 4:5 (never made bigger), else cropped to 4:5 around
+    the middle; at most PHOTO_MAX_W wide; a JPEG. Returns {width, height, cropped, scaled}."""
+    from PIL import Image, ImageOps
+    with Image.open(src) as img:
+        img = ImageOps.exif_transpose(img).convert("RGB")
+        w, h = img.size
+        cropped = abs(w / h - PHOTO_RATIO) > 0.01
+        if cropped:
+            if w / h > PHOTO_RATIO:   # wider than 4:5: the sides go
+                nw = round(h * PHOTO_RATIO)
+                img = img.crop(((w - nw) // 2, 0, (w - nw) // 2 + nw, h))
+            else:                     # taller: the top and bottom go
+                nh = round(w / PHOTO_RATIO)
+                img = img.crop((0, (h - nh) // 2, w, (h - nh) // 2 + nh))
+        scaled = img.width > PHOTO_MAX_W
+        if scaled:
+            img = img.resize((PHOTO_MAX_W, round(PHOTO_MAX_W / PHOTO_RATIO)), Image.LANCZOS)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        img.save(out, "JPEG", quality=93, optimize=True)
+        return {"width": img.width, "height": img.height, "cropped": cropped, "scaled": scaled}
+
+
+def lay_out_photos(conn, slides: list[dict], out_dir: Path) -> dict:
+    """A photos-only carousel: every slide is its photo (photo_slide). Slide 1's heading, if it has one, is a
+    small cover line over the photo, laid out in Chrome at the slides' 1080x1350 (01.png). A slide without a
+    picture is laid out as words, as usual. Returns {files, layout, pictures} like lay_out."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    files, layout, notes, words = [], [], [], []
+    for n, s in enumerate(slides, 1):
+        path, mark, why = slide_images.picture(s["image"], conn)
+        notes.append({"n": n, "source": s["image"].get("source", "text") if path else "text",
+                      **({"missing": why} if why else {})})
+        if path is None:
+            words.append((n, s))
+            files.append(None)
+            layout.append(None)
+            continue
+        out = out_dir / f"{n:02d}.jpg"
+        info = photo_slide(path, out)
+        if n == 1 and s.get("heading"):
+            report = _cover_line(out, s["heading"], info["width"], out_dir)
+            out = Path(report.pop("file"))
+            layout.append({**report, "photo": info})
+        else:
+            layout.append({"n": n, "layout": "photo-full", "fit": 1, "overflow": False, "photo": info,
+                           "boxes": {}})
+        files.append(str(out))
+    if words:  # pictures missing: those slides as words on the green, the usual way
+        css = _CSS % {"display": FONTS["display"].resolve().as_uri(), "text": FONTS["text"].resolve().as_uri(), **COLOURS}
+        body = "".join(slide_html(n, len(slides), s, None) for n, s in words)
+        page = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><style>{css}</style></head>'
+                f'<body>{body}<script>{_FIT % {"min": FIT_MIN}}</script></body></html>')
+        report = shoot(page, out_dir)
+        for r in report["slides"]:
+            files[r["n"] - 1] = r.pop("file")
+            layout[r["n"] - 1] = r
+    if not all(f and Path(f).is_file() for f in files):
+        raise RuntimeError("not every slide was saved")
+    return {"files": files, "layout": layout, "pictures": notes, "fonts": []}
+
+
+def _cover_line(photo: Path, line: str, width: int, out_dir: Path) -> dict:
+    """Slide 1 of a photos-only carousel with its small cover line, drawn over the photo in Chrome at the
+    slides' 1080x1350 (Instagram shows 1080 wide; the other slides keep the photo's own size). 01.png."""
+    css = _COVER_LINE_CSS % {"display": FONTS["display"].resolve().as_uri(), **COLOURS}
+    page = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><style>{css}</style></head><body>'
+            f'<section class="slide" id="slide-1" data-n="1"><img class="pic" src="{html.escape(photo.resolve().as_uri())}" alt="">'
+            f'<div class="shade"></div><div class="copy"><div class="h">{_lines(line)}</div></div></section>'
+            f'<script>{_COVER_FIT}</script></body></html>')
+    report = shoot(page, out_dir)
+    photo.unlink(missing_ok=True)  # the plain 01.jpg: the cover is 01.png now
+    return report["slides"][0]
 
 
 def _thumb(png: Path, out: Path) -> None:
@@ -544,7 +671,7 @@ def run(conn, production_id: int, client=None) -> Path:
     out_dir = RENDERS / f"carousel_{production_id}_v{version}"
     if out_dir.exists():
         shutil.rmtree(out_dir)
-    made = lay_out(conn, slides, out_dir)
+    made = lay_out(conn, slides, out_dir, layout=layout_of(row))
     thumb = out_dir / "thumb.jpg"
     _thumb(Path(made["files"][0]), thumb)
     stored = {"version": version, "slides": slides, **made,
@@ -586,7 +713,7 @@ def self_revise(conn, production_id: int, notes: list[dict], round_no: int, clie
     out_dir = RENDERS / f"carousel_{production_id}_v{row['version']}_fix{round_no}"
     if out_dir.exists():
         shutil.rmtree(out_dir)
-    made = lay_out(conn, slides, out_dir)
+    made = lay_out(conn, slides, out_dir, layout=layout_of(row))
     thumb = out_dir / "thumb.jpg"
     _thumb(Path(made["files"][0]), thumb)
     stored = {"version": row["version"], "slides": slides, **made,
@@ -648,7 +775,7 @@ def patch(conn, production_id: int, actions: list[dict], round_no: int) -> tuple
     out_dir = RENDERS / f"carousel_{production_id}_v{row['version']}_fix{round_no}"
     if out_dir.exists():
         shutil.rmtree(out_dir)
-    made = lay_out(conn, slides, out_dir)
+    made = lay_out(conn, slides, out_dir, layout=layout_of(row))
     thumb = out_dir / "thumb.jpg"
     _thumb(Path(made["files"][0]), thumb)
     did = "; ".join(r["did"] for r in results if r.get("ok"))
@@ -689,7 +816,7 @@ def choose(conn, production_id: int, n: int, option: str) -> dict:
     if shared:
         image["thumb_path"] = shared
     out_dir = RENDERS / f"carousel_{production_id}_v{row['version']}"
-    made = lay_out(conn, data["slides"], out_dir)
+    made = lay_out(conn, data["slides"], out_dir, layout=layout_of(row))
     _thumb(Path(made["files"][0]), out_dir / "thumb.jpg")
     data.update(made)
     data["layouts"] = int(data.get("layouts") or 1) + 1

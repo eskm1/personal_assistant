@@ -1432,6 +1432,7 @@ from ig_signin import bp as _signin_bp  # noqa: E402 - the owner's Instagram sig
 from cleanup import bp as _cleanup_bp  # noqa: E402 - Review's clean-up: remove, archive, free up space
 from posting_routes import bp as _posting_bp  # noqa: E402 - Instagram: connect, schedule, results, public media
 from help_routes import bp as _help_bp  # noqa: E402 - help, feedback, usage capture and the weekly report
+from insights_routes import bp as _insights_bp  # noqa: E402 - what kinds of posts work (the planner's Insights)
 
 app.register_blueprint(_plan_bp)
 app.register_blueprint(_planner_bp)
@@ -1440,6 +1441,7 @@ app.register_blueprint(_signin_bp)
 app.register_blueprint(_cleanup_bp)
 app.register_blueprint(_posting_bp)
 app.register_blueprint(_help_bp)
+app.register_blueprint(_insights_bp)
 
 
 # ── Serve ─────────────────────────────────────────────────────────────────────

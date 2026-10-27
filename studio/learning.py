@@ -19,6 +19,8 @@ the same editing note twice.
   - Bryan's notes asking for fewer or more drawn animations ("too many animations", "more
     diagrams") move a lean the editor follows: its guidance and how many it may draw per draft
     (insert_guidance, insert_cap). It shows as one line in Studio's playbook section.
+  - The Monday numbers memo's Do more / Do less (insights.py) sit at the end of the section under their own
+    heading, as soft guidance: a lean when a post allows it, never a rule and never a reason to flag a draft.
   - Every draft logs how many editing problems Studio caught itself before Bryan saw it
     (self_fix_log in the catalogue), for Review's trend line.
 """
@@ -322,7 +324,26 @@ def section(data: dict | None = None) -> str:
         extra = _insert_line(data) if scope == "reel" else ""
         if rules or extra:
             parts += ["", f"### {label}", *(_line(r) for r in rules), *([extra] if extra else [])]
+    hints = insights_hints()
+    if hints:
+        parts += ["", INSIGHTS_HEADING, INSIGHTS_NOTE, *(f"- {h}" for h in hints)]
     return "\n".join(parts)
+
+
+# What the Monday numbers memo says works on Instagram (insights.py), as soft guidance only: a lean when a post
+# allows it, never a rule, never a reason to flag a draft, never over Bryan's playbook.
+INSIGHTS_HEADING = "### What's working on Instagram (soft guidance, not rules)"
+INSIGHTS_NOTE = ("From Studio's Monday memo on the account's numbers. Lean this way when a post allows it. These are "
+                 "not rules: Bryan's playbook and the rules above always win, and a draft is never flagged for these.")
+
+
+def insights_hints() -> list[str]:
+    try:
+        import insights
+        return insights.guidance_lines() if settings.INSIGHTS else []
+    except Exception as e:
+        log.debug("No insights for the playbook: %s", e)
+        return []
 
 
 def split(text: str) -> tuple[str, str, str]:
@@ -348,7 +369,8 @@ def sync_playbook(data: dict | None = None) -> None:
     import playbook
     data = data or _load()
     text = playbook.text()
-    has_rules = any(r["status"] == "active" for r in data["rules"]) or bool(insert_lean(data))
+    has_rules = (any(r["status"] == "active" for r in data["rules"]) or bool(insert_lean(data))
+                 or bool(insights_hints()))
     if not has_rules and not split(text)[1]:
         return
     new = _place(text, f"{START}\n{section(data)}\n{END}")

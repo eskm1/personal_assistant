@@ -128,9 +128,10 @@ def ig_schedule():
         return jsonify({"error": "Which draft?"}), 400
     try:
         post = posting.schedule(db(), production_id, data.get("when"), fields.get("caption"), fields.get("cover_ms"),
-                                fields.get("share_to_feed", True), fields.get("collaborators"), by=_who()["name"])
+                                fields.get("share_to_feed"), fields.get("collaborators"), by=_who()["name"])
     except posting.PostError as e:
         return jsonify({"error": str(e)}), 400
+    _grid_flag(post, fields)
     return jsonify({"post": post}), 201
 
 
@@ -147,7 +148,15 @@ def ig_change(post_id: int):
         abort(404)
     except posting.PostError as e:
         return jsonify({"error": str(e)}), 409
+    _grid_flag(post, fields)
     return jsonify({"post": post})
+
+
+def _grid_flag(post: dict, fields: dict) -> None:
+    """"Also show it in the grid" ticked or not in the Schedule dialog: the idea's flag says the same, so the
+    planner's profile grid and the post agree (and the sync keeps the post following it)."""
+    if "share_to_feed" in fields and post.get("kind") == "reel" and post.get("idea_remote"):
+        posting.set_grid_flag(db(), post["idea_remote"], bool(post["share_to_feed"]))
 
 
 @bp.post("/api/instagram/posts/<int:post_id>/cancel")
@@ -161,7 +170,15 @@ def ig_cancel(post_id: int):
         abort(404)
     except posting.PostError as e:
         return jsonify({"error": str(e)}), 409
+    _grid_flag(post, fields)
     return jsonify({"post": post})
+
+
+def _grid_flag(post: dict, fields: dict) -> None:
+    """"Also show it in the grid" ticked or not in the Schedule dialog: the idea's flag says the same, so the
+    planner's profile grid and the post agree (and the sync keeps the post following it)."""
+    if "share_to_feed" in fields and post.get("kind") == "reel" and post.get("idea_remote"):
+        posting.set_grid_flag(db(), post["idea_remote"], bool(post["share_to_feed"]))
 
 
 @bp.get("/api/instagram/results")

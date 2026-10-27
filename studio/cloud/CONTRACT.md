@@ -424,7 +424,7 @@ queued develop job to write the slides.
 **Pictures (Studio machine, uploads.py; planner session, CORS as for uploads).**
 - `POST /api/uploads {idea_id, name, size, type}` (JPEG, PNG or HEIC/HEIF, at most 60 MB) then the same PUTs as
   a video: once complete the photo is kept as `Photos/<photo_id>.jpg` (HEIC converted with pillow-heif, turned
-  upright, at most 2400 px), its 540 px preview is uploaded to `photos/<photo_id>.jpg`, and the PUT (and GET)
+  upright, at most 2700 px, so a 2160x2700 photo stays as it is), its 540 px preview is uploaded to `photos/<photo_id>.jpg`, and the PUT (and GET)
   answer carries `photo: {id, thumb_path, width, height}`. 415 not a photo (or unreadable), 413 too big, 404 no
   such idea. Nothing is written to `shot_uploads`. The planner then sets the slide's image.
 - `POST /api/uploads/stills {clip_id, at}` -> `{clip_id, at, taken, thumb_path}`: the sharpest of 7 frames within
@@ -717,6 +717,7 @@ its Bearer token, like the upload API (same CORS). Reads: members; changes: the 
 | `POST /api/instagram/posts/<id> {when, caption, ...}` | change or try again (scheduled or failed only; 409 while it goes out) |
 | `POST /api/instagram/posts/<id>/cancel` | `{post}` (409 once it's out) |
 | `GET /api/instagram/posts`, `GET /api/instagram/results` | the last 62 days of posts; results grouped (by kind, format, month) |
+| `GET /api/instagram/insights[?memo=<date>]` | what kinds of posts work (`insights_routes.py`, members): `{grade, memo, memos, posts, findings, baselines, followers, forecasts, labels, rules, next_memo}` |
 | `GET /public/media/<token>/<file>` | no sign-in: the files of a post being published, for Instagram to fetch (below) |
 
 **Scheduling.** The suggested slot (`posting.suggest`): the next day that keeps about `posts_per_week` posts a week
@@ -763,6 +764,17 @@ one month at a time), More > Results (`#/results`), More > Instagram (`#/instagr
 with the next scheduled posts, Needs your call lists posts that couldn't go out (Try again), the month's slots tick off
 what was posted. An approved idea shows its post and Schedule / Change. The dialogs (Schedule, the Instagram box) are
 `cloud/planner/post-ui.js` + `post-ui.css`, shared with Review (served as `/static/post-ui.*`).
+
+## Insights: what kinds of posts work (no migration)
+
+Rung 1 of the content analytics (Bryan, 2026-10-27). Studio-only: `insights.py` reads the catalogue (`post_results`
+kept beyond Instagram's 90 days, `posts`, `productions`' edit plans and slides, `feedback`, `idea_runs`) and its own
+tables `insight_ideas` (the planner idea behind a post: hook, the chosen `hook_options` formula, the topic's
+`suggestion.source`, from the sync's own read of `ideas`, no extra request) and `insight_forecasts` (the Monday
+forecasts and their grades); memos in `ROOT/insights/<date>.json`. Keyed by Instagram's media id and Studio's post id,
+so a later lead link joins the same rows. The planner reads it from the Studio machine
+(`GET /api/instagram/insights`, its Bearer, like the posting API; members; reads only), so nothing new in Supabase.
+Planner: More > Insights (`#/insights`, `js/insights.js` + `insights.css`, loaded on first open; a link on Results).
 
 ## Hook options and Bryan's voice (migration 20261026000000_hook_options.sql)
 
@@ -812,3 +824,65 @@ never silently.
 least one open note (the owner may also send back on Studio's read alone); approve, reject, reopen, redo and retry
 stay owner-only. The laptop-only planning board (`POST /api/plan-idea/<id>/decision`) takes Go / Park / undecided
 from anyone, Dismiss from the owner.
+
+## The profile grid (migration 20261028000000_profile_grid.sql)
+
+Bryan, via the content lead, 2026-10-27: "see and plan the whole @urbanmakers_sg profile before anything posts".
+**Nothing posts from the grid**: posting stays Approve (Review), then Schedule (the existing dialog).
+
+**Schema.**
+- `ideas.post_on` date null: the day it's meant to go out (Singapore). The idea's Details, the grid's Save this order
+  and Spread these set it. A scheduled post's own `scheduled_at` wins once it's scheduled.
+- `ideas.in_grid` boolean (default true): a Reel shows in the profile grid; false = the Reels tab only (Instagram's
+  `share_to_feed`). Carousels are always in the grid.
+- `ideas.needs_fact` text null (<= 300): Needs a fact from Bryan (what's missing; '' = flagged without words). The
+  planner also flags an idea whose words carry `[check]` (what topics.py writes instead of guessing a figure).
+- `ideas.slide_layout` null | `'photos'`: photos only, each photo fills its slide, slide 1's heading an optional small
+  cover line (carousel.py `lay_out_photos`).
+- `ideas.photos_confirmed_at` / `photos_confirmed_by`: Bryan's Confirm photos; a trigger clears both when the slides
+  change in an update that doesn't set them.
+- `post_results.thumb_path` (`results/<media_id>.jpg` in the thumbs bucket), `in_grid` (Instagram's
+  `is_shared_to_feed`, Reels only; null otherwise or unknown), `caption` (the whole caption).
+- `grid_pins` (`idea_id` or `media_id`, one of them; `position` 1-3; `pinned_by`; `done_at` = pinned in the Instagram
+  app too). At most 3 (trigger, `P0001`). Members read, add, change and delete. Realtime on.
+- `profile_grid()` -> jsonb `{ideas, posts, media, pins}` (members, the caller's rights): the ideas not dismissed or
+  rejected that have a posting date, a draft or a post (their call, status, production, date, flags, `slides_count`,
+  `cover` = the first slide's still or a Reel's first take, `cover_text`, `check` = `[check]` in the words), each
+  idea's post (posted first, else the newest not cancelled) and posts with no idea, the latest 60 posts on the account,
+  the pins. The Grid page draws from this one request.
+- `set_post_dates(p_dates jsonb)` -> int: `[{id, post_on}]` (at most 200, post_on `YYYY-MM-DD` or null), the caller's
+  rights; returns how many changed. Save this order, Undo after it, and Spread these each send one call.
+
+**Studio machine.**
+- `cloud_sync.check_grid` (rechecked every 10 min): until the migration is online nothing new is sent.
+- The local mirror keeps `ideas.post_on`, `in_grid`, `slide_layout` (catalog). The carousel job reads `slide_layout`
+  and `carousel.make(..., layout)` keeps `plan.layout = 'photos'`.
+- Scheduling: `posting.schedule` with no `share_to_feed` takes the idea's `in_grid` (else true); the Schedule dialog's
+  "Also show it in the grid" writes the idea's flag too (`posting.set_grid_flag`, here and online); a scheduled Reel
+  follows its idea's flag until it starts going out (`posting.follow_grid`, each sync). `GET
+  /api/instagram/plan/<production_id>` adds `planned_on` (the idea's date: the suggested slot, at `STUDIO_POST_TIME`,
+  while it's ahead) and `in_grid`.
+- Results (`post_results.py`): the daily read asks Instagram for `media_url, thumbnail_url, is_shared_to_feed` too
+  (refused: asked again without them, and not again); a small still of each post (540 wide, a Reel's cover) is kept
+  once in `ROOT/IGThumbs/<media_id>.jpg` and uploaded to `results/<media_id>.jpg`; the profile (`GET /me?fields=
+  user_id,username,name,biography,profile_picture_url,followers_count,follows_count,media_count`, a refused field
+  dropped) in `ROOT/instagram_profile.json` and its picture to `profile/<hash>.jpg`.
+- `laptop_status.info.instagram` adds `carousel_max` and `profile` `{source: account | settings, username, name,
+  biography, followers, follows, media_count, avatar_path}` (settings: `STUDIO_INSTAGRAM_HANDLE`, `STUDIO_INSTAGRAM_NAME`,
+  `STUDIO_INSTAGRAM_BIO`). Never a token.
+- Uploaded photos are kept up to 2700 px (a 2160x2700 photo stays as it is). Photos only: each photo is its slide, a
+  JPEG, never made bigger, cropped to 4:5 around the middle only when it isn't 4:5, at most 2160 wide; a cover line
+  makes slide 1 a 1080x1350 PNG laid out in Chrome; a slide without a picture is laid out in words as usual.
+
+**Planner.** More > Grid (`#/grid`, `js/grid.js`; a link on the Posting calendar and Plan's Coming up): the header,
+the grid (pins, then newest first; a Reel out of the grid hidden, counted, "Show them"), drag to reorder (`js/sortable.js`:
+mouse, a held finger, Space + arrows; Shift the rest or Swap two, Alt swaps), the save bar (Save this order, Undo),
+Spread these, a panel per post (slides, Studio's read under /plan/, caption, photos, posting date, the grid flag, pins,
+Needs a fact; Schedule… opens the existing dialog). The status marks (`marks.js`, `marks.css`, also served to Review
+as `/static/marks.*`): Posted, Scheduled, Approved, Draft in Review, Idea, Needs a fact, with a key wherever they
+show (the Grid, Plan's home, Ideas, the Posting calendar, the idea page, Review's tiles). Plan's home reminds Bryan to
+pin a pinned post in the app once it's out. A carousel's photos strip (`slides.js` `photosHTML`: add many at once in
+file-name order, up to `carousel_max`, said plainly past it; drag to reorder; Move earlier / later, Make cover,
+Remove with Undo; Confirm photos; Words on slides / Photos fill the slide; the cover line) on the idea page and in
+the grid's panel; a folder dropped on it brings its photos. Before the update: the Grid page says it needs it (the
+owner gets the command), the new fields stay away, everything else works.

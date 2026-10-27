@@ -288,6 +288,25 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   20261026000000_hook_options (`ideas.hook_options`, context `voice`/`wording`) + updated plan-organise/plan-develop:
   Bryan runs `cloud_setup.py --update`; until then hooks are still picked on the Studio machine but no scores reach
   the planner and the Edge Functions use the built-in never list without the voice file.
+- Insights, rung 1 of the content analytics, built 2026-10-27 (Bryan: "understand what kinds of posts work and tweak
+  as we go"; not yet proven on real Instagram numbers or with real Claude): `insights.py` (each post's day-7 index
+  against the typical post of its format from saves, shares, follows, profile visits, comments per 1,000 reached and
+  Reels' watch-through, likes never judged; the features Studio knows because it made the post; per-feature empirical
+  Bayes with n, "proven" / "early signal" by a stated rule; the Monday forecast of the week's posts graded against
+  "every post is typical" and a rolling-origin backtest; the Monday memo, one Claude call `usage` kind `insights`
+  ~US$0.10, `Studio/insights/<date>.json`; its lines in topics' prompt and, as soft guidance, Studio's playbook
+  section), `insights_routes.py` (`GET /api/instagram/insights`), the planner's `#/insights` (`js/insights.js`,
+  `insights.css`, More > Insights, a link on Results), `tests/quality/suite_insights.py`. `STUDIO_INSIGHTS*`.
+  Rungs 2/3 (leads, money in bands) not built; the tables are keyed by media id / post id so a lead link can join.
+- Profile grid, built 2026-10-28 (Bryan via the content lead, 2026-10-27: "see and plan the whole @urbanmakers_sg profile
+  before anything posts"; not yet proven on the server, real Instagram or real Supabase; migration NOT applied yet):
+  migration 20261028000000_profile_grid (`ideas.post_on`, `in_grid`, `needs_fact`, `slide_layout`, `photos_confirmed_*`;
+  `post_results.thumb_path`/`in_grid`/`caption`; `grid_pins`; `profile_grid()`, `set_post_dates()`), the planner's
+  `#/grid` (`js/grid.js`, `js/sortable.js`; drag Shift/Swap, Save this order, Spread these, panel, pins), the shared
+  status marks (`marks.js`/`marks.css`, Plan and Review), the photos strip (`slides.js`: many at once, reorder, Confirm
+  photos, Photos fill the slide + cover line; `carousel.lay_out_photos`), share_to_feed from the idea's flag
+  (`posting.grid_default`/`follow_grid`/`set_grid_flag`), stills and the profile with the results (`post_results.py`,
+  `IGThumbs/`), `cloud_sync.check_grid`. `tests/quality/suite_grid.py`. NEEDS CTO: `cloud_setup.py --update`.
 - Reference library and taste report built 2026-10-19 (not yet proven against Instagram or real Claude):
   Import many (paste or CSV, dedupe by shortcode, `import_references()`), held until Bryan presses Analyse
   (all, or a stratified sample of 150), paced downloads with backoff and pauses (`ref_library.py`), carousels and

@@ -6,7 +6,7 @@ import {
   $, $$, BRAND, ACCOUNTS, oneBrand, esc, sb, must, invoke, toast, options, store, recall, plural,
   prepShots, progress, jobView, jobActive, kickDevelop, openModal, closeModal, formError, askFirst, nameOf, PRODUCTION,
   state, isFilmed, httpsUrl, laptopWait, ago, dayOf, todayISO, parseDay, dayLabel, shortDay, withKinds, kindsQuery, kindDot,
-  schema, POST_TYPES, POST_TYPE, isCarousel, mark, offWhy, isOwner } from "./core.js";
+  schema, POST_TYPES, POST_TYPE, isCarousel, mark, offWhy, isOwner, gridCols, ideaMarks, marksKey, missingTable } from "./core.js";
 import { shoot, loadShoot, renderShoot } from "./shoot.js";
 
 export const plan = {
@@ -21,7 +21,7 @@ const IDEA_COLS = "id,project_id,arc_id,title,brand,format,decision,status,produ
   + "shots(id,position,filmed_at,takes(id,clip_id,clips(verdict,recorded_at))),votes(user_id,vote),comments(count)";
 const JOB_COLS = "id,kind,runner,project_id,idea_id,state,result,error,created_at,started_at,updated_at";
 // Ideas Studio suggested (ideas.suggestion) come with a database update: asked for once it's there.
-const ideaCols = () => withKinds(IDEA_COLS) + (schema.suggestion ? ",suggestion" : "");
+const ideaCols = () => withKinds(IDEA_COLS) + (schema.suggestion ? ",suggestion" : "") + gridCols();
 
 export const currentProject = () => plan.projects.find((p) => p.id === plan.pid) || null;
 const folderName = (s) => String(s || "").replace(/[<>:"/\\|?*]/g, "").trim().slice(0, 80);
@@ -92,13 +92,16 @@ export async function loadBoard() {
   // The jobs come at the same time: the project's own, and its ideas' (one may have moved here
   // from another project with its jobs).
   const kinds = ["organise", "develop", "ideas"];
-  const [arcs, ideas, ownJobs, ideaJobs] = await Promise.all([
+  const [arcs, ideas, ownJobs, ideaJobs, postRows] = await Promise.all([
     sb.from("arcs").select("*").eq("project_id", pid).order("position").order("id").then(must),
     kindsQuery(() => sb.from("ideas").select(ideaCols()).eq("project_id", pid).neq("status", "dismissed")
       .order("position").order("id").then(must)),
     sb.from("jobs").select(JOB_COLS).in("kind", kinds).eq("project_id", pid).order("id", { ascending: false }).limit(400).then(must),
     sb.from("jobs").select(`${JOB_COLS},ideas!inner(project_id)`).in("kind", kinds).eq("ideas.project_id", pid)
       .order("id", { ascending: false }).limit(400).then(must),
+    // Each idea's Instagram post, for its card's mark (Scheduled, Posted): nothing before the posting update.
+    sb.from("posts").select("id,idea_id,state,scheduled_at,posted_at,ideas!inner(project_id)").eq("ideas.project_id", pid)
+      .neq("state", "cancelled").order("id").limit(400).then(must).catch((err) => (missingTable(err) ? [] : [])),
   ]);
   await shootLoad;
   const live = new Set(ideas.map((i) => i.id));
@@ -124,6 +127,9 @@ export async function loadBoard() {
     i.slideCount = Array.isArray(i.slides) ? i.slides.length : 0;
     delete i.slides;
   }
+  const postOf = new Map();
+  for (const { ideas: _, ...p } of postRows) if (!postOf.has(p.idea_id) || p.state === "posted") postOf.set(p.idea_id, p);
+  for (const i of ideas) i.post = postOf.get(i.id) || null;
   plan.board = {
     project: plan.projects.find((p) => p.id === pid), arcs, ideas, jobs, develop,
     organise: jobs.find((j) => j.kind === "organise" && j.project_id === pid) || null,
@@ -444,7 +450,7 @@ export function renderPlanBoard(force = false) {
   const ctx = { b, next, fresh: new Set([...(plan.footageFresh || []), ...(plan.footageNews?.ids || [])]), desk };
   const html = GROUPS.map((g) => groupHTML(g, lists[g.key], ctx)).join("");
   el.classList.toggle("desk", desk);
-  el.innerHTML = b.ideas.length ? html : `<div class="board-empty"><p><strong>No ideas in ${esc(b.project?.name || "this project")} yet.</strong></p>
+  el.innerHTML = b.ideas.length ? html + `<div class="board-key">${marksKey()}</div>` : `<div class="board-empty"><p><strong>No ideas in ${esc(b.project?.name || "this project")} yet.</strong></p>
     <p class="muted">Press + New idea: one idea, or a list for Claude to sort into series with a storyboard each.</p></div>`;
   if (refocus) el.querySelector(refocus)?.focus({ preventScroll: true });
 }
@@ -507,7 +513,10 @@ function cardHTML(i, ctx) {
   const g = groupOf(i);
   const ups = i.votes.up.length;
   const label = [i.title, line.text, ups ? `${ups} keen` : "", i.comments ? plural(i.comments, "comment") : ""].filter(Boolean).join(". ");
-  return `<button type="button" class="card idea-card ${g}" data-plan-idea="${esc(i.id)}" aria-label="${esc(label)}">
+  const marks = ideaMarks(i, i.post, { small: true, title: false });
+  const status = window.StudioMarks?.of({ production: i.production, post: i.post, format: i.format, slides_count: i.slideCount }).text || "";
+  return `<button type="button" class="card idea-card ${g}" data-plan-idea="${esc(i.id)}" aria-label="${esc(`${label}. ${status}`)}">
+    <span class="card-marks">${marks}</span>
     <span class="card-title">${esc(i.title)}</span>
     <span class="card-line${line.bad ? " bad-text" : ""}">${line.busy ? `<span class="spin"></span>` : kindDot(i.post_type)}<span>${esc(line.text || "Not sorted yet")}</span></span>
   </button>`;

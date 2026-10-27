@@ -6,7 +6,7 @@
 // runs, before the page's own script. The page then fills the status pill (#laptop-*)
 // and the account menu (#account-menu), and tells the shell where it is:
 //   StudioShell.setCurrent("plan" | "ideas" | "today" | "review" | "refs" | "style" | "content" | "questions" | "library"
-//                          | "calendar" | "results" | "instagram" | "")
+//                          | "grid" | "calendar" | "results" | "insights" | "instagram" | "")
 //   StudioShell.setLinks({ today: "#/today/3", ... })   ("" hides that item)
 //   StudioShell.setBadge(2)                              (drafts waiting for review)
 //   StudioShell.setHost({ page, api, role, version, usage })  (help, feedback and usage capture: help.js, capture.js)
@@ -42,7 +42,9 @@ window.StudioShell = (() => {
     content: `${planner}#/content-plan`,
     questions: `${planner}#/questions`,
     calendar: `${planner}#/calendar`,
+    grid: `${planner}#/grid`,
     results: `${planner}#/results`,
+    insights: `${planner}#/insights`,
     instagram: `${planner}#/instagram`,
     library: dash && `${dash}#/tab/library`,
   };
@@ -62,6 +64,8 @@ window.StudioShell = (() => {
     library: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M6 4h12M10 11l4 2.5-4 2.5z"/>',
     calendar: '<rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4M8 14h2M12 14h2M16 14h.5M8 17h2M12 17h2"/>',
     results: '<path d="M4 20h16M7 17v-5M12 17V7M17 17v-8"/>',
+    insights: '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1 2V16h5.2v-.2c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z"/>',
+    grid: '<rect x="3.5" y="3.5" width="5" height="6.5" rx="1"/><rect x="9.5" y="3.5" width="5" height="6.5" rx="1"/><rect x="15.5" y="3.5" width="5" height="6.5" rx="1"/><rect x="3.5" y="13.5" width="5" height="6.5" rx="1"/><rect x="9.5" y="13.5" width="5" height="6.5" rx="1"/><rect x="15.5" y="13.5" width="5" height="6.5" rx="1"/>',
     instagram: '<rect x="4" y="4" width="16" height="16" rx="4.5"/><circle cx="12" cy="12" r="3.6"/><circle cx="16.6" cy="7.4" r=".9"/>',
     help: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.4M12 16.6v.2"/>',
     feedback: '<path d="M5 21V4.5M5 4.5h11l-2 4 2 4H5"/>',
@@ -73,7 +77,7 @@ window.StudioShell = (() => {
   // The sections behind More: on a computer a menu under More, on a phone the More sheet.
   // The owner's own tools at the end of More: what people flagged, and the weekly report's key (help.js).
   const OWNER_TOOLS = [["feedback", "Feedback"], ["report", "Weekly report access"]];
-  const MORE = [["calendar", "Posting calendar"], ["results", "Results"], ["refs", "References"], ["style", "Style guide"],
+  const MORE = [["grid", "Grid"], ["calendar", "Posting calendar"], ["results", "Results"], ["insights", "Insights"], ["refs", "References"], ["style", "Style guide"],
     ["content", "Content plan"], ["questions", "Client questions"], ["today", "Today on site"], ["library", "Library"],
     ["instagram", "Instagram"]];
   root.innerHTML = `<header class="shell-top" id="shell-top">
