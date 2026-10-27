@@ -35,6 +35,7 @@ import settings
 import playbook
 import previews
 import slideshow
+import transcript_edit
 import usage
 import webassets
 import wording
@@ -802,7 +803,10 @@ def production_detail(production_id: int):
                  "edit": {"cuts": len(cuts), "clips": len({c["clip_id"] for c in cuts}
                                                           | {s["clip_id"] for s in ((edl or {}).get("pip") or {}).get("shots", [])}),
                           "hook_text": (edl or {}).get("hook_text", "")} if edl else None,
-                 "transcript": " ".join(w["word"] for w in words), "words": len(words), "languages": langs})
+                 "transcript": " ".join(w["word"] for w in words), "words": len(words), "languages": langs,
+                 # Review's Edit words (transcript_edit.py): the text its box starts with, or why it can't now
+                 "words_edit": {"text": transcript_edit.editable(words), "why_not": transcript_edit.why_not(row)}
+                 if words and row["format"] != slideshow.FORMAT else None})
     item.update({"idea": row["idea"], "caption": row["caption"] or "", "sources": sources,
                  "caption_check": wording.caption_check(row["caption"] or ""),
                  "notes": _notes("production", production_id), "error": row["error"],
@@ -1279,6 +1283,25 @@ def decide(production_id: int):
         return jsonify({"error": "unknown decision"}), 400
     log.info("Production %s: %s", production_id, decision)
     return jsonify({"ok": True})
+
+
+@app.post("/api/production/<int:production_id>/words")
+def fix_words(production_id: int):
+    """Review's Edit words: the corrected transcript of a Reel waiting for review becomes caption corrections,
+    rendered again with the same cut, no Claude (transcript_edit.py). Bryan or the team. remember: the
+    corrected terms go in the trade glossary too."""
+    data = body()
+    if db().execute("SELECT 1 FROM productions WHERE id = ?", (production_id,)).fetchone() is None:
+        abort(404)
+    version = data.get("version")
+    if version is not None and (isinstance(version, bool) or not isinstance(version, int)):
+        return jsonify({"error": "send the version you edited"}), 400
+    try:
+        out = transcript_edit.submit(db(), production_id, data.get("text"), version, bool(data.get("remember")),
+                                     g.user["name"])
+    except transcript_edit.Refused as e:
+        return jsonify({"error": str(e)}), 409 if isinstance(e, transcript_edit.Changed) else 400
+    return jsonify({"ok": True, **out})
 
 
 @app.post("/api/production/<int:production_id>/slideshow")

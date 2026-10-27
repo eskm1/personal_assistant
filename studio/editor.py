@@ -3127,6 +3127,9 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
     """Make the next draft of a production. Returns the rendered file. Studio's read, its own
     fix rounds (self_fix.py) and the move to To review follow."""
     production = dict(conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone())
+    import transcript_edit
+    if transcript_edit.pending(production):  # Review's Edit words: the same cut with the right captions, no Claude
+        return transcript_edit.render(conn, production_id, find_track)
     plan = json.loads(production["plan"] or "{}")
     ids = list(dict.fromkeys(s["clip_id"] for s in plan.get("segments", [])))
     if not ids:
@@ -3527,10 +3530,11 @@ def self_patch(conn, production_id: int, actions: list[dict], round_no: int, cli
 
 def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version: int, find_track=None,
             placed: bool = False, suffix: str = "", address_notes: bool = True, client=None,
-            ref: str | None = None) -> Path:
+            ref: str | None = None, spell: bool = True) -> Path:
     """Render an edit plan (EDL) to the next draft: cut, captions, graphics, music, QA. The
     draft is stored but stays 'producing': self_fix.deliver sends it to To review. client and ref:
-    for the caption spell-check (spelling.py; ref is where its cost is recorded)."""
+    for the caption spell-check (spelling.py; ref is where its cost is recorded). spell=False: no
+    spell-check (Review's Edit words: the captions are as Bryan corrected them, and nothing is spent)."""
     production_id = production["id"]
     # What Studio's own checks changed: editing problems (counted in Review's "caught" line) and
     # sound fixes (the recording's level, not an editing mistake).
@@ -3541,7 +3545,8 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
     # already checked in this draft aren't sent again).
     import spelling
     cuts = edl["cuts"] = attach_corrections(edl["cuts"], edl.get("corrections"))
-    spelled = spelling.run(edl, cuts, clips, production, plan, client, ref or f"production:{production_id}")
+    spelled = spelling.run(edl, cuts, clips, production, plan, client, ref or f"production:{production_id}") \
+        if spell else {"fixed": [], "usd": 0.0}
     edl["spell_usd"] = spelled["usd"]  # this render's (self_fix.deliver counts the first one in its cap)
     if spelled["fixed"]:
         cuts = edl["cuts"] = attach_corrections(cuts, edl.get("corrections"))

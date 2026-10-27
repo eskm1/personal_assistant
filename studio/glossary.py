@@ -4,7 +4,8 @@ The trade glossary: words Whisper should hear right and captions should spell ri
 
 One term per line ("MCST", "waterproofing", "Lamitak"); a line "wrong -> right" is a mis-hearing
 Studio always corrects in captions ("M C S T -> MCST"); "#" starts a comment. The file is made
-from SEED the first time it's read; Studio never rewrites it after that.
+from SEED the first time it's read; Studio never rewrites it after that, it only adds at the end the
+terms someone corrected in Review with "Remember this word" (add).
 
 Used three ways: Whisper is given the terms as hotwords when it transcribes (transcribe.py), the
 caption spell-check before each render is given them (spelling.py), and the "wrong -> right"
@@ -200,6 +201,43 @@ def known(text: str) -> bool:
     """Is this a glossary term (whatever its case and punctuation)?"""
     k = key(text)
     return bool(k) and any(key(t) == k for t in terms())
+
+
+ADDED = "# Added from Review (Edit words, Remember this word)"
+
+
+def add(new: list[str], who: str = "") -> list[str]:
+    """Terms Bryan corrected in a transcript with "Remember this word" (transcript_edit.py), added at the
+    end of the file under ADDED, once each: never one the glossary already has, never a line that would
+    read as something else (a comment, a "wrong -> right"). Returns the ones added."""
+    ensure()
+    added = []
+    with _lock:
+        try:
+            have = PATH.read_text(encoding="utf-8") if PATH.exists() else SEED
+        except (OSError, UnicodeDecodeError) as e:
+            log.warning("Couldn't read the glossary to add to it: %s", e)
+            return []
+        known_keys = {key(t) for t in _parse(have)[0]}
+        for t in new:
+            t = re.sub(r"\s+", " ", str(t or "")).strip()
+            if (not t or len(t) > 40 or len(t.split()) > 4 or "#" in t or "->" in t or key(t) in known_keys
+                    or len(key(t)) < 2):
+                continue
+            known_keys.add(key(t))
+            added.append(t)
+        if not added:
+            return []
+        text = have if have.endswith("\n") else have + "\n"
+        if ADDED not in text:
+            text += f"\n{ADDED}\n"
+        try:
+            PATH.write_text(text + "".join(f"{t}\n" for t in added), encoding="utf-8")
+        except OSError as e:
+            log.warning("Couldn't add %s to the glossary: %s", added, e)
+            return []
+    log.info("Glossary: added %s (by %s)", ", ".join(added), who or "Review")
+    return added
 
 
 # Whisper keeps about 223 tokens of hotwords; the short terms go first (acronyms and names are what

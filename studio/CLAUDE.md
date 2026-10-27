@@ -308,6 +308,12 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   photos, Photos fill the slide + cover line; `carousel.lay_out_photos`), share_to_feed from the idea's flag
   (`posting.grid_default`/`follow_grid`/`set_grid_flag`), stills and the profile with the results (`post_results.py`,
   `IGThumbs/`), `cloud_sync.check_grid`. `tests/quality/suite_grid.py`.
+- Edit words, built 2026-10-28 (Bryan, 2026-10-27: "Can i correct typos and resubmit for the captions to be updated?"; not
+  yet proven on the server or a real Chinese draft): Review > Transcript > Edit words, correct in place, Fix captions
+  (`transcript_edit.py`: a word diff into `edl["corrections"]`, held in `edl["word_fixes"]`, `editor.edit` re-renders
+  v+1 with the same cut, no Claude, $0, the read carried over; refuses a new sentence, >2 words added/cut, >40%
+  changed). Remember this word adds the typed term to `Studio/glossary.txt` (`glossary.add`). `POST
+  /api/production/<id>/words`. `tests/quality/suite_transcript_edit.py`. Open: whether the team may tick Remember.
 - Reference library and taste report built 2026-10-19 (not yet proven against Instagram or real Claude):
   Import many (paste or CSV, dedupe by shortcode, `import_references()`), held until Bryan presses Analyse
   (all, or a stratified sample of 150), paced downloads with backoff and pauses (`ref_library.py`), carousels and

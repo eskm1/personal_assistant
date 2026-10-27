@@ -627,6 +627,21 @@ code { background: var(--um-paper-mid); border-radius: 4px; padding: 1px 5px; fo
 .fold-body p { color: var(--um-ink); }
 .fold-body textarea { min-height: 110px; }
 .transcript { line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Edit words: the transcript as a text box as tall as its words; the bar above it stays in view while the page
+   scrolls (under the top line), so a phone's keyboard never covers Fix captions. */
+.words-edit { display: flex; flex-direction: column; gap: 8px; }
+.words-bar {
+  position: sticky; top: var(--words-top, 0px); z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 8px 0; background: var(--um-paper); border-bottom: 1px solid var(--um-line);
+}
+.words-remember { margin-right: auto; min-height: 40px; }
+.fold-body .words-text { width: 100%; min-height: 160px; resize: none; overflow: hidden; line-height: 1.6; font-size: var(--um-fs-body); }
+.words-status:empty { display: none; }
+@media (max-width: 720px) {
+  .words-remember { flex: 1 1 100%; min-height: 44px; }
+  .words-bar .btn { flex: 1 1 0; min-height: 48px; }
+  .fold-body .words-text { font-size: 16px; }
+}
 .link-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .link-list .link { font-size: var(--um-fs-body); }
 .more-part { display: flex; flex-direction: column; gap: 6px; }

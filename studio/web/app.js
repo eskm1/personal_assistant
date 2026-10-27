@@ -1921,6 +1921,7 @@ function renderPanel() {
   keepDrafts(["note-body", "caption"], () => {
     panel.innerHTML = isCarousel(d) ? carouselPageHTML(d) : d.kind === "production" ? productionPageHTML(d) : clipPageHTML(d);
   });
+  growWords($("#words-text"));
   if (isCarousel(d)) renderCarouselTile(d);
   keepDrafts(["quick-note"], () => renderTileMeta(d));
   renderHead();
@@ -1937,9 +1938,8 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const sentences = (text) => String(text || "").split(/(?<=[.!?])\s+(?=[A-Z0-9"“(])/).map((t) => t.trim()).filter(Boolean);
 const bullets = (items) => (items.length ? `<ul class="bullets">${items.map((t) => `<li>${t}</li>`).join("")}</ul>` : "");
 
-// A folded row: one line with a grey preview; open or shut is remembered on this device.
-function foldHTML(kind, key, title, peek, body) {
-  const open = recall(`studio.fold.${kind}.${key}`) === "1";
+// A folded row: one line with a grey preview; open or shut is remembered on this device (open: held open).
+function foldHTML(kind, key, title, peek, body, open = recall(`studio.fold.${kind}.${key}`) === "1") {
   return `<details class="fold" data-fold="${esc(kind)}.${esc(key)}"${open ? " open" : ""}>
     <summary><svg class="fold-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
       <span class="fold-title">${esc(title)}</span>${peek ? `<span class="fold-peek">${esc(peek)}</span>` : ""}</summary>
@@ -1980,6 +1980,7 @@ function readHTML(d) {
   return `<section class="read-card ${tone}">
     <div class="read-head"><span class="eyebrow">Studio's read</span><span class="read-verdict">${esc(r.verdict)}</span></div>
     ${scores ? `<div class="scores">${scores}</div>` : ""}
+    ${r.carried ? `<p class="muted small">${esc(r.carried)}</p>` : ""}
   </section>`;
 }
 
@@ -2612,7 +2613,8 @@ function productionPageHTML(d) {
     editor: () => d.edit_summary || edit.cuts ? foldHTML("production", "editor", "What the editor did",
       edit.cuts ? `${plural(edit.cuts, "cut")} from ${plural(edit.clips, "clip")}` : "", bullets(editItems) || `<p class="muted small">No summary.</p>`) : "",
     music: () => d.music ? foldHTML("production", "music", "Music", musicPeek(d.music), musicHTML(d.music).replace(/^<div><h3>Music<\/h3>/, "<div>")) : "",
-    transcript: () => d.transcript ? foldHTML("production", "transcript", "Transcript", plural(d.words, "word"), `<p class="transcript">${esc(d.transcript)}</p>`) : "",
+    transcript: () => d.transcript ? foldHTML("production", "transcript", "Transcript", plural(d.words, "word"), transcriptBody(d),
+      wordsEditing(d) || undefined) : "",
     checks: () => d.qa ? foldHTML("production", "checks", "Checks and measurements", checksPeek(d.qa), checksBody(d)) : "",
     brief: () => foldHTML("production", "brief", "Brief and source clips", d.sources.length ? plural(d.sources.length, "clip") : "", briefBody(d)),
     resolve: () => d.resolve && owner ? foldHTML("production", "resolve", "Open in DaVinci Resolve", RESOLVE_PEEK[d.resolve.state] || "", resolveBody(d)) : "",
@@ -2781,6 +2783,75 @@ function clipPageHTML(d) {
     ${suggestedPostHTML(d)}
     ${clipVerdictHTML(d)}
     <section class="folds">${folds}</section>`;
+}
+
+// Edit words (transcript_edit.py): the transcript as a text box that grows with it; Fix captions puts the
+// corrected words in the captions and makes the next version with the same cut, at no cost. The bar sits
+// above the box and stays in view while it scrolls, so a phone's keyboard never covers Fix captions.
+const wordsEditing = (d) => !!state.wordsEdit && state.wordsEdit.id === d.id && !!d.words_edit;
+function transcriptBody(d) {
+  const we = d.words_edit;
+  if (wordsEditing(d)) {
+    const w = state.wordsEdit;
+    const same = w.text === we.text;
+    return `<div class="words-edit">
+      <div class="words-bar">
+        <label class="check small words-remember" title="Adds the corrected word to Studio's trade glossary, so Whisper hears it and the spell-check knows it">
+          <input type="checkbox" id="words-remember" ${w.remember ? "checked" : ""}> Remember this word</label>
+        <button type="button" class="btn" id="words-cancel">Cancel</button>
+        <button type="button" class="btn primary" id="words-fix" ${same ? `aria-disabled="true" data-why="Correct a word in the text first."` : ""}>Fix captions</button>
+      </div>
+      <p class="muted small" id="words-help">Correct words in place: a word replaced, split in two or joined. To add or cut a sentence, add a note instead.</p>
+      <label class="sr-only" for="words-text">The transcript, to correct</label>
+      <textarea id="words-text" class="words-text" rows="6" spellcheck="true" autocomplete="off" aria-describedby="words-help words-status">${esc(w.text)}</textarea>
+      <p class="small words-status${w.error ? " bad-text" : ""}" id="words-status" role="status">${esc(w.error || "")}</p>
+    </div>`;
+  }
+  const btn = we ? `<div class="row words-row"><button type="button" class="btn" id="words-edit" ${we.why_not ? `aria-disabled="true" data-why="${esc(we.why_not)}"` : `title="Correct a mis-heard word. The captions follow, with the same cut, at no cost."`}>Edit words</button></div>` : "";
+  return `${btn}<p class="transcript">${esc(d.transcript)}</p>`;
+}
+function growWords(el) {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight + 2}px`;
+}
+function startWordsEdit(d) {
+  if (phone()) stopWatching();
+  state.wordsEdit = { id: d.id, version: d.version, text: d.words_edit.text, remember: false, error: "" };
+  mark("words_edit");
+  renderPanel();
+  // The bar sticks just under the top line; the fold opens there, its title in view.
+  const head = $("#detail-head");
+  const top = head ? Math.round(Math.max(head.getBoundingClientRect().bottom, 0)) : 0;
+  $("#viewer").style.setProperty("--words-top", `${top}px`);
+  const box = $("#words-text");
+  growWords(box);
+  const fold = box?.closest(".fold");
+  if (fold) { fold.style.scrollMarginTop = `${top}px`; fold.scrollIntoView({ block: "start" }); }
+  box?.focus({ preventScroll: true });
+}
+function endWordsEdit() {
+  state.wordsEdit = null;
+  renderPanel();
+}
+async function fixWords(d) {
+  const w = state.wordsEdit;
+  const btn = $("#words-fix");
+  btn.disabled = true;
+  try {
+    const r = await api(`/api/production/${d.id}/words`, { text: w.text, version: w.version, remember: w.remember });
+    mark("words_fixed", { changes: r.changes.length, remember: w.remember, team: !isOwner() });
+    state.wordsEdit = null;
+    const kept = r.remembered?.length ? ` Remembered: ${r.remembered.join(", ")}.` : "";
+    toast(`Fixing ${plural(r.changes.length, "caption")}, same cut, no cost. v${d.version + 1} comes back to To review in a few minutes.${kept}`, 6000);
+    await loadDetail();
+    sync();
+  } catch (err) {
+    w.error = err.message;
+    btn.disabled = false;
+    const status = $("#words-status");
+    if (status) { status.textContent = err.message; status.classList.add("bad-text"); }
+  }
 }
 
 // A fresh edit of the same idea in today's style (titles, captions, music taste): this one, or every
@@ -3112,6 +3183,15 @@ async function detailClick(e) {
       mark("approved");
       toast("Approved. Schedule it on Instagram from its page in Done.");
       await nextForReview();
+    } else if (id === "words-edit") {
+      startWordsEdit(d);
+    } else if (id === "words-cancel") {
+      if (state.wordsEdit && state.wordsEdit.text !== d.words_edit?.text
+        && !confirm("Leave without fixing the captions? Your corrections are dropped.")) return;
+      mark("words_cancel");
+      endWordsEdit();
+    } else if (id === "words-fix") {
+      await fixWords(d);
     } else if (id === "redo-one") {
       await api(`/api/production/${d.id}/decision`, { decision: "redo" });
       mark("redo");
@@ -3177,7 +3257,22 @@ async function detailClick(e) {
   }
 }
 
-$("#panel").addEventListener("input", (e) => { if (e.target.id === "caption") captionTyped(e.target); });
+$("#panel").addEventListener("input", (e) => {
+  if (e.target.id === "caption") captionTyped(e.target);
+  if (e.target.id === "words-text" && state.wordsEdit) {
+    state.wordsEdit.text = e.target.value;
+    growWords(e.target);
+    const same = e.target.value === state.detail?.words_edit?.text;
+    const fix = $("#words-fix");
+    if (fix && !fix.disabled) {
+      if (same) { fix.setAttribute("aria-disabled", "true"); fix.dataset.why = "Correct a word in the text first."; }
+      else { fix.removeAttribute("aria-disabled"); delete fix.dataset.why; }
+    }
+  }
+});
+$("#panel").addEventListener("change", (e) => {
+  if (e.target.id === "words-remember" && state.wordsEdit) state.wordsEdit.remember = e.target.checked;
+});
 $("#panel").addEventListener("change", async (e) => {
   if (state.current?.kind === "plan") { await planPanelChange(e); return; }
   if (e.target.id === "note-slide") { e.target.dataset.touched = "1"; return; }

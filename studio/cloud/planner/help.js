@@ -175,11 +175,13 @@ window.StudioHelp = (() => {
       "Main action: the bar at the bottom. **Send back** with your notes (anyone), or **Approve** (Bryan).",
       "A slideshow Reel (a carousel with music): a note can change a slide's time, the order or the music.",
       "A voice-over (you in a small window over site footage): write **full screen here**, **move me to the left** or **no window**.",
+      "A wrong word in the captions: **Transcript**, **Edit words**, correct it, **Fix captions**. Same cut, no cost.",
     ], tour: [
       ["#player-frame", "The draft. Tap to play."],
       ["#quick-note, #note-jump, #note-body", "Type a note. It pins to the moment the video is at."],
       ["#note-remember", "Remember for future edits: the editor follows it on every edit."],
       [".read-card", "Studio's read: what works and what to fix."],
+      ["#words-edit", "Edit words: correct the transcript and the captions follow."],
       ["#decision-bar", "Approve, or send it back with your notes."],
       ["#head-next", "The next draft."],
     ] },

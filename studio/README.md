@@ -203,6 +203,15 @@ After a decision the next draft opens straight away while the editor revises the
 background. You also write or approve the post caption here. Keyboard: J / K for next and
 previous, Space to play, Esc to go back, Enter to add a note.
 
+**Edit words** (a wrong word in the captions, on a Reel waiting for review; you or the team): open **Transcript**,
+press **Edit words**, and correct the words in place: a word replaced ("SIDs" to "as IDs"), one word split in two,
+two joined into one, a word Whisper heard that you didn't say. **Fix captions** puts them in the captions and makes the
+next version with the same cut: no new edit, no Claude, no cost; it comes back to To review in a few minutes and
+Studio's read of the version before stays (only the captions changed). Adding or cutting a sentence is an edit, not a
+correction: it says so, and a note does that instead. Chinese captions are corrected character by character. Tick
+**Remember this word** and the corrected word goes into the trade glossary (`Studio\glossary.txt`, under "Added from
+Review"), so Whisper hears it next time and the spell-check knows it. **Cancel** leaves the transcript as it was.
+
 **Edit it again** (on a draft waiting for review, you only): the same idea made again in today's look, as its next
 version: a Reel gets a fresh edit (titles, captions, music taste), a carousel's slides are rewritten in the current
 style guide and laid out again. **Edit all N waiting again** does every draft in To review. Notes and earlier versions
