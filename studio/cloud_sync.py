@@ -1073,10 +1073,12 @@ def reference_intake(api: Client, refs: list[dict]) -> list[str]:
     """Videos dropped in Studio Inbox\\References\\Ours or \\Inspiration become
     references (brand urban_makers); the file moves to Studio\\References so the
     inbox stays tidy. Dropping a file with a name already in use replaces that
-    reference's video and analyses it again."""
+    reference's video and analyses it again. A file or folder naming a link reference's post, and a
+    folder of pictures (one carousel), go to ref_files.intake first."""
+    import ref_files
     store = settings.REFERENCES
+    added = ref_files.intake(api, refs, REF_SIDES)
     by_name = {r["file_name"]: r for r in refs if r.get("file_name")}
-    added = []
     for side, folder_name in REF_SIDES.items():
         folder = settings.REFERENCE_INBOX / folder_name
         try:
@@ -1155,14 +1157,19 @@ def analyse_one(api: Client, ref: dict, analysis: dict, client=None, library: bo
     work = settings.REFERENCES / ".work" / str(ref["id"])
     problem = "other"
     try:
-        if ref.get("url"):
+        import ref_files
+        own = ref_files.files_for(ref["id"])  # its own file (uploaded, or from OneDrive): nothing to download
+        if own:
+            source = None
+        elif ref.get("url"):
             source = ref["url"]
         else:
             source = settings.REFERENCES / ref["file_name"]
             if not source.exists():
                 raise RuntimeError(f"{ref['file_name']} isn't in Studio\\References on the laptop any more: "
                                    "drop it in Studio Inbox\\References again")
-        result = style_study.analyse(source, work / "stills", download_dir=work, client=client,
+        result = ref_files.analyse(ref, own, work, client) if own else style_study.analyse(
+                                     source, work / "stills", download_dir=work, client=client,
                                      ref=f"ref:{ref['id']}", kind=KIND_HINT.get(ref.get("post_type") or ""))
         paths = []
         for n, still in enumerate(result["stills"], 1):
@@ -1337,13 +1344,12 @@ def sync_references(api: Client, started: float, client=None, conn=None) -> dict
 
     # Analyses (active references only; at most REFS_PER_TICK, within the tick's time budget)
     now = datetime.now(timezone.utc)
-    due = [r for r in refs if r["status"] == "active" and analyses.get(r["id"]) and not ref_library.is_library(r)
-           and _due(analyses[r["id"]], now)]
-    due.sort(key=lambda r: (analyses[r["id"]]["state"] != "pending", r["id"]))
+    # (hand-added first, one Instagram download a tick at most, refused ones once Instagram may be asked: ref_library)
+    due = ref_library.hand_queue(refs, analyses, now)
     for r in due[:REFS_PER_TICK]:
         if time.time() - started > REF_TICK_BUDGET:
             break
-        line = step(f"reference #{r['id']}", lambda r=r: analyse_reference(api, r, analyses[r["id"]], client))
+        line = step(f"reference #{r['id']}", lambda r=r: ref_library.hand_one(api, r, analyses[r["id"]], client))
         if line:
             lines.append(line)
             out["analysed"] = out.get("analysed", 0) + 1

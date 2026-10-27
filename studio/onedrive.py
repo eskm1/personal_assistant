@@ -52,6 +52,9 @@ DISK_MARGIN = 2 << 30    # keep this much disk free on the server after a copy
 STATE_FILE = "onedrive_state.json"
 # The inbox subfolders cloud_sync.py turns into reference reels (cloud_sync.REF_SIDES).
 REF_SIDES = {"ours": "Ours", "inspiration": "Inspiration"}
+# Pictures are pulled only inside a folder of References/Ours or /Inspiration: one carousel reference (ref_files).
+REF_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+_ref_busy: set[str] = set()   # References folders (local, relative to the Inbox) with files still on their way
 
 # Quiet, patient rclone: retries on its own, gives up on a dead connection, no progress output.
 FLAGS = ["--retries", "3", "--low-level-retries", "10", "--contimeout", "30s", "--timeout", "5m",
@@ -192,9 +195,12 @@ def _local_rel(parts: list[str]) -> Path | None:
     worker only looks two folders deep (a project, then a post: Kensington/Shower
     reveal/a.mp4), so deeper folders are folded into the file name
     (Kensington/Shower reveal/Day 1/a.mp4 -> Kensington/Shower reveal/Day 1 - a.mp4).
-    None for files the worker would never use (loose files in References)."""
+    None for files the worker would never use (loose files in References). A picture in a folder of
+    References/<side> keeps its folder (deeper folders folded into its name): the folder is one carousel."""
     if parts[0].lower() == "references":
         side = REF_SIDES.get(parts[1].lower()) if len(parts) >= 3 else None
+        if side and len(parts) >= 4 and Path(parts[-1]).suffix.lower() in REF_IMAGE_EXTS:
+            return Path("References", side, " - ".join(parts[2:-1]), parts[-1])
         return Path("References", side, " - ".join(parts[2:])) if side else None
     if len(parts) <= 3:
         return Path(*parts)
@@ -211,7 +217,9 @@ def _waiting(entries: list[dict]) -> tuple[list[dict], list[dict], list[str]]:
         parts = [p for p in rel.split("/") if p]
         if not parts or any(p.startswith((".", "~")) for p in parts):
             continue  # hidden or temporary (Office's ~$ files, .partial uploads, ...)
-        if Path(parts[-1]).suffix.lower() not in settings.VIDEO_EXTS:
+        picture = (len(parts) >= 4 and parts[0].lower() == "references"
+                   and Path(parts[-1]).suffix.lower() in REF_IMAGE_EXTS)
+        if Path(parts[-1]).suffix.lower() not in settings.VIDEO_EXTS and not picture:
             continue
         local = _local_rel(parts)
         if local is None:
@@ -304,6 +312,16 @@ def _make_ref_folders() -> None:
         log.debug("Couldn't make the References folders in OneDrive: %s", e)
 
 
+def ref_folder_busy(folder: Path) -> bool:
+    """Has OneDrive still got files on their way into this References folder (the last look at the inbox)?
+    A carousel's folder is taken only once it hasn't (ref_files)."""
+    try:
+        rel = Path(folder).resolve().relative_to(settings.INBOX.resolve()).as_posix()
+    except ValueError:
+        return False
+    return rel in _ref_busy
+
+
 def make_folder(*parts: str) -> None:
     """Make a folder in the OneDrive inbox (a post folder: project, post). Harmless
     when it exists; OneDriveError when OneDrive can't be reached."""
@@ -325,6 +343,8 @@ def pull(max_files: int = FILES_PER_PULL, budget: float = PULL_BUDGET) -> list[s
                                 "in OneDrive or fix STUDIO_ONEDRIVE_INBOX (run server_move.py again)")
         ready, settling, odd = _waiting(entries)
         _status.update(waiting=len(ready), settling=len(settling))
+        _ref_busy.clear()
+        _ref_busy.update(i["local"].parent.as_posix() for i in ready + settling if i["local"].parts[0] == "References")
         for rel in set(odd) - _logged_odd:
             _logged_odd.add(rel)
             log.warning("%s in OneDrive isn't in References/Ours or References/Inspiration, so it's left there", rel)

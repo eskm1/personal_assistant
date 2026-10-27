@@ -195,6 +195,17 @@ export function addPhotos(ideaId, files, label, onDone) {
   return n;
 }
 
+// A reference's own file (CONTRACT "Reference downloads"): its video, or one of its slides, for a post the
+// server couldn't download. Same pieces and tray; POST with reference_id and the set it belongs to. onDone(file)
+// once Studio has it (refs.js says the set is complete after the last one).
+export function addRefFile(refId, set, index, file, label, onDone) {
+  ups.push({ key: ++seq, file, shotId: null, ref: { id: Number(refId), set, index, onDone }, label: label || "", id: null, offset: 0, chunk: 8 * 1024 ** 2, state: "queued", error: "", speed: 0, sent: 0, tries: 0, row: null });
+  trayOpen = true;
+  render();
+  pump();
+  return true;
+}
+
 export function addFiles(shotId, files, label = "") {
   let added = 0;
   for (const file of files) {
@@ -319,7 +330,9 @@ async function run(u) {
     if (u.cancelled) return;
     try {
       if (!u.id) {
-        const r = await api("POST", "/api/uploads", u.photo
+        const r = await api("POST", "/api/uploads", u.ref
+          ? { reference_id: u.ref.id, set: u.ref.set, index: u.ref.index, name: u.file.name, size: u.file.size, type: guessType(u.file) }
+          : u.photo
           ? { idea_id: u.photo.ideaId, name: u.file.name, size: u.file.size, type: guessType(u.file) }
           : { shot_id: u.shotId, name: u.file.name, size: u.file.size, type: guessType(u.file) });
         u.id = r.id;
@@ -370,7 +383,7 @@ async function run(u) {
       if (status === 404 && u.id && !u.restarted) { u.id = null; u.restarted = true; continue; } // Studio forgot it: start again (it resumes if it can)
       if (FAIL_TEXT[status] || (status >= 400 && status < 500)) {
         u.state = "failed";
-        u.error = (u.photo && status !== 401 ? "" : FAIL_TEXT[status]) || err.message;
+        u.error = ((u.photo || u.ref) && status !== 401 ? "" : FAIL_TEXT[status]) || err.message;
         render();
         return;
       }
@@ -394,6 +407,7 @@ function finish(u, r) {
   u.speed = 0;
   u.error = "";
   if (u.photo) { donePhoto(u, r); return; }
+  if (u.ref) { u.row = { state: "ingested" }; render(); u.ref.onDone?.(u.file); return; }
   u.row = u.row || { state: r.state || "received" };
   mark("upload_done", { mb: Math.round(u.file.size / 1048576) });
   render();
@@ -480,6 +494,7 @@ function stateText(u) {
   if (u.state === "cancelled") return "Cancelled";
   const r = u.row?.state;
   if (u.photo && !r) return "Done: Studio is saving the photo";
+  if (u.ref && r === "ingested") return "Done: Studio has it";
   if (r === "ingested") return u.photo ? "Done: it's on the slide" : "Done: it's on the shot";
   if (r === "failed") return `Uploaded, but Studio couldn't use it: ${u.row.error || "unknown error"}`;
   return laptopOn() || studioBase() === "" ? "Done: Studio is checking it" : "Done: Studio checks it when it's back on";

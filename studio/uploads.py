@@ -297,6 +297,10 @@ def _start_photo(user: dict, data: dict):
 def start():
     user = g.planner_user
     data = body()
+    if data.get("reference_id") is not None and data.get("shot_id") is None:
+        import ref_files  # a reference's own video or slides (ref_files.py): same pieces
+        cleanup()
+        return ref_files.start(user, data)
     if data.get("idea_id") is not None and data.get("shot_id") is None:
         cleanup()
         return _start_photo(user, data)
@@ -421,6 +425,9 @@ def _finish(state: dict) -> str | None:
     """The whole file is here: move it into the inbox, pinned to its shot."""
     if state.get("kind") == "photo":
         return _finish_photo(state)
+    if state.get("kind") == "reference":
+        import ref_files
+        return ref_files.finish(state)
     try:
         try:
             shot = _shot(state["shot_id"]) or {}

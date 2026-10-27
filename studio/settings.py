@@ -327,6 +327,9 @@ def ensure_folders() -> None:
 # writing taste reports (US$; about 0.05 a post). Nothing is spent until the owner presses
 # "Analyse" in the planner; past this, analysing pauses until next month.
 REFERENCE_BUDGET_USD = max(float(_env("STUDIO_REFERENCE_BUDGET_USD", "60")), 0.0)
+# How many library posts an hour Studio may download from Instagram at most (spaced at random): a slow, steady
+# rate, so Instagram keeps trusting the server and its sign-in (references added by hand always go first).
+REFERENCE_LIBRARY_PER_HOUR = min(max(float(_env("STUDIO_REFERENCE_LIBRARY_PER_HOUR", "4")), 0.1), 60.0)
 # YouTube references (ref_youtube.py): YouTube blocks downloads from servers, so Gemini watches the
 # video from its link instead (GEMINI_API_KEY, the concept pictures' key). The model must take video
 # input; the name is not checked against Google's model list from here (a wrong one fails each YouTube

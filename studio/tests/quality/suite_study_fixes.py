@@ -150,8 +150,10 @@ cookie = str(style_study.COOKIES_FILE)
 for mode, what in (("refused", "gallery-dl refused too"), ("empty", "gallery-dl gave an empty file"),
                    ("partial", "gallery-dl gave a cut-short file")):
     e, events, calls = attempt(mode)
-    ok(isinstance(e, style_study.DownloadFailed) and str(e).startswith("Instagram refused the download: ")
-       and "HTTP Error 400: Bad Request" in str(e) and "try again later or upload the file" in str(e),
+    # 2026-10-27: a 400 is Instagram refusing the server, said in the same plain words on the reel and the
+    # carousel path (suite_refqueue); the downloader's own error stays in e.raw and the log.
+    ok(isinstance(e, style_study.DownloadFailed) and str(e).startswith("Instagram is refusing the server right now")
+       and "HTTP Error 400: Bad Request" in e.raw and "upload the file instead" in str(e) and e.problem == "rate",
        f"{what}: the reference fails with a plain reason ({str(e)[:150]})")
     ok(not calls, f"{what}: no Claude call is spent")
 ok("[Instagram]" not in str(e) and "ERROR:" not in str(e), "the reason drops the downloader's prefixes")

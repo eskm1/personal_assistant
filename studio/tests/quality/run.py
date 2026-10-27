@@ -2,7 +2,8 @@
 Reels, voice-overs, picture inserts, the graphics look (Site Notes), Whisper's prompt, the wiki as a source of topics,
 the reference study (beat timeline, structure, YouTube through Gemini; refused downloads, schema sizes, one-offs beside
 the service, study folders), sound effects on the graphics, the profile grid (photos-only carousels, the grid flag, the
-account's stills and profile). One line per suite with its pass count; exits 1 if any check fails.
+account's stills and profile), reference downloads (hand-added first, the library's hourly cap, the sign-in that needs
+attention, Instagram's 400 as a refusal, uploaded files and OneDrive drops attached to their reference). One line per suite with its pass count; exits 1 if any check fails.
 
     python tests/quality/run.py                # from studio/, all suites, 4 at a time
     python tests/quality/run.py cuts ending    # just these
@@ -37,6 +38,7 @@ SUITES = {
     "wiki": ("suite_wiki.py", [], 136),
     "insights": ("suite_insights.py", [], 66),
     "grid": ("suite_grid.py", [], 45),
+    "refqueue": ("suite_refqueue.py", [], 88),
 }
 TIMEOUT = 90 * 60  # a hang, not a slow box: finalcheck alone takes 15-45 min on 4 vCPU
 RUNNING = []  # each suite runs in a process group of its own (with its ffmpeg and Chrome)

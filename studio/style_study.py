@@ -158,6 +158,7 @@ def download_post(url: str, out_dir: Path) -> tuple[Path, dict]:
             info = ydl.extract_info(url, download=True)
             path = Path(ydl.prepare_filename(info)).with_suffix(".mp4")
     except Exception as e:  # yt-dlp's DownloadError and friends: say what to do about it
+        _note(url, "yt-dlp", bool(browser), str(e))
         first = DownloadFailed(download_problem(url, str(e), browser), problem_of(str(e)), str(e))
         if "instagram" not in url.lower() or first.problem in ("gone", "net"):
             raise first from None
@@ -169,6 +170,7 @@ def download_post(url: str, out_dir: Path) -> tuple[Path, dict]:
         found = sorted(p for p in out_dir.glob(f"*{info.get('id', '')}*") if p.suffix.lower() in VIDEO_EXTS)
         path = found[0] if found else None
     wrong = video_problem(path)
+    _note(url, "yt-dlp", bool(browser), f"the download gave no usable video ({wrong})" if wrong else None)
     if wrong:
         first = DownloadFailed(f"the download gave no usable video ({wrong})")
         if "instagram" in url.lower():
@@ -193,11 +195,40 @@ def video_problem(path: Path | None) -> str | None:
     return None
 
 
+def _note(url: str, tool: str, signed_in: bool, error: str | None = None) -> None:
+    """One Instagram answer for the record (ig_health): ok when error is None. Never stops a download."""
+    if "instagram" not in str(url).lower():
+        return
+    try:
+        import ig_health
+        ig_health.record(tool, signed_in, problem_of(error) if error else "ok", error or "")
+    except Exception as e:
+        log.debug("Instagram outcome not recorded: %s", e)
+
+
+# Instagram turning the server away (a 429, or a 400 on the post's info): the plain words on the card.
+REFUSING = ("{site} is refusing the server right now: Studio tries again later by itself. Or upload the file "
+            "instead (on the reference's page, or OneDrive: Studio Inbox > References)")
+
+
+def refused_text(site: str = "Instagram") -> str:
+    """What a refused download says: the sign-in message once its account needs attention (ig_health)."""
+    if site == "Instagram":
+        try:
+            import ig_health
+            if ig_health.attention():
+                return ig_health.ATTENTION_ERROR
+        except Exception:
+            pass
+    return REFUSING.format(site=site)
+
+
 def _short(message: str, n: int = 120) -> str:
     """A downloader's error without its colour codes, ERROR: and "[Instagram] <id>:" prefix."""
     text = re.sub(r"\x1b\[[0-9;]*m", "", str(message or "")).replace("ERROR: ", "").strip()
     text = re.sub(r"^\[[^\]]+\]\s*[A-Za-z0-9_-]{5,}:\s*", "", text)
-    return _clip(text, n)
+    import ig_health
+    return _clip(ig_health.scrub(text), n)
 
 
 def _instagram_fallback(url: str, out_dir: Path, first: "DownloadFailed") -> tuple[Path, dict]:
@@ -208,7 +239,7 @@ def _instagram_fallback(url: str, out_dir: Path, first: "DownloadFailed") -> tup
     import yt_dlp
     gdl = out_dir / "gdl-video"
     shutil.rmtree(gdl, ignore_errors=True)  # never a file an earlier try left
-    gdl_message = ""
+    gdl_message, gdl_said = "", False   # gdl_said: the message is gallery-dl's own answer (not "its file wasn't a video")
     try:
         result = _gallery_dl(["-D", str(gdl), "--write-metadata", "--range", "1", "--no-part", "--no-mtime", url])
         videos = sorted(p for p in gdl.glob("*") if p.suffix.lower() in VIDEO_EXTS) if gdl.exists() else []
@@ -223,10 +254,13 @@ def _instagram_fallback(url: str, out_dir: Path, first: "DownloadFailed") -> tup
                     continue
             meta = meta if isinstance(meta, dict) else {}
             meta["_source"] = "gallery-dl"
+            _note(url, "gallery-dl", COOKIES_FILE.is_file())
             log.info("Instagram refused yt-dlp for %s (%s); gallery-dl got the video", url, _short(str(first), 80))
             return good[0], meta
+        gdl_said = bool(_gallery_error(result.stderr))
         gdl_message = _gallery_error(result.stderr) or (
             f"its file wasn't a video ({video_problem(videos[0])})" if videos else "no video came back")
+        _note(url, "gallery-dl", COOKIES_FILE.is_file(), gdl_message)
     except (OSError, subprocess.SubprocessError) as e:
         gdl_message = f"gallery-dl couldn't run: {type(e).__name__}"
     if COOKIES_FILE.is_file() or settings._env("STUDIO_YTDLP_COOKIES_BROWSER"):
@@ -238,11 +272,15 @@ def _instagram_fallback(url: str, out_dir: Path, first: "DownloadFailed") -> tup
                 info = ydl.extract_info(url, download=True)
                 path = Path(ydl.prepare_filename(info)).with_suffix(".mp4")
             if not video_problem(path):
+                _note(url, "yt-dlp", False)
                 log.info("Instagram refused yt-dlp with the sign-in for %s; signed out it got the video", url)
                 return path, info
-        except Exception:
-            pass
-    problem = problem_of(gdl_message) if gdl_message else first.problem
+            _note(url, "yt-dlp", False, f"the download gave no usable video ({video_problem(path)})")
+        except Exception as e:
+            _note(url, "yt-dlp", False, str(e))
+    # A cut-short file says nothing of why (ffprobe's "moov atom not found" isn't a deleted post): only
+    # gallery-dl's own answer may change what kind of problem it is.
+    problem = problem_of(gdl_message) if gdl_said else first.problem
     if problem == "other":
         problem = first.problem
     if problem == "login":  # what to do about the sign-in says more than the error
@@ -250,6 +288,9 @@ def _instagram_fallback(url: str, out_dir: Path, first: "DownloadFailed") -> tup
     reason = _short(first.raw or str(first), 100)
     if gdl_message:
         reason += f" (gallery-dl: {_short(gdl_message, 80)})"
+    if problem == "rate":  # Instagram turning the server away: the plain words, the details in the log
+        log.info("Instagram refused the download of %s: %s", url, reason)
+        raise DownloadFailed(refused_text(), problem, f"{first.raw or first} | gallery-dl: {gdl_message}")
     raise DownloadFailed(f"Instagram refused the download: {reason}; try again later or upload the file "
                          "(OneDrive: Studio Inbox > References)", problem, first.raw)
 
@@ -259,6 +300,8 @@ def problem_of(message: str) -> str:
     sign-in), rate (too many downloads: wait), gone (deleted, private or not a post),
     net (no internet: try later) or other."""
     low = re.sub(r"\x1b\[[0-9;]*m", "", str(message)).lower()
+    if _refused_400(low) and not any(k in low for k in ("checkpoint", "challenge", "login_required", "/accounts/login")):
+        return "rate"
     if any(k in low for k in ("429", "too many requests", "please wait a few minutes", "try again later",
                               "rate-limit reached or login", "rate limit reached",
                               "http error 400", "bad request")):
@@ -277,6 +320,14 @@ def problem_of(message: str) -> str:
     return "other"
 
 
+def _refused_400(low: str) -> bool:
+    """Instagram answering a lookup with 400: yt-dlp's "HTTP Error 400" ("Video info extraction failed"),
+    gallery-dl's "HttpError: '400 ...'" (with or without "Bad Request") on /api/v1/media/<id>/info/ or graphql.
+    Instagram refusing the server for now, not a broken post."""
+    return bool("http error 400" in low or "bad request" in low or re.search(r"httperror:?\s*'?400\b", low)
+                or (re.search(r"\b400\b", low) and ("/api/v1/media/" in low or "graphql" in low)))
+
+
 def _throttled(message: str) -> bool:
     """Instagram said to slow down (429, "please wait"), not only refused one lookup (400)."""
     low = str(message or "").lower()
@@ -286,9 +337,12 @@ def _throttled(message: str) -> bool:
 
 def download_problem(url: str, message: str, browser: str = "") -> str:
     """A yt-dlp error, in words that say what to do."""
-    text = re.sub(r"\x1b\[[0-9;]*m", "", message).replace("ERROR: ", "").strip()
+    import ig_health
+    text = ig_health.scrub(re.sub(r"\x1b\[[0-9;]*m", "", message).replace("ERROR: ", "").strip())
     low = text.lower()
     site = "Instagram" if "instagram" in url.lower() else "The site"
+    if problem_of(text) == "rate":  # a 429 or Instagram's 400 on the post's info: the same plain words everywhere
+        return refused_text(site if site == "Instagram" else "The site")
     if any(k in low for k in ("login", "log in", "cookies", "rate-limit", "rate limit", "empty media response",
                               "authentication", "sign in")):
         if browser == "cookies.txt":
@@ -388,6 +442,7 @@ def fetch_slides(url: str, out_dir: Path) -> dict:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False) or {}
         entries = [e for e in (info.get("entries") or []) if isinstance(e, dict)]
+        _note(url, "yt-dlp", bool(browser))
         if not entries and info.get("formats"):
             return {"kind": "video"}
         files = []
@@ -401,6 +456,7 @@ def fetch_slides(url: str, out_dir: Path) -> dict:
                     "slides": len(entries) or 1}
         first_error = DownloadFailed("Instagram didn't give the post's pictures", "other")
     except Exception as e:
+        _note(url, "yt-dlp", bool(browser), str(e))
         first_error = DownloadFailed(download_problem(url, str(e), browser), problem_of(str(e)), str(e))
     # gallery-dl: images (and the cover of any video slide), with a .json of metadata per file. Not
     # after a real "slow down" or no internet: it would be refused the same way. Instagram's "HTTP
@@ -415,10 +471,14 @@ def fetch_slides(url: str, out_dir: Path) -> dict:
     except (OSError, subprocess.SubprocessError) as e:
         raise DownloadFailed(f"{first_error} (gallery-dl couldn't run: {type(e).__name__})", first_error.problem) from None
     files = sorted(p for p in gdl.glob("*") if p.suffix.lower() in IMAGE_EXTS) if gdl.exists() else []
+    _note(url, "gallery-dl", COOKIES_FILE.is_file(), None if files else _gallery_error(result.stderr) or "no pictures came back")
     if not files:
         message = _gallery_error(result.stderr)
+        if message:
+            log.info("gallery-dl got no pictures of %s: %s", url, _short(message, 200))
         raise DownloadFailed(download_problem(url, message or str(first_error), "cookies.txt" if COOKIES_FILE.is_file()
-                                              else ""), problem_of(message) if message else first_error.problem)
+                                              else ""), problem_of(message) if message else first_error.problem,
+                             message or first_error.raw)
     meta = {}
     for js in sorted(gdl.glob("*.json")):
         try:
@@ -484,14 +544,18 @@ def account_followers(account: str) -> int | None:
     try:
         result = _gallery_dl(["-j", f"https://www.instagram.com/{account}/info/"], timeout=90)
         data = json.loads(result.stdout or "[]")
-    except (OSError, subprocess.SubprocessError, ValueError):
+    except (OSError, subprocess.SubprocessError, ValueError) as e:
+        if isinstance(e, ValueError):
+            _note("instagram", "gallery-dl", True, _gallery_error(result.stderr) or "no profile came back")
         return None
     for message in data if isinstance(data, list) else []:
         user = message[-1] if isinstance(message, list) and message and isinstance(message[-1], dict) else None
         if user:
             n = _int(user.get("follower_count") or (user.get("edge_followed_by") or {}).get("count"))
             if n is not None:
+                _note("instagram", "gallery-dl", True)
                 return n
+    _note("instagram", "gallery-dl", True, _gallery_error(result.stderr) or "no profile came back")
     return None
 
 
@@ -1119,6 +1183,50 @@ def analyse(source: str | Path, stills_dir: Path | None = None, *, download_dir:
     out = {"kind": "video", "measured": measured, "look": seen, "stills": [str(p) for _, p in frames]}
     if is_url:
         out["engagement"] = engagement_of(info, info.get("_source", "yt-dlp") if isinstance(info, dict) else "yt-dlp")
+    return out
+
+
+def post_info(url: str) -> dict:
+    """What Instagram says about a post (likes, comments, views, account, caption), nothing downloaded:
+    yt-dlp's info with the sign-in. For a post whose own file was uploaded (analyse_files). Raises
+    DownloadFailed."""
+    import yt_dlp
+    work = STUDIES / "downloads"
+    work.mkdir(parents=True, exist_ok=True)
+    opts, browser = _ydl_opts(work)
+    opts.update(noplaylist=False, ignore_no_formats_error=True, skip_download=True)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+    except Exception as e:
+        _note(url, "yt-dlp", bool(browser), str(e))
+        raise DownloadFailed(download_problem(url, str(e), browser), problem_of(str(e)), str(e)) from None
+    _note(url, "yt-dlp", bool(browser))
+    return {k: v for k, v in info.items() if k != "entries"} if isinstance(info, dict) else {}
+
+
+def analyse_files(files: list[Path], stills_dir: Path, *, client=None, ref: str = "style", info: dict | None = None) -> dict:
+    """A post Studio didn't download (uploaded, or dropped in OneDrive): its one video, or its pictures in
+    order, analysed exactly as a downloaded one (measure + look, or the slides' read). info: what Instagram
+    says about the post (post_info), when it could be asked; else its numbers stay empty. The files are
+    never deleted. Same answer as analyse(), engagement source "upload"."""
+    files = [Path(f) for f in files]
+    videos = [f for f in files if f.suffix.lower() in VIDEO_EXTS]
+    info = info if isinstance(info, dict) else {}
+    if videos:
+        wrong = video_problem(videos[0])
+        if wrong:
+            raise RuntimeError(f"the uploaded video can't be studied ({wrong}): upload it again")
+        out = analyse(videos[0], stills_dir, client=client, ref=ref, kind="video")
+        out["measured"].update(caption_numbers(caption_of(info)))
+    else:
+        images = [f for f in files if f.suffix.lower() in IMAGE_EXTS | {".heif"}]
+        if not images:
+            raise RuntimeError("the uploaded files are neither a video nor pictures")
+        post = {"kind": "images", "files": images[:MAX_SLIDES], "info": info, "source": "upload",
+                "slides": len(images)}
+        out = _analyse_slides(post, stills_dir, stills_dir.parent / "unused", True, client, ref)
+    out["engagement"] = {**engagement_of(info, "yt-dlp"), "source": "upload"}
     return out
 
 

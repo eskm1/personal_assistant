@@ -1012,7 +1012,7 @@ it becomes a reference and moves to `Studio\References`. Then, on the laptop, au
 
 - each new reference is analysed (two per sync, so footage isn't held up): the numbers below plus
   a strip of stills the planner shows; a failure says why (e.g. Instagram wants a login) and is
-  retried a day later;
+  retried a day later (one Instagram refused: once Instagram lets the server ask again, below);
 - once nothing is waiting, if the references differ from the ones the style guide was built
   from, Claude drafts a new **style guide**: the house style, a short report, and **what
   changed** (and why, tied to the references added or retired and their notes). **Update style
@@ -1041,6 +1041,28 @@ tried again by itself.
 
 Retire a reference rather than deleting it when it no longer represents the style.
 
+**When Instagram won't let the server download a post** (since 2026-10-27). References added by hand
+always go first: a new one is tried once straight away, even while the library is paused. If
+Instagram refuses, the card says "Instagram is refusing the server right now" and Studio tries again
+by itself once Instagram lets it (never in a loop). Meanwhile:
+
+- **Upload the file instead**, on the failed card or the reference's page: the post's video, or its
+  pictures (up to 20, in name order). Studio analyses them exactly as a download and keeps the link
+  for likes and views. Phones: pick from Photos.
+- Or drop it in OneDrive: `Studio Inbox > References > Inspiration` (or `Ours`), with the post's code
+  in the file or folder name (the part after `/p/` or `/reel/`, e.g.
+  `markynv-editing-details-DeKIm8tsyWj.mp4`). It attaches to that reference, notes and all, instead of
+  making a new one. A **folder of pictures** is one carousel (slides in name order), taken once nothing
+  has changed in it for 5 minutes; a folder without a code becomes a new carousel reference. A loose
+  picture in `References\Inspiration` is left alone, as before. A reference made from such a file
+  before (a duplicate) is merged into its link reference and retired, once.
+- **The sign-in account needs attention** shows at the top of References (and pauses the library) when
+  every download with the sign-in has failed for 2 hours or more, or Instagram answers with a check
+  (challenge, login page): open Instagram with the spare account on a phone, clear any check, then
+  upload a fresh cookies.txt in "Instagram sign-in for downloads". A temporary limit only pauses (6 hours).
+  Studio keeps a small record of how Instagram answered (`Studio/Style/ig_outcomes.json`: time, tool,
+  status, signed in or not; never a cookie).
+
 ### Many references at once, and the taste report
 
 When the team has a long list of posts it likes (say an export of 800 saved Instagram posts),
@@ -1052,10 +1074,12 @@ page: a progress line ("312 of 814 analysed · 40 couldn't be downloaded"), a pa
 filter by kind of post and account, and each post's own page.
 
 **Nothing is downloaded or spent until Bryan presses Analyse.** The Library shows the cost first:
-**Analyse all** (about US$0.06 a post: about US$49 and about 18 hours for 814) or **Analyse a sample of
-150 first** (about US$7.50 and 3 hours, spread across kinds of post and accounts, at most two per
-account). Studio then works through them on the server one every minute or so, so Instagram
-doesn't block it: when Instagram refuses, it waits longer each time (10 minutes, then 20, 40 …), and
+**Analyse all** (about US$0.06 a post: about US$49 and about 8 days for 814) or **Analyse a sample of
+150 first** (about US$7.50 and 1-2 days, spread across kinds of post and accounts, at most two per
+account). Studio then works through them on the server slowly and steadily, at most
+`STUDIO_REFERENCE_LIBRARY_PER_HOUR` (default 4) an hour, spaced at random, so Instagram keeps
+trusting the server (814 posts take about a week; references added by hand always go first; while
+a pause is on, the library asks Instagram nothing): when Instagram refuses, it waits longer each time (10 minutes, then 20, 40 …), and
 if most downloads want a login it pauses and says so. **Pause**, **Resume**, **Stop** (the rest go
 back to waiting, nothing more is spent) and **Try again** (the ones that failed but weren't
 deleted) are on the same card. A monthly cap, `STUDIO_REFERENCE_BUDGET_USD` (default US$60),
@@ -1111,8 +1135,8 @@ suggestions: changing one is a separate decision.
    apply it again; it replaces the earlier house style instead of adding a second one.
 
 A reel Instagram won't hand over (yt-dlp, then gallery-dl, both with the sign-in when there is one, then
-yt-dlp signed out) is skipped with the reason ("Instagram refused the download: ...; try again later or
-upload the file"); it never goes on to Claude without its video. A study where nothing could be measured
+yt-dlp signed out) is skipped with the reason ("Instagram is refusing the server right now ... Or upload the
+file instead"; the downloaders' own errors in the log); it never goes on to Claude without its video. A study where nothing could be measured
 leaves no folder behind, and each study starts by removing empty dated folders in `Studio\Style`.
 
 Measured on the laptop, no API cost: cuts (including jump cuts and punch-ins), shot lengths, first

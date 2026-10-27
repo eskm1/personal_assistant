@@ -6,14 +6,24 @@ Imported references are held: nothing is downloaded or spent until the owner
 presses "Analyse" (all of them, or a sample first: up to 150, spread across kinds
 of post and accounts, at most two per account). That queues a 'refs' job; this
 module runs it and then analyses the queued posts one at a time, slowly, so
-Instagram doesn't block the server:
+Instagram doesn't block the server (2026-10-27: hundreds of downloads in a row from one
+server and one spare sign-in had Instagram refusing even the hand-added ones):
 
-  - one download every 45 to 90 seconds (random), at most one per sync tick;
+  - references added by hand go first, in their own queue (hand_queue): a new one is
+    tried once straight away, even while the library is paused; one Instagram refused
+    waits for the backoff and any pause like the rest, then goes before the library;
+    one with its own file (uploaded, or from OneDrive: ref_files) needs no download;
+  - the library at a slow, steady rate: STUDIO_REFERENCE_LIBRARY_PER_HOUR (4) an hour at
+    most, spaced at random around 60 / that many minutes, never two in one tick;
   - when Instagram refuses ("too many requests", or wants a login), the post goes
     back in the queue and the next try waits 10 minutes, then 20, 40 ... up to 4
     hours; after four refusals in a row, or when most recent tries want a login,
     the batch pauses and says why (a fresh cookies.txt resumes a login pause by
-    itself; a rate pause resumes after a few hours);
+    itself; a rate pause resumes after a few hours); while a pause is on, nothing of
+    the library touches Instagram;
+  - when the sign-in itself looks dead (ig_health: every signed-in call failing for
+    hours, or a checkpoint / login page), the batch pauses with "the sign-in account
+    needs attention" until a fresh cookies.txt arrives;
   - a deleted or private post fails for good (it isn't retried every day);
   - the month's budget (STUDIO_REFERENCE_BUDGET_USD) and the free disk are checked
     before each one.
@@ -34,7 +44,8 @@ log = logging.getLogger("studio.refs")
 
 PER_POST_USD = 0.06          # Claude's look at one post (a reel ~0.065 with its beat timeline, a carousel ~0.05), until real costs are known
 SECONDS_PER_POST = 80        # download + measuring + Claude + the pause between, on the server
-GAP_SECONDS = (45, 90)       # between two downloads (random within)
+GAP_SECONDS = (45, 90)       # after a hand-added download, before the next one (random within)
+JITTER = (0.6, 1.4)          # a library slot is 60 / per-hour minutes times a random factor in this range
 BACKOFF_FIRST = 600          # after Instagram refuses: 10 minutes, doubling each time
 BACKOFF_MAX = 4 * 3600
 PAUSE_AFTER_REFUSALS = 4     # refusals in a row: pause the batch
@@ -68,6 +79,8 @@ def _state() -> dict:
     st.setdefault("level", 0)
     st.setdefault("recent", [])
     st.setdefault("paused", None)
+    st.setdefault("backoff_at", 0.0)   # after a refusal: no Instagram download (library or hand-added) before this
+    st.setdefault("lib_times", [])     # when the library's last downloads started (the hourly cap)
     return st
 
 
@@ -114,8 +127,13 @@ def budget(conn) -> dict:
 def estimates(conn) -> dict:
     """What the planner shows before the owner presses Analyse or Write the taste report."""
     import taste
-    return {"per_post_usd": per_post_usd(conn), "seconds_per_post": SECONDS_PER_POST, "sample": SAMPLE_SIZE,
-            "report": taste.estimate_parts()}
+    return {"per_post_usd": per_post_usd(conn), "seconds_per_post": seconds_per_post(), "per_hour": per_hour(),
+            "sample": SAMPLE_SIZE, "report": taste.estimate_parts()}
+
+
+def seconds_per_post() -> int:
+    """How long one library post takes, the hourly cap included."""
+    return int(max(SECONDS_PER_POST, 3600 / per_hour()))
 
 
 # ── Choosing a sample ─────────────────────────────────────────────────────────
@@ -176,26 +194,54 @@ def _pause(st: dict, kind: str, reason: str, until: float | None = None) -> None
     log.warning("Reference library paused: %s", reason)
 
 
+def per_hour() -> float:
+    return max(float(settings.REFERENCE_LIBRARY_PER_HOUR), 0.1)
+
+
+def _slot(now: float) -> float:
+    """When the library's next download may start after one now: about 60 / per-hour minutes, jittered."""
+    return now + 3600 / per_hour() * random.uniform(*JITTER)
+
+
+def _pause_over(st: dict, conn, now: float) -> bool:
+    """Is the pause (if any) over? Clears it (and the backoff) when it is. False while it holds."""
+    p = st.get("paused")
+    if not p:
+        return True
+    resume = False
+    if p["kind"] == "login" and _cookies_mtime() > p["at"]:
+        resume = True  # a new sign-in file since the pause
+    elif p["kind"] == "rate" and p.get("until") and now >= p["until"]:
+        resume = True
+    elif p["kind"] == "budget" and conn is not None and budget(conn)["left_usd"] >= per_post_usd(conn):
+        resume = True
+    elif p["kind"] == "disk" and _free() >= MIN_FREE:
+        resume = True
+    if not resume:
+        return False
+    log.info("Reference library resumed (%s pause over)", p["kind"])
+    st.update(paused=None, level=0, recent=[], next_at=0.0, backoff_at=0.0)
+    _save(st)
+    return True
+
+
+def instagram_free(now: float | None = None) -> bool:
+    """May a hand-added reference ask Instagram now? Not during an Instagram pause (rate, login: the
+    owner's, budget and disk pauses are the library's own) nor before the backoff after a refusal."""
+    now = now or time.time()
+    st = _state()
+    p = st.get("paused")
+    if p and p["kind"] in ("rate", "login") and not _pause_over(st, None, now):
+        return False
+    return now >= (st.get("backoff_at") or 0.0)
+
+
 def ready(conn, now: float | None = None) -> tuple[bool, str]:
     """May the next library download start now? (False, why) when not."""
     now = now or time.time()
     st = _state()
-    p = st.get("paused")
-    if p:
-        resume = False
-        if p["kind"] == "login" and _cookies_mtime() > p["at"]:
-            resume = True  # a new sign-in file since the pause
-        elif p["kind"] == "rate" and p.get("until") and now >= p["until"]:
-            resume = True
-        elif p["kind"] == "budget" and budget(conn)["left_usd"] >= per_post_usd(conn):
-            resume = True
-        elif p["kind"] == "disk" and _free() >= MIN_FREE:
-            resume = True
-        if not resume:
-            return False, p["reason"]
-        log.info("Reference library resumed (%s pause over)", p["kind"])
-        st.update(paused=None, level=0, recent=[], next_at=0.0)
-        _save(st)
+    if not _pause_over(st, conn, now):
+        return False, st["paused"]["reason"]
     left = budget(conn)["left_usd"]
     if left < per_post_usd(conn):
         _pause(st, "budget", f"This month's reference budget (US${settings.REFERENCE_BUDGET_USD:.0f}) is used up: "
@@ -206,8 +252,11 @@ def ready(conn, now: float | None = None) -> tuple[bool, str]:
         _pause(st, "disk", "The Studio machine's disk is nearly full: analysing waits until there's 3 GB free.")
         _save(st)
         return False, st["paused"]["reason"]
-    if now < st["next_at"]:
-        return False, f"next download in {int(st['next_at'] - now)} s"
+    wait = max(st["next_at"], st.get("backoff_at") or 0.0)
+    if now < wait:
+        return False, f"next download in {int(wait - now)} s"
+    if len([t for t in st.get("lib_times") or [] if now - t < 3600]) >= per_hour():
+        return False, f"at most {per_hour():g} an hour"
     return True, ""
 
 
@@ -218,16 +267,22 @@ def _free() -> int:
         return 0
 
 
-def record(outcome: str, now: float | None = None) -> dict:
-    """After one try: ok / gone / other (a normal pause before the next), rate / login
-    (back off, maybe pause the batch), net (wait 10 minutes). Returns the state."""
+def record(outcome: str, now: float | None = None, library: bool = True) -> dict:
+    """After one Instagram try (library=False: a hand-added reference's): ok / gone / other (the library
+    waits for its next slot), rate / login (back off, maybe pause the batch), net (wait 10 minutes).
+    Hand-added and library tries share the backoff and the pauses: it is one server to Instagram.
+    Returns the state."""
+    import ig_health
     now = now or time.time()
     st = _state()
     st["recent"] = (st["recent"] + [outcome])[-LOGIN_PAUSE[1]:]
+    if library:
+        st["lib_times"] = [t for t in st.get("lib_times") or [] if now - t < 3600] + [now]
     if outcome in ("rate", "login"):
         st["level"] = st["level"] + 1
         wait = min(BACKOFF_FIRST * 2 ** (st["level"] - 1), BACKOFF_MAX)
-        st["next_at"] = now + wait * random.uniform(0.9, 1.2)
+        st["backoff_at"] = now + wait * random.uniform(0.9, 1.2)
+        st["next_at"] = max(st["next_at"], _slot(now) if library else 0.0)
         logins = st["recent"].count("login")
         if logins >= LOGIN_PAUSE[0] or (outcome == "login" and st["level"] >= PAUSE_AFTER_REFUSALS):
             _pause(st, "login", COOKIES_EXPIRED if _cookies_mtime() else COOKIES_HINT)
@@ -235,10 +290,15 @@ def record(outcome: str, now: float | None = None) -> dict:
             _pause(st, "rate", f"Instagram is limiting downloads from the server: paused for {RATE_PAUSE_HOURS} hours, "
                                "then it carries on by itself (or press Resume).", until=now + RATE_PAUSE_HOURS * 3600)
     elif outcome == "net":
-        st["next_at"] = now + NET_WAIT
+        st["backoff_at"] = now + NET_WAIT
     else:
         st["level"] = 0
-        st["next_at"] = now + random.uniform(*GAP_SECONDS)
+        st["backoff_at"] = 0.0
+        st["next_at"] = _slot(now) if library else max(st["next_at"], now + random.uniform(*GAP_SECONDS))
+    # A dead sign-in isn't a limit that passes: pause until a fresh cookies.txt (not the owner's own pause).
+    p = st.get("paused")
+    if ig_health.attention() and (not p or p["kind"] == "rate"):
+        _pause(st, "login", "Instagram downloads are paused. " + ig_health.ATTENTION_PAGE)
     _save(st)
     return st
 
@@ -287,7 +347,7 @@ def _job(api, refs, analyses, conn, action: str, p: dict, job_id: int) -> dict:
         _save(st)
         return {"note": "paused"}
     if action == "resume":
-        st.update(paused=None, level=0, recent=[], next_at=0.0)
+        st.update(paused=None, level=0, recent=[], next_at=0.0, backoff_at=0.0)
         _save(st)
         return {"note": "resumed"}
     if action == "stop":
@@ -298,7 +358,7 @@ def _job(api, refs, analyses, conn, action: str, p: dict, job_id: int) -> dict:
         ids = [r["id"] for r in lib if (analyses.get(r["id"]) or {}).get("state") == "failed"
                and (analyses[r["id"]].get("problem") or "other") != "gone"]
         n = _set_state(api, ids, "failed", "pending", {"error": None, "problem": None})
-        st.update(paused=None, level=0, recent=[], next_at=0.0)
+        st.update(paused=None, level=0, recent=[], next_at=0.0, backoff_at=0.0)
         _save(st)
         return {"queued": n, "note": f"{n} queued again"}
     if action != "analyse":
@@ -327,7 +387,7 @@ def _job(api, refs, analyses, conn, action: str, p: dict, job_id: int) -> dict:
         st["paused"] = None
     st["next_at"] = min(st.get("next_at") or 0.0, time.time())
     _save(st)
-    hours = queued * SECONDS_PER_POST / 3600
+    hours = queued * seconds_per_post() / 3600
     return {"queued": queued, "estimate_usd": round(queued * each, 2), "hours": round(hours, 1),
             "note": note or f"{queued} queued, about US${queued * each:.2f} and {hours:.0f} hours"}
 
@@ -345,6 +405,8 @@ def next_up(refs: list[dict], analyses: dict[int, dict]) -> dict | None:
         a = analyses.get(r["id"])
         if not a or not is_library(r) or r["status"] != "active":
             continue
+        if a["state"] == "pending" and _own(r):
+            continue  # its own file: no download, analysed with the hand-added ones (hand_queue)
         if a["state"] == "pending":
             pending.append(r)
         elif a["state"] == "running":
@@ -354,6 +416,64 @@ def next_up(refs: list[dict], analyses: dict[int, dict]) -> dict | None:
     # A post Instagram refused goes back in the queue with a newer updated_at: to the back of it.
     pending.sort(key=lambda r: (str(analyses[r["id"]].get("updated_at") or ""), r["id"]))
     return (sorted(stale, key=lambda r: r["id"]) + pending or [None])[0]
+
+
+def _instagram(ref: dict) -> bool:
+    return "instagram.com" in (ref.get("url") or "").lower()
+
+
+def _own(ref: dict) -> bool:
+    import ref_files
+    return ref_files.files_for(ref["id"]) is not None
+
+
+REFUSED = ("rate", "login")   # a failed hand-added reference Instagram turned away: tried again when it lets us
+
+
+def hand_queue(refs: list[dict], analyses: dict[int, dict], now: datetime | None = None) -> list[dict]:
+    """The references to analyse this tick before any library one, in order: new or re-queued
+    hand-added ones (and any reference with its own file), then hand-added ones Instagram refused once
+    it may be asked again, then the rest that are due (cloud_sync._due). At most one of them downloads
+    from Instagram in a tick; the others need no download (a file, YouTube, TikTok)."""
+    import cloud_sync
+    now = now or datetime.now(timezone.utc)
+    free = None
+    first, retry, rest = [], [], []
+    for r in refs:
+        a = analyses.get(r["id"])
+        if not a or r["status"] != "active":
+            continue
+        own = a["state"] == "pending" and _own(r)
+        if is_library(r) and not own:
+            continue  # the library's own queue (next_up), paced
+        if own or a["state"] == "pending":
+            first.append(r)  # tried once now, pause or not
+        elif _instagram(r) and a["state"] == "failed" and a.get("problem") in REFUSED and not _own(r):
+            if free is None:
+                free = instagram_free()
+            if free:
+                retry.append(r)
+        elif cloud_sync._due(a, now):
+            rest.append(r)
+    out, downloads = [], 0
+    for r in sorted(first, key=lambda r: r["id"]) + sorted(retry, key=lambda r: (str(analyses[r["id"]].get("updated_at")), r["id"])) \
+            + sorted(rest, key=lambda r: r["id"]):
+        if _instagram(r) and not _own(r):
+            if downloads:
+                continue
+            downloads += 1
+        out.append(r)
+    return out
+
+
+def hand_one(api, ref: dict, analysis: dict, client=None) -> str:
+    """One reference of hand_queue: analysed, and an Instagram try recorded for the pacing."""
+    import cloud_sync
+    downloads = _instagram(ref) and not _own(ref)
+    line, outcome = cloud_sync.analyse_one(api, ref, analysis, client)
+    if line and downloads:
+        record(outcome or "other", library=False)
+    return line
 
 
 def tick(api, refs: list[dict], analyses: dict[int, dict], conn, client=None) -> list[str]:
@@ -428,9 +548,15 @@ def info(conn) -> dict:
         signin = {"present": True, "added_at": datetime.fromtimestamp(mtime, timezone.utc).isoformat(timespec="seconds")}
     except OSError:
         signin = {"present": False}
+    try:
+        import ig_health
+        signin.update(ig_health.info())
+    except Exception as e:  # nice to have: never stops the heartbeat
+        log.debug("No sign-in health: %s", e)
+    wait = max(st.get("next_at") or 0.0, st.get("backoff_at") or 0.0)
     return {"paused": {"kind": p["kind"], "reason": p["reason"],
                        "at": datetime.fromtimestamp(p["at"], timezone.utc).isoformat(timespec="seconds")} if p else None,
-            "next_at": datetime.fromtimestamp(st["next_at"], timezone.utc).isoformat(timespec="seconds")
-            if st.get("next_at") and st["next_at"] > time.time() else None,
+            "next_at": datetime.fromtimestamp(wait, timezone.utc).isoformat(timespec="seconds")
+            if wait > time.time() else None,
             "backing_off": st.get("level", 0) > 0, "budget": budget(conn), "estimates": estimates(conn),
             "signin": signin}

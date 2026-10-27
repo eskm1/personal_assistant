@@ -594,8 +594,9 @@ reference's analysis starts `held` (the queue trigger), so nothing is downloaded
 | refs | laptop | owner | `{action: analyse, mode: all \| sample, n, ids?, estimate_usd}` (held -> pending; a sample is stratified by `post_type` and account, at most 2 per account, seeded by the job id; only what fits in the month's budget) or `{action: pause \| resume \| stop \| retry}` (stop: pending -> held; retry: failed but not `gone` -> pending) | `{queued, estimate_usd, hours, note}` |
 | taste | laptop | owner | `{brand}` | `{report_id, version, guide_id}` (fails readably under 10 analysed references or past the budget) |
 
-**Laptop (each tick, after the hand-added references).** At most one library analysis, when the pacing allows:
-45-90 s (random) between downloads; on `rate`/`login` the post goes back to `pending` (behind the rest) and the
+**Laptop (each tick, after the hand-added references).** At most one library analysis, when the pacing allows
+(since 2026-10-27, "Reference downloads" below: at most `STUDIO_REFERENCE_LIBRARY_PER_HOUR`, default 4, in any
+hour, each slot 60/that many minutes × 0.6-1.4 at random; until then 45-90 s); on `rate`/`login` the post goes back to `pending` (behind the rest) and the
 next try waits 10, 20, 40 min … (≤4 h); four refusals in a row pause the batch (rate: resumes after 6 h; login:
 resumes when a new `cookies.txt` arrives or on Resume); six of the last ten wanting a login pause it with the
 sign-in hint; `gone` fails for good (never retried by itself); no internet waits 10 min. Before each: the month's
@@ -637,6 +638,70 @@ out. A library post's page adds its account, kind, engagement, Claude's slide re
 recommendations with kinds of post, settings, why posts stand out, proposed guide and taste section; thumbnails
 open the posts on Instagram), Approve / Reject (owner); the Style guide page links to it. List queries select only
 the light parts of each analysis (a few numbers through `measured->key`) so 800 posts stay quick.
+
+## Reference downloads: the queue, the sign-in and uploads (no migration)
+
+2026-10-27, from the live server: after the library's bulk run (hundreds of downloads from one server, one spare
+sign-in), Instagram refused even hand-added references (gallery-dl HttpError 400 on `/api/v1/media/<id>/info/`,
+yt-dlp "Video info extraction failed: HTTP Error 400"). Everything below is kept on the Studio machine and in the
+existing columns and JSON; nothing new online.
+
+**The queue (`ref_library.hand_queue`, each tick, before the library).** Hand-added references (no `import_id`),
+and any reference with its own files, in this order: `pending` ones (new, re-queued, or with a fresh upload: tried
+once now, even during a pause), then hand-added Instagram ones `failed` with `problem` rate/login once Instagram may
+be asked again (no rate/login pause, past the backoff), then the rest `_due` as before. At most one Instagram
+download a tick. A hand-added refusal is `failed` (its card offers the upload) and counts in the same backoff and
+pauses as the library's (one server to Instagram); after a hand-added download the library waits 45-90 s. While a
+pause is on, nothing of the library touches Instagram (no download, no follower count). Pacing state in
+`cloud_state.json` `ref_library`: `next_at` (the library's next slot), `backoff_at` (after a refusal: any
+Instagram download), `lib_times` (the last hour's library starts), `paused`, `level`, `recent`.
+
+**The sign-in (`ig_health.py`, `Studio/Style/ig_outcomes.json`).** One line per Instagram call (yt-dlp, gallery-dl,
+a follower count): `{at, tool, signed_in, ok, problem, status (HTTP code, "challenge" or "login_required"),
+endpoint (media_info | graphql | profile | challenge | login_page | the tool)}`, the last 40; never a cookie or the
+raw answer. The sign-in **needs attention** when a signed-in call meets a checkpoint, a challenge,
+`login_required` or a redirect to `/challenge` / `/accounts/login`, or the last 8 signed-in calls all failed over
+2 hours or more (gone and no internet don't count); a signed-in success or a newer `cookies.txt` clears it, a
+signed-out success doesn't. While it holds, the library pauses as `login` (resumed by a fresh cookies.txt) and a
+refused download's reason is "The sign-in account needs attention: …". Heartbeat:
+`laptop_status.info.references.signin.attention` = `{since, why: challenge | failing, text}` or null, plus
+`signin.last_signed_in_ok`; `estimates.per_hour`, `estimates.seconds_per_post` = 3600 / per hour.
+
+**Instagram's 400 is a refusal.** `style_study.problem_of`: a 400 from yt-dlp ("HTTP Error 400", "Video info
+extraction failed") or gallery-dl ("HttpError: '400 …'", with or without "Bad Request", on `/api/v1/media/…/info/`
+or graphql) is `rate`, on the reel and the carousel path alike; the reason is "Instagram is refusing the server
+right now: Studio tries again later by itself. Or upload the file instead (…)"; the downloaders' errors go to the
+log (cookie values blanked). A cut-short file gallery-dl leaves is the first refusal's kind, never `gone`.
+
+**A reference's own files (`ref_files.py`).** Kept in `Studio/References/.files/<reference id>/current/` with a
+`manifest.json` `{kind: video | images, files, at, from: upload | onedrive | merged, by, name?, merged_from?}`; the
+sync analyses them with `style_study.analyse_files` (the same measure / look, or the slides' read), `engagement.source`
+`upload` (likes, views and caption from one yt-dlp info read of the link when Instagram may be asked, else null);
+`url` unchanged. Uploads (planner -> Studio machine, the planner session like the upload API):
+
+| Request | Body | Answer |
+|---|---|---|
+| `POST /api/uploads` | `{reference_id, set, index, name, size, type}` (`set` 4-40 of `[A-Za-z0-9_-]`, one per batch; `index` 1-20) | `201 {id, offset, chunk}`; 404 no such reference, 413 over 2 GB (video) / 60 MB (picture), 415 neither a video nor a picture; then the usual PUTs |
+| `POST /api/uploads/references/<id>/ready` | `{set}` | `{kind, files, at}`: the set is now the reference's files and its analysis `pending` (error and problem cleared); 415 a video with pictures, two videos, a file that won't play or open; 404 no such set |
+| `GET /api/uploads/references/<id>` | | `{kind, files, at, from}` or `{}` |
+
+From OneDrive (`Studio Inbox\References\Ours` / `\Inspiration`): a video whose name holds a reference's Instagram
+post code (from its `url` or `shortcode`, 10+ characters, longest match) attaches to that reference instead of
+making a new one; a folder of pictures (jpg, jpeg, png, webp, heic) is one carousel (natural name order, up to 20),
+taken once nothing in it changed for 5 minutes and OneDrive has nothing more coming for it (`onedrive` pulls a
+References folder's pictures into the same folder), attached by its name's code, else a new reference
+(`file_name` the folder's name, `post_type` carousel). A file reference whose `file_name` holds a link reference's
+code (made before this) is merged once: its file copied across, its `why` appended to the link reference's, its
+`done` analysis copied when the link's isn't done, then it is `retired`. Loose pictures in `References\<side>` are
+left alone as before.
+
+**Planner.** A failed link reference's card holds the link and **Upload the file instead** (+ "Or drop it in
+OneDrive: Studio Inbox > References."); its chip reads "Instagram is refusing the server right now" or "The
+sign-in account needs attention"; the reference's page has an **Upload the file instead** section (what Studio
+has, the button, the OneDrive line with the post's code). The References page shows the attention sentence at the
+top; the owner's sign-in box opens with what to do. The upload uses `upload.js`'s pieces and tray
+(`addRefFile`), then `ready`. The Library's pace line: "A few an hour (at most 4) … References you add by hand go
+first."
 
 ## Clean-up (migration 20261024000000_cleanup.sql)
 

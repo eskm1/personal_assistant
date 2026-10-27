@@ -29,7 +29,7 @@ const info = () => state.laptop?.info?.references || null;
 const est = () => ({ ...DEFAULT_EST, ...(info()?.estimates || {}) });
 function hours(n) {
   const h = (n * est().seconds_per_post) / 3600;
-  return h < 1 ? `${Math.max(1, Math.round(h * 60))} minutes` : h < 1.5 ? "about an hour" : `about ${Math.round(h)} hours`;
+  return h < 1 ? `${Math.max(1, Math.round(h * 60))} minutes` : h < 1.5 ? "about an hour" : h < 48 ? `about ${Math.round(h)} hours` : `about ${Math.round(h / 24)} days`;
 }
 const str = (v) => (typeof v === "string" ? v.trim() : v == null ? "" : String(v));
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -59,12 +59,15 @@ const latestJob = (kind) => (refs.jobs || []).find((j) => j.kind === kind) || nu
 function signinHTML() {
   if (!isOwner()) return "";
   const s = lib.signin || info()?.signin || null;
-  const loginTrouble = info()?.paused?.kind === "login" || libRows().some((r) => r.a?.problem === "login" && r.a?.state !== "done");
+  const attention = s?.attention || info()?.signin?.attention || null;
+  const loginTrouble = !!attention || info()?.paused?.kind === "login" || libRows().some((r) => r.a?.problem === "login" && r.a?.state !== "done");
   const where = studioBase();
   const status = s?.present
     ? `<p class="si-on"><span class="chip ok">Signed in for downloads</span> <span class="muted small">added ${esc(shortDate(s.added_at) || ago(s.added_at))}${s.expires ? ` · Instagram ends this sign-in around ${esc(shortDate(s.expires))}` : ""}</span></p>`
     : `<p class="muted">No sign-in yet. Instagram often refuses downloads to servers without one.</p>`;
-  const warn = loginTrouble ? `<p class="si-warn">${s?.present
+  // The page's banner says it in full (refs.js attentionHTML); here, what that means for this box.
+  const warn = attention ? `<p class="si-warn">Downloads with this sign-in keep failing: Instagram wants the account checked. Open Instagram with it on a phone, clear any check, then upload a fresh cookies.txt below.</p>`
+    : loginTrouble ? `<p class="si-warn">${s?.present
     ? "Downloads are failing with “login required”: the sign-in has probably expired. Export a fresh cookies.txt and upload it here."
     : "Downloads are failing with “login required”: add a sign-in below."}</p>` : "";
   return `<details class="si-box" data-key="signin" ${loginTrouble || !s?.present ? "open" : ""}>
@@ -95,7 +98,7 @@ function paceHTML(c) {
   const now = libRows().find((r) => r.a?.state === "running");
   if (now) bits.push(`Analysing ${esc(now.account ? `@${now.account}` : `#${now.id}`)} now.`);
   if (i?.backing_off && i?.next_at) bits.push(`Instagram asked us to slow down: next try ${esc(new Date(i.next_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}.`);
-  else bits.push(`One every minute or so, so Instagram doesn't block the server: ${esc(hours(c.queued + c.running))} left.`);
+  else bits.push(`A few an hour (at most ${esc(String(est().per_hour || 4))}), so Instagram keeps trusting the server: ${esc(hours(c.queued + c.running))} left. References you add by hand go first.`);
   return `<p class="lib-pace"><span class="spin"></span> ${bits.join(" ")}</p>`;
 }
 
@@ -414,7 +417,7 @@ export function libDetailHTML(r) {
     <div class="card-chips">${head}</div>
     ${bits.length ? `<dl class="ref-nums">${bits.join("")}</dl>` : a.state === "done" ? `<p class="muted small">Instagram didn't show its likes or views.</p>` : ""}
     ${held ? `<p class="muted small">Imported with the library: waiting for Analyse.</p>${isOwner() ? `<div class="row"><button class="btn" data-lib-one="${esc(r.id)}">Analyse just this one (about ${money(est().per_post_usd)})</button></div>` : ""}` : ""}
-    ${a.state === "pending" && a.error ? `<p class="muted small">Queued again: ${esc(a.error)}</p>` : a.state === "pending" ? `<p class="muted small">Queued: Studio analyses the library one post a minute or so.</p>` : ""}
+    ${a.state === "pending" && a.error ? `<p class="muted small">Queued again: ${esc(a.error)}</p>` : a.state === "pending" ? `<p class="muted small">Queued: Studio analyses the library a few posts an hour.</p>` : ""}
   </section>`;
 }
 // Claude's read of a carousel or photo post.

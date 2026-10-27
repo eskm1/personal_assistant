@@ -12,6 +12,7 @@ import {
   isLib, lib, libraryHTML, libVisiblePaths, openImport, loadSignin, libDetailHTML, slidesLookHTML, designHTML, tasteHTML,
   tastePaths, tasteLineHTML,
 } from "./library.js";
+import { addRefFile, canUpload, studioApi, nameOrder } from "./upload.js";
 
 const root = () => $("#refs");
 const BRANDS = ACCOUNTS;
@@ -35,7 +36,7 @@ export const refs = {
   route: null, rows: null, guides: [], jobs: [], taste: [], sig: "", pending: false, editing: null, error: "",
   brand: oneBrand ? "all" : recall("studio.refBrand") || "all", status: recall("studio.refStatus") || "active",
   guideBrand: BRANDS.includes(recall("studio.guideBrand")) ? recall("studio.guideBrand") : "urban_makers",
-  flashed: new Set(),
+  flashed: new Set(), own: {}, sending: {},
 };
 export const refsOpen = () => !root().hidden;
 
@@ -127,11 +128,13 @@ export async function loadRefs(force = false) {
     const { data } = await sb.from("reference_analysis").select("*").eq("reference_id", route.id).maybeSingle();
     return data || null;
   };
+  const ownQuery = () => (route.page === "detail" && canUpload()
+    ? studioApi("GET", `/api/uploads/references/${route.id}`).then((o) => { refs.own[route.id] = o || {}; }).catch(() => {}) : null);
   const [rows, guides, jobs, taste, full] = await Promise.all([
     refsQuery(),
     sb.from("style_guides").select("*").order("version", { ascending: false }).then(must),
     sb.from("jobs").select(JOB_COLS).in("kind", ["style", "refs", "taste"]).order("id", { ascending: false }).limit(40).then(must),
-    tasteQuery(), fullQuery(), route.page === "list" ? loadSignin() : null,
+    tasteQuery(), fullQuery(), route.page === "list" ? loadSignin() : null, ownQuery(),
   ]);
   if (stale()) { if (force) refs.forceNext = true; return; }
   for (const r of rows) {
@@ -208,8 +211,11 @@ function analysisChip(r, long = false) {
   if (s === "running") return `<span class="chip drafting"><span class="spin"></span>Analysing…</span>`;
   if (s === "held") return `<span class="chip">Waiting for Analyse</span>`;
   if (s === "failed") {
-    const why = str(a.error) || "unknown error";
-    return `<span class="chip failed" title="${esc(why)}">Failed: ${esc(long || why.length <= 60 ? why : `${why.slice(0, 59)}…`)}</span>`;
+    const full = str(a.error) || "unknown error";
+    // Instagram turning the server away says so plainly; the whole reason is on the page.
+    const why = long ? full : /needs attention/i.test(full) ? "The sign-in account needs attention"
+      : /refusing the server/i.test(full) ? "Instagram is refusing the server right now" : full;
+    return `<span class="chip failed" title="${esc(full)}">${long ? "Failed: " : ""}${esc(long || why.length <= 60 ? why : `${why.slice(0, 59)}…`)}</span>`;
   }
   return `<span class="chip wait">Waiting for Studio</span>`;
 }
@@ -352,7 +358,7 @@ function render(force = false) {
   const lap = laptopOn() ? "on" : Math.floor(Date.parse(state.laptop?.last_seen || 0) / 60e3) || 0;
   const stills = refs.rows.map((r) => (route.page === "detail" && r.id === route.id ? r.stills : r.stills.slice(0, 1)).map((p) => !!stillUrl(p)));
   const sig = JSON.stringify([route, refs.rows, refs.guides, refs.jobs, refs.taste, refs.brand, refs.status, refs.guideBrand, refs.editing, lap, stills,
-    state.laptop?.info?.references || null, lib.signin, lib.signinError, lib.signinBusy, lib.type, lib.show, lib.page]);
+    state.laptop?.info?.references || null, lib.signin, lib.signinError, lib.signinBusy, lib.type, lib.show, lib.page, refs.own, refs.sending]);
   if (!force && sig === refs.sig) return;
   if (!force && (typingIn(root()) || root().querySelector("select:focus"))) { refs.pending = true; return; }
   refs.sig = sig;
@@ -393,6 +399,8 @@ function listHTML() {
       </div>
       <div class="row refs-actions"><button class="btn primary" id="ref-add">Add references</button>${schemaLib.on ? `<button class="btn" id="ref-import">Import many…</button>` : ""}<a class="btn" href="#/style">Style guide</a></div>
     </div>
+    ${attentionHTML()}
+    ${stuckHTML(all)}
     ${guideStatusHTML()}
     ${schemaLib.on ? libraryHTML() : ""}
     ${all.length ? `<div class="refs-filters">
@@ -411,6 +419,22 @@ function cardHTML(r) {
   const thumb = stillUrl(r.stills[0]);
   const label = refLabel(r);
   const where = r.url ? platformOf(r.url) : "From a file";
+  // A link Studio couldn't download: the card offers the way round it (a button can't sit inside the link).
+  const fix = r.url && r.a?.state === "failed" && r.status === "active";
+  const inner = `<span class="ref-thumb">${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : `<span class="ref-none">${esc(where || "No still yet")}</span>`}</span>
+    <span class="ref-body">
+      <span class="ref-title">${esc(label)}</span>
+      <span class="card-chips">${brandChip(r.brand)}${analysisChip(r)}</span>
+      ${str(r.why) ? `<span class="ref-why">${esc(r.why)}</span>` : `<span class="ref-why none">No note yet on why it works.</span>`}
+      <span class="ref-by muted small">${esc(addedBy(r))}</span>
+    </span>`;
+  if (fix) {
+    return `<div class="ref-card ref-card-fix" data-ref-card="${esc(r.id)}">
+      <a class="ref-card-link" href="#/references/${esc(r.id)}">${inner}</a>
+      <div class="ref-fix">${uploadButtonHTML(r)}
+        <span class="muted small">Or drop it in OneDrive: Studio Inbox &gt; References.</span></div>
+    </div>`;
+  }
   return `<a class="ref-card${r.status === "retired" ? " retired" : ""}" href="#/references/${esc(r.id)}" data-ref-card="${esc(r.id)}">
     <span class="ref-thumb">${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : `<span class="ref-none">${esc(where || "No still yet")}</span>`}</span>
     <span class="ref-body">
@@ -463,9 +487,11 @@ function detailHTML(id) {
       ${str(a.measured?.transcript) ? `<details data-key="transcript"><summary>Transcript</summary><p class="note-body">${esc(a.measured.transcript)}</p></details>` : ""}
       <p class="muted small">Analysed ${esc(ago(a.analysed_at || a.updated_at))}.</p>`;
   } else if (a.state === "failed") {
+    const refused = r.url && (a.problem === "rate" || a.problem === "login" || /refusing the server|needs attention/i.test(str(a.error)));
     analysis = `<p class="error-text">Studio couldn't analyse it: ${esc(str(a.error) || "unknown error")}</p>
-      <p class="muted small">${!r.url ? "Check the file in the References folder plays. "
-        : /login|private|sign in|cookies/i.test(str(a.error)) ? "Check the link opens without signing in (private accounts can't be downloaded). " : ""}Studio tries again within a day; changing the link analyses it again now.</p>`;
+      <p class="muted small">${refused ? "Studio tries again by itself once Instagram lets it. Or upload the file instead (below)."
+        : `${!r.url ? "Check the file in the References folder plays. "
+        : /login|private|sign in|cookies/i.test(str(a.error)) ? "Check the link opens without signing in (private accounts can't be downloaded). " : ""}Studio tries again within a day; changing the link analyses it again now.`}</p>`;
   } else if (a.state === "running") {
     analysis = `<p><span class="spin"></span> Studio is analysing it: cuts, pace, music, and a look at a dozen stills.</p>`;
   } else if (a.state === "held") {
@@ -518,7 +544,9 @@ function detailHTML(id) {
       <section class="ref-sec ref-analysis">
         <h2>What Studio measured</h2>
         ${analysis}
+        ${a.state === "done" && a.engagement?.source === "upload" ? `<p class="muted small">Analysed from the uploaded file; the link stays for its likes and views.</p>` : ""}
       </section>
+      ${r.url ? ownFileHTML(r) : ""}
     </div>
   </div>`;
 }
@@ -831,6 +859,93 @@ async function saveAdd(btn) {
   await loadRefs(true).catch(() => {});
 }
 
+// ── A reference's own file (when Studio can't download the post) ────────────
+
+function uploadButtonHTML(r) {
+  const busy = refs.sending[r.id];
+  return busy ? `<span class="muted small"><span class="spin"></span> Uploading ${busy.done} of ${plural(busy.n, "file")}…</span>`
+    : `<button type="button" class="btn small" data-ref-upload="${esc(r.id)}">${refs.own[r.id]?.kind ? "Upload a different file" : "Upload the file instead"}</button>`;
+}
+
+function ownFileHTML(r) {
+  const own = refs.own[r.id] || {};
+  const what = own.kind === "images" ? plural(own.files, "picture") : "the video";
+  return `<section class="ref-sec" aria-labelledby="ref-own-h">
+    <h2 id="ref-own-h">Upload the file instead</h2>
+    ${own.kind ? `<p>Studio has ${esc(what)}${own.at ? ` (${esc(ago(own.at))})` : ""} and analyses that, not the download.</p>`
+      : `<p class="muted">If Studio can't download it, upload the post's video, or its pictures in order. Studio analyses them the same way and keeps the link for likes and views.</p>`}
+    <div class="row">${uploadButtonHTML(r)}</div>
+    <p class="muted small">Or drop it in OneDrive: Studio Inbox &gt; References &gt; ${esc(SIDE[r.side] || "Inspiration")}, with the post's code${codeOf(r.url) ? ` (${esc(codeOf(r.url))})` : ""} in the file or folder name.</p>
+  </section>`;
+}
+const codeOf = (url) => (String(url || "").match(/instagram\.com\/(?:[A-Za-z0-9_.]+\/)?(?:p|reels?|tv)\/([A-Za-z0-9_-]+)/i) || [])[1] || "";
+
+// Links Studio couldn't download sit below the library's grid: one line at the top goes to them.
+function stuckHTML(all) {
+  const n = all.filter((r) => r.url && r.status === "active" && r.a?.state === "failed").length;
+  return n ? `<button type="button" class="guide-line ref-jump" data-ref-jump><span>${esc(plural(n, "reference"))} couldn't be downloaded: upload the file instead</span><span aria-hidden="true">›</span></button>` : "";
+}
+
+// The sign-in looks dead, not just limited (laptop_status.info.references.signin.attention).
+function attentionHTML() {
+  const at = state.laptop?.info?.references?.signin?.attention;
+  if (!at) return "";
+  return `<p class="si-warn" role="status">${esc(isOwner() ? at.text : `Instagram downloads wait for ${ownerName()}: the sign-in account needs attention.`)}</p>`;
+}
+
+const REF_VIDEO = /\.(mp4|mov|m4v|mkv|avi|webm)$/i;
+const REF_PICTURE = /\.(jpe?g|png|webp|heic|heif)$/i;
+const refPicker = document.createElement("input");
+refPicker.type = "file";
+refPicker.accept = "video/*,image/*,.heic,.heif";
+refPicker.multiple = true;
+refPicker.className = "up-picker";
+refPicker.tabIndex = -1;
+refPicker.setAttribute("aria-hidden", "true");
+document.body.appendChild(refPicker);
+let pickRef = null;
+refPicker.addEventListener("change", () => {
+  const files = [...refPicker.files];
+  refPicker.value = "";
+  if (pickRef && files.length) sendRefFiles(pickRef, files);
+  pickRef = null;
+});
+
+// One video, or the post's pictures (in name order): the same upload pieces as a shot's video, then Studio
+// is told the set is complete and analyses it.
+function sendRefFiles(id, files) {
+  const videos = files.filter((f) => /^video\//.test(f.type || "") || REF_VIDEO.test(f.name || ""));
+  const pictures = files.filter((f) => !videos.includes(f) && (/^image\//.test(f.type || "") || REF_PICTURE.test(f.name || "")));
+  if (videos.length + pictures.length !== files.length || (videos.length && pictures.length) || videos.length > 1) {
+    toast("Pick the post's one video, or its pictures (JPEG, PNG, WebP or HEIC).", 6000);
+    return;
+  }
+  if (pictures.length > 20) { toast("A post has at most 20 pictures.", 6000); return; }
+  const list = videos.length ? videos : nameOrder(pictures);
+  const set = Math.random().toString(36).slice(2, 14).padEnd(12, "0");
+  const label = `Reference: ${refLabel(byId(id))}`;
+  const sending = (refs.sending[id] = { n: list.length, done: 0 });
+  render(true);
+  list.forEach((f, k) => addRefFile(id, set, k + 1, f, label, () => {
+    sending.done += 1;
+    if (sending.done === sending.n) readyRef(id, set, list.length, videos.length > 0);
+    else render(true);
+  }));
+}
+
+async function readyRef(id, set, n, video) {
+  try {
+    await studioApi("POST", `/api/uploads/references/${id}/ready`, { set });
+    const them = video ? "it" : "them";
+    toast(`Studio has ${video ? "the video" : plural(n, "picture")}. ${laptopOn() ? `It analyses ${them} in a minute or two.` : `It analyses ${them} when it's back.`}`, 6000);
+  } catch (err) {
+    toast(`Couldn't use those files: ${err.message}`, 7000);
+  }
+  delete refs.sending[id];
+  delete refs.own[id];
+  await loadRefs(true).catch(() => {});
+}
+
 // ── Actions ─────────────────────────────────────────────────────────────────
 
 // An update that RLS quietly refused comes back with no rows.
@@ -861,7 +976,15 @@ root().addEventListener("click", async (e) => {
   const ds = t.dataset;
   const id = Number(refs.route?.id);
   try {
-    if (t.id === "ref-add" || t.id === "ref-add-empty") openAdd();
+    if (ds.refJump != null) {
+      const card = $(".ref-card-fix");
+      card?.scrollIntoView({ behavior: "smooth", block: "center" });
+      card?.querySelector("[data-ref-upload]")?.focus({ preventScroll: true });
+    } else if (ds.refUpload) {
+      if (!canUpload()) { toast(`Uploading needs the Studio address: it appears when Studio is on.`, 6000); return; }
+      pickRef = Number(ds.refUpload);
+      refPicker.click();
+    } else if (t.id === "ref-add" || t.id === "ref-add-empty") openAdd();
     else if (t.id === "ref-import" || t.id === "ref-import-empty") openImport();
     else if (t.id === "refs-retry") await showRefs(refs.route);
     else if (ds.refBrand) { refs.brand = ds.refBrand; store("studio.refBrand", refs.brand); render(true); }

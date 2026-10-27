@@ -1429,6 +1429,7 @@ from plan_routes import bp as _plan_bp  # noqa: E402 - its own module; shares we
 from planner_site import bp as _planner_bp  # noqa: E402 - the online planner at /plan/
 from uploads import bp as _uploads_bp  # noqa: E402 - footage uploaded from the planner to a shot
 from ig_signin import bp as _signin_bp  # noqa: E402 - the owner's Instagram sign-in for reference downloads
+from ref_files import bp as _ref_files_bp  # noqa: E402 - a reference's own video or slides, uploaded from the planner
 from cleanup import bp as _cleanup_bp  # noqa: E402 - Review's clean-up: remove, archive, free up space
 from posting_routes import bp as _posting_bp  # noqa: E402 - Instagram: connect, schedule, results, public media
 from help_routes import bp as _help_bp  # noqa: E402 - help, feedback, usage capture and the weekly report
@@ -1438,6 +1439,7 @@ app.register_blueprint(_plan_bp)
 app.register_blueprint(_planner_bp)
 app.register_blueprint(_uploads_bp)
 app.register_blueprint(_signin_bp)
+app.register_blueprint(_ref_files_bp)
 app.register_blueprint(_cleanup_bp)
 app.register_blueprint(_posting_bp)
 app.register_blueprint(_help_bp)
