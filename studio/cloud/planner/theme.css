@@ -250,3 +250,11 @@ a.btn.act, a.btn.good { color: #fff; }
   .menu button, .menu a { min-height: var(--um-touch); }
   .modal-card { padding: 20px 16px 16px; }
 }
+/* Phones and tablets: a box under 16px makes iPhone zoom in on a tap and stay zoomed, so every box types at 16px
+   at least. !important beats each page's own smaller box rule; a .title-input is 16px or more already. */
+@media (max-width: 860px), (hover: none) and (pointer: coarse) {
+  textarea:not(.title-input), select,
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=color]):not([type=button]):not([type=submit]):not([type=reset]):not([type=image]):not([type=hidden]):not(.title-input) {
+    font-size: 16px !important;
+  }
+}
