@@ -36,6 +36,9 @@ Singapore renovation company). Team member: Michelle (marketing). Read README.md
 - Anything touching the quote tool (`tools/umcpm.py`, the urban-makers-quote-engine repo) is the
   UMC Lead agent's: consult and defer to it.
 - Plain English for Bryan (not technical); match the code's style (plain docstrings, short comments).
+- Planning a big feature or a "plan this out": run the project skill **be-ambitious** (`.claude/skills/be-ambitious`,
+  Bryan 2026-10-27): the goal beyond the goal, the ladder, an outside judge that grades the result, a hard target. It
+  raises the standard, never the permissions: spending, approvals and destructive changes still wait for Bryan.
 
 ## CTO
 
