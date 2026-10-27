@@ -10,7 +10,9 @@ Each read is kept per post per day (post_results), so a post's numbers can be fo
 they grow; the account in account_results. The daily read also keeps a small still of each post
 (IGThumbs/<media id>.jpg, from Instagram's media_url / a Reel's thumbnail_url, whose links run out),
 whether a Reel shows in the profile grid (is_shared_to_feed), and the account as its profile shows it
-(name, handle, bio, counts, picture: profile_info()), for the planner's profile grid. The planner gets the latest numbers of each post
+(name, handle, bio, counts, picture: profile_info()), for the planner's profile grid. The grid shows the
+account's newest GRID_POSTS posts however old, so read_grid() keeps those too (each read once if it has
+no numbers yet), with the daily read and once as soon as Instagram is connected (not the next morning). The planner gets the latest numbers of each post
 and the account's days (Supabase post_results / account_results, mirror()). summary() groups
 them by kind of post, format and month for Review and the API.
 
@@ -51,6 +53,9 @@ NUMBERS = ["views", "reach", "likes", "comments", "saves", "shares", "interactio
 FIRST_HOUR_AFTER = timedelta(minutes=55)    # a new post is read again this long after it went out
 FIRST_HOUR_UNTIL = timedelta(hours=6)
 
+GRID_POSTS = 60                            # the profile grid: the account's newest posts, however old
+GRID_READ = 1                              # read_grid's first run: bump to run it once more on every server
+GRID_RETRY = timedelta(hours=1)            # a first grid read that failed is tried again this long after
 THUMB_WIDTH = 540                          # the grid's tiles are about 130 px wide; 540 covers a sharp phone
 THUMB_MAX_BYTES = 20 * 1024 * 1024         # a picture from Instagram bigger than this isn't read
 _MEDIA_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
@@ -88,7 +93,8 @@ def _load_state() -> dict:
 
 def _save_state() -> None:
     try:
-        _state_file().write_text(json.dumps({k: _state.get(k) for k in ("daily", "early", "last_ok", "avatar_pushed")}),
+        _state_file().write_text(json.dumps({k: _state.get(k) for k in ("daily", "early", "last_ok", "avatar_pushed", "grid_read", "grid_tried",
+                                                                 "bare_pushed")}),
                                  encoding="utf-8")
     except OSError as e:
         log.debug("Results state not saved: %s", e)
@@ -229,7 +235,9 @@ def profile_info() -> dict:
             out["avatar_path"] = f"profile/{pushed}.jpg"
         return out
     handle = settings.INSTAGRAM_HANDLE if settings.INSTAGRAM_HANDLE.lower() != "off" else ""
-    return {"source": "settings", "username": handle, "name": settings.INSTAGRAM_NAME, "biography": settings.INSTAGRAM_BIO}
+    # Connected, the account not read yet (tick reads it within minutes): the grid says so, not "connect".
+    return {"source": "reading" if instagram.connected() else "settings", "username": handle,
+            "name": settings.INSTAGRAM_NAME, "biography": settings.INSTAGRAM_BIO}
 
 
 def read_post(conn, media_id: str, media: dict | None = None, day: date | None = None) -> dict:
@@ -292,8 +300,31 @@ def pull(conn, now: datetime | None = None) -> dict:
             failed += 1
             log.info("Results for %s not read: %s", m.get("id"), e)
     account = read_account(conn, now)
+    grid = read_grid(conn, now)
+    return {"posts": done, "failed": failed, "account": account, "profile": grid["profile"], "older": grid["older"]}
+
+
+def read_grid(conn, now: datetime | None = None) -> dict:
+    """The profile grid's part of the read: the account as its profile shows it, and its newest GRID_POSTS
+    posts however old (an account that hasn't posted for 90 days still has a grid), each with its still. A
+    post Studio has no numbers for is read once; one Instagram won't give numbers for (posted before the
+    account went professional) still shows, without them (mirror)."""
+    now = now or _now()
     profile = read_profile(now)
-    return {"posts": done, "failed": failed, "account": account, "profile": bool(profile)}
+    older = 0
+    for m in instagram.recent_media(limit=GRID_POSTS)[:GRID_POSTS]:
+        _save_media(conn, m)
+        conn.commit()
+        if conn.execute("SELECT 1 FROM post_results WHERE media_id = ? LIMIT 1", (str(m["id"]),)).fetchone():
+            continue
+        try:
+            read_post(conn, m["id"], m)
+            older += 1
+        except IgError as e:
+            if e.kind in ("token", "offline"):
+                raise
+            log.debug("Results for %s not read: %s", m.get("id"), e)
+    return {"profile": bool(profile), "older": older}
 
 
 def tick(conn, now: datetime | None = None) -> None:
@@ -315,6 +346,15 @@ def tick(conn, now: datetime | None = None) -> None:
             early.add(row["id"])
             _state["early"] = sorted(early)[-200:]
             _save_state()
+        tried = _parse(_state.get("grid_tried"))
+        if _state.get("grid_read") != GRID_READ and (tried is None or now - tried >= GRID_RETRY):
+            _state["grid_tried"] = _iso(now)   # the grid now, not at tomorrow's daily read
+            _save_state()
+            counts = read_grid(conn, now)
+            _state["grid_read"] = GRID_READ
+            _save_state()
+            log.info("Profile grid read: the profile %s, %d older posts read", "read" if counts["profile"] else "not read",
+                     counts["older"])
         if _state.get("daily") != today and local.hour >= settings.RESULTS_HOUR:
             counts = pull(conn, now)
             _state.update(daily=today, last_ok=_iso(now), last_error=None)
@@ -394,28 +434,35 @@ def mirror(api, conn, grid: bool = False) -> int:
     migration is online, so each post's still (results/<media id>.jpg), whether it shows in the grid and its
     whole caption go too, and the account's picture (profile/<hash>.jpg)."""
     n = 0
+    bare = dict(_load_state().get("bare_pushed") or {})   # posts with no numbers, sent for the grid: media id -> hash
     for m in conn.execute("""SELECT m.*, p.post_type, p.title, p.idea_remote FROM ig_media m
                              LEFT JOIN posts p ON p.id = m.post_id""").fetchall():
         latest_row = conn.execute("SELECT * FROM post_results WHERE media_id = ? ORDER BY day DESC LIMIT 1",
                                   (m["media_id"],)).fetchone()
-        if latest_row is None:
+        if latest_row is None and not grid:
             continue
+        numbers = {k: latest_row[k] for k in NUMBERS} if latest_row else dict.fromkeys(NUMBERS)
         values = {"media_id": m["media_id"], "post_id": m["post_id"], "idea_id": m["idea_remote"],
                   "format": fmt({"media_type": m["media_type"], "media_product_type": m["product_type"]}),
                   "post_type": m["post_type"], "title": (m["title"] or (m["caption"] or "")[:120])[:300],
-                  "permalink": m["permalink"], "posted_at": m["posted_at"], "day": latest_row["day"],
-                  **{k: latest_row[k] for k in NUMBERS}, "pulled_at": latest_row["pulled_at"]}
+                  "permalink": m["permalink"], "posted_at": m["posted_at"], "day": latest_row["day"] if latest_row else None,
+                  **numbers, "pulled_at": latest_row["pulled_at"] if latest_row else m["seen_at"]}
         if grid:
             values.update(in_grid=None if m["in_grid"] is None else bool(m["in_grid"]),
                           caption=(m["full_caption"] or m["caption"] or "")[:5000],
                           thumb_path=_push_thumb(api, conn, m))
         digest = hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()[:16]
-        if digest == latest_row["cloud_hash"]:
+        if digest == (latest_row["cloud_hash"] if latest_row else bare.get(m["media_id"])):
             continue
         api.insert("post_results", values, on_conflict="media_id", resolution="merge-duplicates", returning=False)
-        conn.execute("UPDATE post_results SET cloud_hash = ? WHERE media_id = ? AND day = ?",
-                     (digest, m["media_id"], latest_row["day"]))
-        conn.commit()
+        if latest_row:
+            conn.execute("UPDATE post_results SET cloud_hash = ? WHERE media_id = ? AND day = ?",
+                         (digest, m["media_id"], latest_row["day"]))
+            conn.commit()
+        else:
+            bare[m["media_id"]] = digest
+            _state["bare_pushed"] = bare
+            _save_state()
         n += 1
     for r in conn.execute("SELECT * FROM account_results ORDER BY day").fetchall():
         values = {"day": r["day"], "followers": r["followers"], "reach": r["reach"], "views": r["views"],

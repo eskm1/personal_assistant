@@ -198,11 +198,11 @@ function headerHTML(tiles) {
     <div class="pg-top">
       <span class="pg-avatar" aria-hidden="true">${avatar ? `<img src="${esc(avatar)}" alt="">` : `<span>UM</span>`}</span>
       ${counts ? `<dl class="pg-counts"><div><dt>posts</dt><dd>${esc(num(p.media_count))}</dd></div><div><dt>followers</dt><dd>${esc(num(p.followers))}</dd></div><div><dt>following</dt><dd>${esc(num(p.follows))}</dd></div></dl>`
-        : `<p class="pg-counts-none muted small">${p.source === "account" ? "" : "Counts show once Instagram is connected."}</p>`}
+        : `<p class="pg-counts-none muted small">${p.source === "account" ? "" : p.source === "reading" ? "Studio is reading the account. Counts show in a few minutes." : "Counts show once Instagram is connected."}</p>`}
     </div>
     <p class="pg-name">${esc(p.name || "Urban Makers")}</p>
     <p class="pg-handle">@${esc(handle)}</p>
-    ${p.biography ? `<p class="pg-bio">${esc(p.biography)}</p>` : `<p class="pg-bio muted small">${p.source === "account" ? "No bio on the account." : "The bio shows once Instagram is connected."}</p>`}
+    ${p.biography ? `<p class="pg-bio">${esc(p.biography)}</p>` : `<p class="pg-bio muted small">${p.source === "account" ? "No bio on the account." : p.source === "reading" ? "The bio shows in a few minutes." : "The bio shows once Instagram is connected."}</p>`}
     <p class="pg-plan small">${esc(upcoming ? `${plural(upcoming, "post")} planned or scheduled above the posted ones` : "Nothing planned yet: give ideas a posting date, or use Spread these")}</p>
   </header>`;
 }

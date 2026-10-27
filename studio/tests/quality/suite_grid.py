@@ -293,6 +293,61 @@ post_results.mirror(api2, conn, grid=True)
 ok(not api2.uploads and not api2.rows.get("post_results"), "nothing again when nothing changed")
 info = post_results.profile_info()
 ok(info.get("avatar_path") == f"profile/{prof['avatar']}.jpg", "the header's picture once it's uploaded")
+# An account that hasn't posted for 90 days still has a grid: its newest posts, however old, read once as soon as
+# Instagram is connected (not at tomorrow's daily read); a post Instagram gives no numbers for still shows, bare.
+OLD = [{"id": f"1790000000000010{i}", "media_type": "IMAGE", "media_product_type": "FEED", "caption": f"Old post {i}",
+        "permalink": f"https://www.instagram.com/p/OLD{i}/", "timestamp": (now - timedelta(days=200 + i)).isoformat(),
+        "media_url": "https://cdn.example/album.jpg"} for i in range(3)]
+asked = {"media": [], "insights": [], "profile": 0}
+
+
+def fake_recent(since=None, limit=200):
+    asked["media"].append((since, limit))
+    return [m for m in OLD if since is None or datetime.fromisoformat(m["timestamp"]) >= since][:limit]
+
+
+def fake_insights(media_id, metrics):
+    asked["insights"].append(media_id)
+    if media_id.endswith("102"):
+        raise IgError("(#10) Not enough viewers for the media to show insights", "other", code=10)
+    return {"views": 50, "reach": 40, "likes": 5}
+
+
+def fake_profile():
+    asked["profile"] += 1
+    return {"username": "urbanmakers_sg", "name": "Urban Makers", "biography": "Renovation", "followers_count": 1137,
+            "follows_count": 56, "media_count": 78}
+
+
+real = (instagram.recent_media, instagram.media_insights, instagram.profile)
+instagram.recent_media, instagram.media_insights, instagram.profile = fake_recent, fake_insights, fake_profile
+post_results._profile_file().unlink(missing_ok=True)
+ok(post_results.profile_info()["source"] == "reading", "connected, the account not read yet: the header says reading, not connect")
+post_results._load_state()
+post_results._state.update(daily=post_results._now().astimezone(post_results.SGT).date().isoformat(), grid_read=None, grid_tried=None)
+post_results._save_state()   # tick reads the state from its file
+post_results.tick(conn)
+ok(asked["profile"] == 1 and asked["media"] == [(None, post_results.GRID_POSTS)], "the first grid read happens at once, not tomorrow")
+ok(sorted(asked["insights"]) == sorted(m["id"] for m in OLD), "each old post's numbers read once")
+ok(post_results.profile_info()["source"] == "account", "then the header is the account's")
+post_results.tick(conn)
+ok(asked["profile"] == 1 and len(asked["insights"]) == 3, "and not again on the next tick")
+api3 = FakeApi()
+post_results.mirror(api3, conn, grid=True)
+sent = {r["media_id"]: r for r in api3.rows.get("post_results", [])}
+ok(sent.get("17900000000000100", {}).get("views") == 50 and sent.get("17900000000000102", {}).get("views") is None
+   and sent.get("17900000000000102", {}).get("thumb_path") and sent["17900000000000102"]["pulled_at"],
+   "old posts reach the grid, one with no numbers among them")
+api5 = FakeApi()
+post_results.mirror(api5, conn, grid=True)
+ok(not api5.rows.get("post_results"), "nothing again when nothing changed, bare posts included")
+api4 = FakeApi()
+post_results.mirror(api4, conn, grid=False)
+ok("17900000000000102" not in {r["media_id"] for r in api4.rows.get("post_results", [])}, "before the grid's update, a post with no numbers isn't sent")
+counts = post_results.read_grid(conn)
+ok(counts["older"] == 0 and asked["insights"].count("17900000000000102") == 2 and asked["insights"].count("17900000000000101") == 1,
+   "the next read asks again only for the one with no numbers")
+instagram.recent_media, instagram.media_insights, instagram.profile = real
 pi = posting.info()
 ok(pi["carousel_max"] == settings.INSTAGRAM_CAROUSEL_MAX and pi["profile"]["username"] == "urbanmakers_sg" and "access_token" not in json.dumps(pi),
    "the heartbeat carries the carousel limit and the profile, never a token")

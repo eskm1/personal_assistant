@@ -37,7 +37,7 @@ SUITES = {
     "study_fixes": ("suite_study_fixes.py", [], 66),
     "wiki": ("suite_wiki.py", [], 136),
     "insights": ("suite_insights.py", [], 66),
-    "grid": ("suite_grid.py", [], 45),
+    "grid": ("suite_grid.py", [], 54),
     "refqueue": ("suite_refqueue.py", [], 88),
 }
 TIMEOUT = 90 * 60  # a hang, not a slow box: finalcheck alone takes 15-45 min on 4 vCPU
