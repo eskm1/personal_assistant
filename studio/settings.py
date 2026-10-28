@@ -193,8 +193,9 @@ CAPTION_FONT = _env("STUDIO_CAPTION_FONT", "inter").lower().replace("-", "_").re
 # in serif italic) or classic (the first look: boxed titles with the amber bar, captions on a box).
 TITLE_STYLE = _env("STUDIO_TITLE_STYLE", "site").lower().strip()
 # The brand kit (brand_kit.py, Review > More > Brand kit: fonts, colours, logo, per kind of post) starts from
-# TITLE_STYLE's look until it's saved. Bryan changes it; on = the team may change it too (everyone can see it).
-BRAND_KIT_TEAM = _flag("STUDIO_BRAND_KIT_TEAM", False)
+# TITLE_STYLE's look until it's saved. Bryan and the team change it (Bryan, 2026-10-28: "michelle can edit it too");
+# off = Bryan only (everyone can still see it).
+BRAND_KIT_TEAM = _flag("STUDIO_BRAND_KIT_TEAM", True)
 # How far the music sits under the voice while Bryan talks (dB); between phrases it rises a
 # little, and with no talking it plays at a comfortable bed level.
 MUSIC_GAP_DB = min(max(float(_env("STUDIO_MUSIC_GAP_DB", "20")), 12.0), 30.0)

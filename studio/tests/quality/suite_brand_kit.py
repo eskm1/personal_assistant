@@ -511,6 +511,7 @@ def client(u):
 owner, team, nobody = client(uid), client(tid), client(None)
 ok(nobody.get("/api/brand-kit").status_code == 401 and nobody.post("/api/brand-kit/preview", json={}).status_code == 401,
    "signed out: nothing")
+settings.BRAND_KIT_TEAM = False   # STUDIO_BRAND_KIT_TEAM=0: Bryan alone (the default lets the team edit too)
 v = team.get("/api/brand-kit").json
 ok(v["editable"] is False and owner.get("/api/brand-kit").json["editable"] is True and v["preset"] == "site"
    and len(v["kind_names"]) == 5 and v["kind_names"][0]["name"] == "Know-how", "the team sees it, Bryan changes it; the five kinds of post")
@@ -520,6 +521,10 @@ r2_ = team.post("/api/brand-kit/font", data={"file": (io.BytesIO(woff2), "x.woff
 r3_ = team.post("/api/brand-kit/logo", data={"file": (io.BytesIO(LOGO.read_bytes()), "l.png")}, content_type="multipart/form-data")
 ok(r1_.status_code == r2_.status_code == r3_.status_code == 403 and "Only Bryan" in r1_.json["error"]
    and brand_kit.kit_file().read_text() == before, "the team's save, font and logo: refused, saying why")
+settings.BRAND_KIT_TEAM = True
+r = team.post("/api/brand-kit", json={"colours": {"key": BLUE}})
+ok(team.get("/api/brand-kit").json["editable"] is True and r.status_code == 200 and r.json["colours"]["key"] == BLUE,
+   "by default the team edits it too (Bryan, 2026-10-28: \"michelle can edit it too\")")
 r = owner.post("/api/brand-kit", json={"colours": {"key": RED}, "kinds": {"finished": {"colours": {"label": BLUE}}}})
 ok(r.status_code == 200 and r.json["colours"]["key"] == RED and r.json["resolved"]["finished"]["colours"]["label"] == BLUE,
    "Bryan saves; the page gets each kind's kit back")

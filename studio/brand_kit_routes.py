@@ -7,8 +7,8 @@ keep=, so nothing is rendered) and slides by the carousel's own page (carousel.p
 (not yet saved), with sample words. Each is written to Studio/BrandKit/previews/<hash>/ and the page shows it in a
 frame; its show(n) picks the moment (the hook, a callout, a card, the end card) or the slide.
 
-Everyone signed in can see the kit; only Bryan changes it (style is his call, studio/CLAUDE.md), unless
-STUDIO_BRAND_KIT_TEAM=1 lets the team too.
+Everyone signed in can see the kit and change it: Bryan and the team (Bryan, 2026-10-28: "michelle can edit it too").
+STUDIO_BRAND_KIT_TEAM=0 leaves it to Bryan alone.
 """
 import hashlib
 import json

@@ -1397,7 +1397,7 @@ carousel and slideshow Reel is drawn in, like a brand kit in Canva. Until it's c
 - Nothing changes until **Save**. New drafts use it. A draft keeps the kit it was made with: **Edit words** and
   Studio's own fixes keep its look; a send-back, a new edit and **Edit it again** use the kit of the day (Edit it
   again remakes a waiting draft in it). Removing an uploaded font keeps its file, so drafts made with it still render.
-- Bryan saves; the team can look (`STUDIO_BRAND_KIT_TEAM=1` lets them change it too). Kept on the Studio machine:
+- Bryan and Michelle can change it (`STUDIO_BRAND_KIT_TEAM=0` leaves it to Bryan alone). Kept on the Studio machine:
   `Studio\brand_kit.json`, fonts and logos in `Studio\BrandKit\` (`brand_kit.py`, `brand_kit_routes.py`). The
   planner's small slide previews take the saved slide colours from Studio's heartbeat. Drawn animations, the
   picture's Concept label and the DaVinci Resolve export's drawings keep Site Notes' own look for now.

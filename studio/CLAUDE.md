@@ -338,7 +338,7 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   byte-identical pages), `carousel.lay_out(kit=)`, slideshow slides/end card/backdrop. A draft keeps its kit
   (`edl["look"]["kit"]`, a carousel version's `"kit"`, a slideshow's `plan["reel_layout"]["look"]`); an unedited kit
   isn't stored. Drawn inserts (motion.py), the picture label and Resolve's drawings still use Site Notes' own look.
-  Bryan saves, team views (`STUDIO_BRAND_KIT_TEAM`). `tests/quality/suite_brand_kit.py`.
+  Bryan and the team edit it (Bryan, 2026-10-28; `STUDIO_BRAND_KIT_TEAM=0` = Bryan only). `tests/quality/suite_brand_kit.py`.
 - Photo carousels from OneDrive, built 2026-10-28 (the content lead's showcase brief, at Bryan's request: the long condo's
   six photo carousels and the 21 Finished homes ideas re-dated; not yet proven on the server or real OneDrive): a
   carousel job's payload `photos` {folder, files, cover} sets the slides from those OneDrive photos first
