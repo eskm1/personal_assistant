@@ -413,14 +413,17 @@ custom = old_seed.replace("## Notes from reviews", "- Bryan's own rule: always s
 pb.write_text(custom)
 done = playbook.migrate(pb)
 after = pb.read_text()
-ok(len(done) == 2 and "End on a complete sentence, then a short beat on the last shot and the Urban Makers end card" in after
+# playbook.SEED_ADDS (2026-10-28: Finished homes carry no offer) adds its line once under Story: three changes in all.
+added = [ln for ln in done if ln in [n for _, n in playbook.SEED_ADDS]]
+ok(len(done) == 2 + len(playbook.SEED_ADDS) and len(added) == len(playbook.SEED_ADDS) and "End on a complete sentence, then a short beat on the last shot and the Urban Makers end card" in after
    and "cut between sentences and ideas, keep the natural pauses inside a sentence; trim only long silences" in after,
    f"the two old seed lines are replaced ({len(done)})")
 ok("No intro cards, no long outros" not in after and "tight cuts" not in after, "the old wording is gone")
 ok("Bryan's own rule: always show the finished room." in after and "End right after the last word. (Bryan reworded this one)" in after
    and "- a note (x, 2026-10-01)" in after, "Bryan's own lines and his reworded one stay")
-ok(after.splitlines()[0:3] == custom.splitlines()[0:3] and len(after.splitlines()) == len(custom.splitlines()),
-   "nothing else moves")
+ok(after.splitlines()[0:3] == custom.splitlines()[0:3]
+   and len(after.splitlines()) == len(custom.splitlines()) + len(playbook.SEED_ADDS),
+   "nothing else moves (the added rule is the one new line)")
 ok(playbook.migrate(pb) == [] and pb.read_text() == after, "idempotent: a second run changes nothing")
 live = settings.PLAYBOOK
 live.write_text(old_seed); playbook._migrated = False
