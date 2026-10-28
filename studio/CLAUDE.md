@@ -313,7 +313,7 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   (`transcript_edit.py`: a word diff into `edl["corrections"]`, held in `edl["word_fixes"]`, `editor.edit` re-renders
   v+1 with the same cut, no Claude, $0, the read carried over; refuses a new sentence, >2 words added/cut, >40%
   changed). Remember this word adds the typed term to `Studio/glossary.txt` (`glossary.add`). `POST
-  /api/production/<id>/words`. `tests/quality/suite_transcript_edit.py`. Open: whether the team may tick Remember.
+  /api/production/<id>/words`. `tests/quality/suite_transcript_edit.py`. The team may tick Remember too (Bryan, 2026-10-28).
 - Reference library and taste report built 2026-10-19 (not yet proven against Instagram or real Claude):
   Import many (paste or CSV, dedupe by shortcode, `import_references()`), held until Bryan presses Analyse
   (all, or a stratified sample of 150), paced downloads with backoff and pauses (`ref_library.py`), carousels and
