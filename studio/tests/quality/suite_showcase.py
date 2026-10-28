@@ -145,6 +145,7 @@ local = cur.lastrowid
 conn.commit()
 CAPTION = "A long, narrow condo.\nStone top [check], steel base.\nLong table or round?\n#condorenovation"
 spec = {"folder": FOLDER, "files": ["Other 12", "11", "Other 1", "GIF 1"], "cover": "One long room, one long table."}
+spec_photos = dict(spec)
 api = FakeApi(jobs=[{"id": 1, "kind": "carousel", "state": "queued", "idea_id": 7001, "created_at": catalog.now(),
                      "payload": {"caption": CAPTION, "photos": spec}}],
               ideas=[{"id": 7001, "format": "carousel", "slides": [{"role": "cover", "heading": "Old words", "body": "x",
@@ -257,5 +258,119 @@ _, problems = showcase_batch.plan({"project": "x", "ideas": [{"title": "Kitchen"
 ok(any("both pick" in p for p in problems), "two entries picking one idea stops it")
 _, problems = showcase_batch.plan({"project": "x", "ideas": [{"title": "Kitchen", "date": "2 Nov"}]}, ideas, {})
 ok(any("YYYY-MM-DD" in p for p in problems), "a date that isn't a date stops it")
+
+# ── As written: Studio never rewrites a photos-only carousel ──────────────────
+print("== as written")
+import self_fix, draft_review
+row = dict(conn.execute("SELECT * FROM productions WHERE id = (SELECT production_id FROM ideas WHERE id = ?)", (local,)).fetchone())
+pid0 = row["id"]
+before_slides = json.loads(conn.execute("SELECT slides FROM productions WHERE id = ?", (pid0,)).fetchone()[0] or "null")
+ok(carousel.layout_of(row) == carousel.PHOTOS, "the showcase draft is photos only")
+ctx = draft_review.carousel_context(row, {"slides": plan["slides"], "pictures": []})
+ok("Photos only, by design" in ctx and "Never ask for words on a slide" in ctx and "editor_can_fix false" in ctx,
+   "Studio's read is told it's photos only by design, the ask in the caption")
+ok("[check]" in draft_review._CAROUSEL_SYSTEM and "never filled in or removed" in draft_review._CAROUSEL_SYSTEM
+   and "Never suggest adding an offer" in draft_review._CAROUSEL_SYSTEM, "and that a [check] and a new offer are never fixes")
+READ = {"kind": "carousel", "verdict": "Nearly ready: 2 things to fix", "scores": {"ask": "fix"}, "works": ["Calm photos"],
+        "fixes": [{"what": "Add an ask slide: Book a free consultation", "why": "No call to action.", "slide": None, "area": "ask",
+                   "when": "this_draft", "editor_can_fix": True,
+                   "action": {"type": "slide_text", "item": None, "field": "caption", "to": "Book a free consultation today!"}},
+                  {"what": "Fill in the stone type", "why": "A [check] is left.", "slide": None, "area": "claims",
+                   "when": "this_draft", "editor_can_fix": True,
+                   "action": {"type": "slide_text", "item": 1, "field": "heading", "to": "Granite"}}]}
+reads, patched = [], []
+real_read, real_patch, real_srev = draft_review.safe_run, carousel.patch, carousel.self_revise
+draft_review.safe_run = lambda c, p, cl=None, ref=None: (reads.append(p), json.loads(json.dumps(READ)))[1]
+carousel.patch = lambda *a, **k: (patched.append("patch"), (None, []))[1]
+carousel.self_revise = lambda *a, **k: patched.append("revise")
+conn.execute("UPDATE productions SET status = 'producing', review_version = version WHERE id = ?", (pid0,))
+conn.commit()
+out = self_fix.deliver(conn, pid0)
+draft_review.safe_run, carousel.patch, carousel.self_revise = real_read, real_patch, real_srev
+after = conn.execute("SELECT * FROM productions WHERE id = ?", (pid0,)).fetchone()
+hist = json.loads(after["self_fix"] or "{}")
+ok(reads == [pid0] and not patched and hist.get("rounds") == [] and hist.get("stopped") == "photos",
+   f"photos only: Studio reads it once and makes no fix round ({patched}, {hist.get('stopped')})")
+ok(after["caption"] == CAPTION and json.loads(after["slides"] or "null") == before_slides,
+   "its slides and caption stay exactly as written, [check] included")
+whys = [f.get("left_because", {}).get("text", "") for f in (json.loads(after["review"] or "{}").get("fixes") or [])]
+ok(whys and all("photos-only carousel" in w for w in whys), f"each fix the read found is left for Bryan, saying why ({whys[:1]})")
+real_current = carousel.current
+r, res = carousel.patch(conn, pid0, [{"n": 1, "action": {"type": "slide_text", "item": 1, "field": "heading", "to": "New words"}}], 1)
+ok(r is None and not res[0]["ok"] and "as written" in res[0]["why"], "a patch asked of it anyway changes nothing")
+try:
+    carousel.self_revise(conn, pid0, [], 1)
+    ok(False, "a rewrite asked of it anyway is refused")
+except RuntimeError as e:
+    ok("as written" in str(e), "a rewrite asked of it anyway is refused")
+
+# ── [check] and offers, in any carousel ───────────────────────────────────────
+print("== [check] and offers")
+g = carousel.guard_words
+old = "Stone top [check], steel base.\nLong table or round?"
+ok(g(old, "Stone top, steel base.\nLong table or round?")[0] == old, "a [check] removed: kept as it was")
+ok(g(old, "Stone top granite, steel base.\nLong table or round?")[0] == old, "a [check] filled in: kept as it was")
+ok(g(old, old.replace("[check]", "[CHECK]"))[0] == old.replace("[check]", "[CHECK]"), "the same [check] in other case is fine")
+ok(g(old, old + "\nBook a free consultation today!")[0] == old, "an offer the draft didn't have: kept as it was")
+ok(g(old, old.replace("round?", "round? Book a free consultation."), "Please add: book a free consultation")[0] != old,
+   "unless Bryan's own note asked for it")
+ok(g("Book a free consultation.", "Book a free consultation now.")[0] == "Book a free consultation now.",
+   "an offer the draft already had may be reworded")
+ok(g(old, "Stone top [check], steel base.\nRound or long?")[0] != old, "other words change as before")
+w = conn.execute("""INSERT INTO productions (title, brand, format, status, version, caption, plan, created_at, updated_at)
+                    VALUES ('Words', 'urban_makers', 'carousel', 'ready', 1, ?, ?, ?, ?)""",
+                 (old, json.dumps({"slides": []}), catalog.now(), catalog.now())).lastrowid
+conn.execute("UPDATE productions SET slides = ? WHERE id = ?", (json.dumps({"version": 1, "slides": [
+    {"key": "a", "role": "cover", "heading": "Stone [check: which stone]", "body": "", "image": {"source": "text"}},
+    {"key": "b", "role": "point", "heading": "Point", "body": "", "image": {"source": "text"}}], "files": []}), w))
+conn.commit()
+calls = []
+real_lay = carousel.lay_out
+carousel.lay_out = lambda c, sl, out_dir, **k: (calls.append(1), out_dir.mkdir(parents=True, exist_ok=True),
+                                                {"files": [str(ROOT / "cover_line.png")], "layout": [], "pictures": []})[2]
+_, res = carousel.patch(conn, w, [{"n": 1, "action": {"type": "slide_text", "item": None, "field": "caption", "to": "Stone top, steel base."}},
+                                  {"n": 2, "action": {"type": "slide_text", "item": 1, "field": "heading", "to": "Stone: granite"}},
+                                  {"n": 3, "action": {"type": "slide_text", "item": None, "field": "caption", "to": old + " Book a free consultation."}},
+                                  {"n": 4, "action": {"type": "slide_text", "item": 2, "field": "heading", "to": "A better point"}}], 1)
+carousel.lay_out = real_lay
+cap_now = conn.execute("SELECT caption FROM productions WHERE id = ?", (w,)).fetchone()[0]
+ok([x["ok"] for x in res] == [False, False, False, True] and "[check]" in res[0]["why"] and "[check]" in res[1]["why"]
+   and "offer" in res[2]["why"] and cap_now == old,
+   f"a words carousel's patches: a [check] removed or filled and a new offer refused, saying why; the rest made ({[x.get('why') for x in res]})")
+kept = carousel.photos_only([{"key": "a", "heading": "Cover [check]", "body": "", "image": {}}, {"key": "b", "heading": "", "body": "", "image": {}}],
+                            [{"key": "z", "heading": "Cover, better", "body": "More words", "image": {}}, {"key": "y", "heading": "Ask", "body": "Book now", "image": {}},
+                             {"key": "x", "heading": "Extra", "body": "", "image": {}}], cover_from_notes=True)
+ok(len(kept) == 2 and [k["key"] for k in kept] == ["a", "b"] and kept[0]["heading"] == "Cover [check]" and not kept[1]["heading"]
+   and not any(k["body"] for k in kept), "a revision of a photos-only carousel keeps its photos and order, no words added, the cover's [check] kept")
+
+# ── Made again from the drafts as written (--remake) ──────────────────────────
+print("== made again")
+api4 = FakeApi(jobs=[{"id": 9, "kind": "carousel", "state": "queued", "idea_id": 7001, "created_at": catalog.now(),
+                      "payload": {"caption": CAPTION, "photos": spec_photos, "remake": True}}],
+               ideas=[{"id": 7001, "format": "carousel", "slides": [], "caption": "x", "slide_layout": "photos"}])
+conn.execute("UPDATE productions SET status = 'ready', caption = 'Rewritten. Book a free consultation.' WHERE id = ?", (pid0,))
+conn.commit()
+cloud_sync.run_jobs(api4, conn, {7001: local})
+new_pid = conn.execute("SELECT production_id FROM ideas WHERE id = ?", (local,)).fetchone()[0]
+old_row = conn.execute("SELECT * FROM productions WHERE id = ?", (pid0,)).fetchone()
+new_row = conn.execute("SELECT * FROM productions WHERE id = ?", (new_pid,)).fetchone()
+ok(api4.jobs[0]["state"] == "done" and new_pid and new_pid != pid0, f"the carousel is made again ({api4.jobs[0].get('error')})")
+ok(old_row["status"] == "rejected" and old_row["archived_at"] and conn.execute(
+    "SELECT 1 FROM feedback WHERE target = 'production' AND target_id = ? AND body = ?", (pid0, showcase.REMAKE_NOTE)).fetchone(),
+   "the rewritten draft is archived, with a note saying why (its files kept)")
+ok(new_row["caption"] == CAPTION and len(json.loads(new_row["plan"])["slides"]) == 4 and carousel.layout_of(new_row) == carousel.PHOTOS,
+   "the new one is the drafts as written: the caption, the photos in order, photos only")
+conn.execute("UPDATE productions SET status = 'approved' WHERE id = ?", (new_pid,))
+conn.commit()
+api5 = FakeApi(jobs=[{"id": 10, "kind": "carousel", "state": "queued", "idea_id": 7001, "created_at": catalog.now(),
+                      "payload": {"caption": CAPTION, "photos": spec_photos, "remake": True}}],
+               ideas=[{"id": 7001, "format": "carousel", "slides": [], "caption": "x", "slide_layout": "photos"}])
+cloud_sync.run_jobs(api5, conn, {7001: local})
+ok(api5.jobs[0]["state"] == "failed" and "approved" in (api5.jobs[0].get("error") or "")
+   and conn.execute("SELECT status FROM productions WHERE id = ?", (new_pid,)).fetchone()[0] == "approved",
+   f"an approved draft is never made again ({api5.jobs[0].get('error')})")
+rows3, _ = showcase_batch.plan({**spec, "remake": True}, ideas, comments)
+ok(rows3[2]["make"] is not None and rows3[2]["make"]["files"] == ["Other 12", "11"], "--remake sends an idea already made too")
+
 
 finish()

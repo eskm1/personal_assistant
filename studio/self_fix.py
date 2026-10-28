@@ -253,6 +253,9 @@ def left_because(fix: dict, tries: list[dict], stopped: str | None, rounds: int,
     if mine:
         said = list(dict.fromkeys(t["outcome"] for t in mine if t.get("outcome")))[-2:]
         return {"kind": "tried", "text": "Studio tried and couldn't: " + ("; ".join(said) or "it was still there") + "."}
+    if stopped == "photos":
+        return {"kind": "yours", "text": "A photos-only carousel: Studio leaves its photos, cover line and caption as "
+                                         "written, so this one is yours."}
     if rounds <= 0:
         return {"kind": "stopped", "text": "Studio's own fixes are turned off." if settings.SELF_FIX_ROUNDS <= 0 else
                 "This version was made again from the same edit, so Studio only read it."}
@@ -303,6 +306,10 @@ def deliver(conn, production_id: int, client=None, find_track=None, rounds: int 
     best, best_row = review, row
     tries: list[dict] = []
     done, stopped = 0, None
+    if scope == "carousel":
+        import carousel
+        if carousel.layout_of(row) == carousel.PHOTOS:  # as written: Studio reads it, Bryan decides (the CTO, 2026-10-28)
+            rounds, stopped = 0, "photos"
     replan_usd = 0.05 if slides else _edit_usd(conn, production_id) if scope == "reel" else 0.15
     while best is not None:
         todo = [(n, f) for n, f in enumerate(best.get("fixes", []), 1) if f in fixable(best)]
@@ -311,7 +318,7 @@ def deliver(conn, production_id: int, client=None, find_track=None, rounds: int 
         if not plan:
             break  # nothing left Studio can still try
         if done >= rounds:
-            stopped = "rounds"
+            stopped = stopped or "rounds"
             break
         # Patches first (cheap, exact); what nothing smaller can fix, all together in one re-plan.
         how = "patch" if any(h == "patch" for _, _, h in plan) else "replan"

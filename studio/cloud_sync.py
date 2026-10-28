@@ -686,6 +686,10 @@ def run_jobs(api: Client, conn, idea_map: dict[int, int]) -> list[str]:
                 slides, layout = rows[0].get("slides"), rows[0].get("slide_layout")
                 if payload.get("photos"):  # photos named in a OneDrive folder (showcase.py): they become the slides
                     import showcase
+                    if payload.get("remake"):  # made again from the drafts as written: the old draft is archived first
+                        showcase.check_spec(payload["photos"])
+                        showcase.match(showcase.listing(payload["photos"]["folder"]), payload["photos"]["files"])
+                        showcase.retire(conn, local_id)
                     slides, layout = showcase.import_photos(api, payload["photos"]), carousel.PHOTOS
                     api.update("ideas", {"id": f"eq.{job['idea_id']}"},
                                {"slides": slides, **({"slide_layout": layout} if check_grid(api) else {})})

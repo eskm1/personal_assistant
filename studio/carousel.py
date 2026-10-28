@@ -176,6 +176,49 @@ def clean_slides(raw) -> list[dict]:
     return out
 
 
+# What Studio may never change in words it rewrites (the CTO, 2026-10-28, after six showcase drafts were rewritten):
+# a [check] / [check: ...] marker is the content lead's flag for Bryan to fill in, so it's never removed or filled;
+# and an offer the draft didn't have (a consultation, a discount, a deadline) is never added.
+CHECK = re.compile(r"\[check\b[^\]]*\]", re.I)
+OFFER = re.compile(r"\b(?:book (?:a|an|your|now)\b|free (?:consult\w*|quote|site visit|visit|design|estimate)|consult(?:ation)?s?\b|"
+                   r"discount\w*|promo(?:tion)?s?\b|\d+\s?% off|limited (?:time|slots?)|offer ends|enquire now|"
+                   r"(?:dm|whatsapp|message) us (?:for|to book))", re.I)
+
+
+def _marks(text: str) -> list[str]:
+    return sorted(m.lower() for m in CHECK.findall(text or ""))
+
+
+def _offers(text: str) -> set[str]:
+    return {re.sub(r"\s+", " ", m.lower()) for m in OFFER.findall(text or "")}
+
+
+def guard_words(old: str, new: str, allowed: str = "") -> tuple[str, str | None]:
+    """new, unless it drops or fills a [check] marker old has, or adds an offer old (or allowed, e.g. Bryan's own
+    note) doesn't have: then old, and why in plain words."""
+    if new == old:
+        return new, None
+    if _marks(new) != _marks(old):
+        return old, "it would have removed or filled in a [check] for Bryan"
+    if _offers(new) - _offers(old) - _offers(allowed):
+        return old, "it would have added an offer the draft didn't have"
+    return new, None
+
+
+def photos_only(old: list[dict], new: list[dict], cover_from_notes: bool = False) -> list[dict]:
+    """A photos-only carousel after a revision: the same photos in the same order, no words on any slide but the
+    cover line on slide 1, which changes only when Bryan's notes asked (cover_from_notes) and keeps its [check]s."""
+    kept = json.loads(json.dumps(old))
+    for s in kept:
+        s["body"] = ""
+    for s in kept[1:]:
+        s["heading"] = ""
+    if cover_from_notes and new:
+        line, _ = guard_words(old[0].get("heading", ""), _text(new[0].get("heading"), 120))
+        kept[0]["heading"] = line
+    return kept
+
+
 def plan_slides(raw_slides, current: list[dict], clips: dict[int, dict], new_concepts: bool = False,
                 finished: bool = False) -> list[dict]:
     """Claude's slides as stored slides (like _shared/slides.ts planSlides): one cover first,
@@ -744,6 +787,8 @@ def self_revise(conn, production_id: int, notes: list[dict], round_no: int, clie
     slides from the read's fixes (no new or redrawn concept pictures: those spend, so they're
     Bryan's call) and they're laid out again as the same version, in a folder of their own."""
     row = conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    if layout_of(row) == PHOTOS:  # self_fix.deliver doesn't ask; never rewrite one as written
+        raise RuntimeError("a photos-only carousel keeps its photos, cover line and caption as written")
     data = current(row)
     revision = revise(conn, dict(row), data["slides"], notes, client, own=True)
     slides = revision["slides"]
@@ -779,12 +824,20 @@ def patch(conn, production_id: int, actions: list[dict], round_no: int) -> tuple
     data = current(row)
     slides = json.loads(json.dumps(data["slides"]))
     caption, results = row["caption"], []
+    photos = layout_of(row) == PHOTOS
     for item in actions:
         a = item["action"]
         res = {"n": item["n"], "type": a.get("type")}
         to = re.sub(r"[ \t]+", " ", str(a.get("to") or "").replace("*", "")).strip()
         field, n = a.get("field"), a.get("item")
-        if a.get("type") != "slide_text":
+        old = caption if field == "caption" else (slides[n - 1].get(field, "") if field in SLIDE_FIELDS and isinstance(n, int)
+                                                    and 1 <= n <= len(slides) else "")
+        _, why = guard_words(old, to)
+        if photos:
+            res.update(ok=False, why="a photos-only carousel keeps its photos, cover line and caption as written")
+        elif why and to:
+            res.update(ok=False, why=why)
+        elif a.get("type") != "slide_text":
             res.update(ok=False, why="that needs the slides written again")
         elif field == "caption":
             if not to:
@@ -1106,6 +1159,22 @@ def revise(conn, production: dict, slides: list[dict], notes: list[dict], client
         else:
             n, k = key.split(".")
             new[int(n)][k] = text
+    # Never a [check] removed or filled, never an offer the draft didn't have (Bryan's own notes may ask for one).
+    asked = "" if own else " ".join(str(n.get("body") or "") for n in notes)
+    if caption:
+        caption, _ = guard_words(production.get("caption") or "", caption, asked)
+        if caption == (production.get("caption") or ""):
+            caption = ""
+    for n, s in enumerate(new):
+        before = slides[n] if n < len(slides) else {}
+        for k in ("heading", "body"):
+            if s.get(k):
+                s[k], _ = guard_words(before.get(k, "") if before.get("key") == s.get("key") else "", s[k], asked)
+    marks = [m for s in slides for k in ("heading", "body") for m in _marks(s.get(k, ""))]
+    if sorted(m for s in new for k in ("heading", "body") for m in _marks(s.get(k, ""))) != sorted(marks):
+        new = json.loads(json.dumps(slides))  # a slide's [check] went: the slides stay as they were
+    if layout_of(production) == PHOTOS:
+        new = photos_only(slides, new, cover_from_notes=not own)
     return {"slides": new, "caption": caption,
             "summary": _text(answer.get("summary"), 600),
             "notes_addressed": [{"note_id": a["note_id"], "how": _text(a.get("how"), 300), "kind": a.get("kind"),

@@ -344,7 +344,10 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   carousel job's payload `photos` {folder, files, cover} sets the slides from those OneDrive photos first
   (`showcase.py`; all found or nothing changes; the folder name never kept), the photo cover line now Instrument Serif
   400 50 px; `showcase_batch.py` (run on the server: it has OneDrive and the service key) re-dates/re-titles/re-captions, changes the "Grid" comment and
-  queues the carousel jobs; `batches/2026-11-showcases.json`. `tests/quality/suite_showcase.py`.
+  queues the carousel jobs (`--remake` makes one again, its waiting draft archived); `batches/2026-11-showcases.json`.
+  A photos-only carousel is never rewritten by Studio (read only, no fix rounds: `self_fix` stops "photos"); in any
+  carousel a `[check]` is never removed or filled and no offer the draft lacked is added (`carousel.guard_words`).
+  `tests/quality/suite_showcase.py`.
 - Reference library and taste report built 2026-10-19 (not yet proven against Instagram or real Claude):
   Import many (paste or CSV, dedupe by shortcode, `import_references()`), held until Bryan presses Analyse
   (all, or a stratified sample of 150), paced downloads with backoff and pauses (`ref_library.py`), carousels and

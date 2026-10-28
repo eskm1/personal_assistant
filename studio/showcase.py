@@ -23,6 +23,7 @@ import secrets
 import tempfile
 from pathlib import Path
 
+import catalog
 import onedrive
 import settings
 import slide_images
@@ -101,6 +102,34 @@ def match(entries: list[dict], files: list[str]) -> list[dict]:
             parts.append(f"more than one file for: {', '.join(doubled)}")
         raise ShowcaseError("Some photos weren't found (" + "; ".join(parts) + "). Nothing was changed.")
     return out
+
+
+REMAKE_NOTE = "Made again from the drafts as written (the photos-only carousel had been rewritten)"
+RETIRABLE = ("ready", "failed")
+
+
+def retire(conn, idea_id: int) -> int | None:
+    """Before a carousel is made again ("remake"): its draft, if it's waiting for review or failed, is rejected and
+    archived (Done > Archived, its files and history kept, a note saying why) and the idea is free to be made anew.
+    Returns the old production's id, None when the idea had none. Raises ShowcaseError when the draft is approved,
+    scheduled or still being made: those are never touched."""
+    row = conn.execute("SELECT production_id FROM ideas WHERE id = ?", (idea_id,)).fetchone()
+    pid = row["production_id"] if row else None
+    if not pid:
+        return None
+    old = conn.execute("SELECT id, status, version FROM productions WHERE id = ?", (pid,)).fetchone()
+    if old is not None and old["status"] not in RETIRABLE:
+        raise ShowcaseError(f"its draft is {old['status']}, so it isn't made again (only one waiting for review is)")
+    stamp = catalog.now()
+    with conn:
+        if old is not None:
+            conn.execute("""INSERT INTO feedback (target, target_id, version, body, status, created_at)
+                            VALUES ('production', ?, ?, ?, 'addressed', ?)""", (pid, old["version"], REMAKE_NOTE, stamp))
+            conn.execute("UPDATE productions SET status = 'rejected', archived_at = ?, updated_at = ? WHERE id = ?",
+                         (stamp, stamp, pid))
+        conn.execute("UPDATE ideas SET production_id = NULL, status = 'new' WHERE id = ?", (idea_id,))
+    log.info("Showcase: draft %s archived; its idea is made again from the drafts as written", pid)
+    return pid
 
 
 def listing(folder: str) -> list[dict]:

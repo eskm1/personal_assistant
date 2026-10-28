@@ -302,8 +302,10 @@ words. slide is the slide number it's about (1 = the cover), or null for the who
 caption. area is what it's about.
 {fixable}
 {actions}
-- An offer, price, discount, promotion or deadline that isn't in the listed offers is always a \
-fix (area ask). A place name (estate, condo, street, block, town), an address or a client's name \
+- A [check] or [check: ...] in a slide or the caption is a note for Bryan to fill in before it \
+posts: never a fix, never filled in or removed by you, and it never makes the spelling or claims score "fix".
+- Never suggest adding an offer (a consultation, a discount, a promotion, a deadline) the draft doesn't already \
+have; an offer, price, discount, promotion or deadline that isn't in the listed offers is always a fix (area ask). A place name (estate, condo, street, block, town), an address or a client's name \
 on a slide or in the caption is always a fix to remove it.
 - A slide marked "Concept" shows an AI concept picture, not real work. Its words must never say \
 it's a home Urban Makers built or a client's home (a fix, area picture), and a concept picture in \
@@ -335,6 +337,12 @@ def carousel_context(production: dict, data: dict) -> str:
     lines = [f"Post: {production['title']}, a carousel of {len(data['slides'])} slides, draft v{production['version']}.",
              "Kind of post: " + (f"{kind['label']} (its ask: {kind['ask']})" if kind else "not set"),
              "Slides (the words on each, and its picture):"]
+    if carousel.layout_of(production) == carousel.PHOTOS:
+        lines.append("Photos only, by design: every slide is a photo, slide 1 carries a small cover line, the other "
+                     "slides have no words and there is no closing slide; the ask is in the caption (a question to the "
+                     "reader is an ask). Never ask for words on a slide, an ask slide, fewer or other slides, or a "
+                     "different cover line; ask is \"good\" when the caption ends with a question or an invitation. "
+                     "Studio won't change this post: anything you find is for Bryan (editor_can_fix false).")
     for n, s in enumerate(data["slides"], 1):
         lines.append(f"  {n}. [{s['role']}] {s['heading']}" + (f" | {s['body']}" if s.get("body") else "")
                      + f" | picture: {carousel.picture_text(s['image'])}")

@@ -26,6 +26,8 @@ spec.json (batches/ holds them; a folder that names a place is passed with --fol
   idea in the project and no idea twice, or nothing changes.
 - date and title: the posting date and the title, written "Mon 2 Nov · One long room, one long table".
 - grid: the idea's grid comment (a comment starting "Grid"), changed in place, or added.
+- --remake: an idea already made is made again from the spec (its draft waiting for review is archived first, with
+  a note; an approved or scheduled one is never touched).
 - caption, photos, cover: with photos, the carousel is queued like "Make this" (a carousel job): Studio fetches
   the photos from the folder in that order (showcase.py: "11" at the folder's top, "Other 12" a picture called 12
   in the subfolder starting "Other"), slide 1 gets the cover line, and the draft lands in Review. Nothing is posted
@@ -81,8 +83,8 @@ def plan(spec: dict, ideas: list[dict], comments: dict[int, list[dict]]) -> tupl
                 problems.append(f"entry {n}: {err}")
             if idea.get("format") != "carousel":
                 problems.append(f"entry {n}: idea {idea['id']} isn't a carousel")
-            if idea.get("status") == "made" or idea.get("production"):
-                make = None  # already made: left as it is
+            if (idea.get("status") == "made" or idea.get("production")) and not spec.get("remake"):
+                make = None  # already made: left as it is (--remake makes it again)
         grid = [c for c in comments.get(idea["id"], []) if GRID.match(c["body"] or "")]
         out.append({"n": n, "idea": idea, "sets": sets, "grid": e.get("grid"), "grid_old": grid, "make": make})
     return out, problems
@@ -123,10 +125,13 @@ def main() -> int:
     ap.add_argument("--folder", help="the OneDrive folder of the photos, its full path (instead of the spec's; it may "
                                      "name a place)")
     ap.add_argument("--no-photo-check", action="store_true", help="don't list OneDrive first (Studio still checks)")
+    ap.add_argument("--remake", action="store_true", help="make the carousels again even if made: each draft waiting "
+                                                          "for review is archived and made from the spec as written")
     args = ap.parse_args()
     spec = json.loads(open(args.spec, encoding="utf-8").read())
     if args.folder:
         spec["folder"] = args.folder
+    spec["remake"] = args.remake
     api = cloud_sync.Client()
     projects = [p for p in api.select("projects", {"select": "id,name"}) if norm(p["name"]) == norm(spec["project"])]
     if len(projects) != 1:
@@ -146,7 +151,7 @@ def main() -> int:
         print(f"#{i['id']}: {i['title']!r} -> {r['sets']['title']!r}, posting {r['sets']['post_on']}"
               f"{', caption replaced' if 'caption' in r['sets'] else ''}"
               f"{', grid comment ' + ('changed' if r['grid_old'] else 'added') if r['grid'] else ''}"
-              f"{', then made from ' + str(len(r['make']['files'])) + ' photos' if r['make'] else ''}")
+              f"{(', then made again from ' if r['idea'].get('production') else ', then made from ') + str(len(r['make']['files'])) + ' photos' if r['make'] else ''}")
     left = [i for i in ideas if i["id"] not in {r["idea"]["id"] for r in rows}]
     if left:
         print(f"Not in the spec (left as they are): {', '.join('#' + str(i['id']) for i in left)}")
@@ -172,7 +177,8 @@ def main() -> int:
         if r["make"]:
             api.insert("jobs", {"kind": "carousel", "runner": "laptop", "state": "queued", "idea_id": r["idea"]["id"],
                                 "payload": {"caption": r["sets"].get("caption", r["idea"].get("caption") or ""),
-                                            "photos": r["make"]}}, returning=False)
+                                            "photos": r["make"], **({"remake": True} if spec.get("remake") else {})}},
+                       returning=False)
             queued += 1
     print(f"\nDone: {len(rows)} ideas changed, {queued} carousels sent to Studio. They land in Review in a few minutes.")
     return 0
