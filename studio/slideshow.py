@@ -151,10 +151,11 @@ def folder(production_id: int) -> Path:
     return RENDERS / f"slideshow_{production_id}"
 
 
-def _own_slides(conn, production_id: int, plan: dict, layout: bool = True) -> list[dict]:
+def _own_slides(conn, production_id: int, plan: dict, layout: bool = True, look: dict | None = None) -> list[dict]:
     """The slides with their PNGs in this production's own folder (copied there the first time, or after a
     Start over made it from another production): the carousel's own PNG (carousel_NN.png) and, once laid out
-    for the Reel (layout: reel_layout, the editor's first run), NN.png. The plan is saved with the new paths."""
+    for the Reel (layout: reel_layout, the editor's first run, in look: the Reel's look and brand kit, kept in
+    plan["reel_layout"]["look"] for its end card), NN.png. The plan is saved with the new paths."""
     out_dir = folder(production_id)
     slides, changed = [], False
     for s in plan.get("slides") or []:
@@ -178,8 +179,8 @@ def _own_slides(conn, production_id: int, plan: dict, layout: bool = True) -> li
     if len(slides) < 2:
         raise RuntimeError("this slideshow has fewer than 2 slides")
     if layout and not isinstance(plan.get("reel_layout"), dict):
-        slides, fell = reel_layout(conn, out_dir, slides)
-        plan["reel_layout"] = {"fallback": fell}
+        slides, fell = reel_layout(conn, out_dir, slides, (look or {}).get("kit"))
+        plan["reel_layout"] = {"fallback": fell, **({"look": look} if look else {})}
         changed = True
     if changed:
         plan["slides"] = slides
@@ -188,17 +189,19 @@ def _own_slides(conn, production_id: int, plan: dict, layout: bool = True) -> li
     return slides
 
 
-def reel_layout(conn, out_dir: Path, slides: list[dict]) -> tuple[list[dict], list[int]]:
+def reel_layout(conn, out_dir: Path, slides: list[dict], kit: dict | None = None) -> tuple[list[dict], list[int]]:
     """The slides laid out again for a Reel (carousel.lay_out, reel=True: no "Swipe" cue or "2/6" counter; the
     Urban Makers mark stays), from the same words and pictures (concept pictures from their cache, so nothing is
-    drawn or paid again). A slide whose picture can't be had again keeps the carousel's own PNG, and if the
-    layout fails they all do. Returns the slides and the numbers of those that kept the carousel's."""
+    drawn or paid again), in the brand kit (None: the look's own). A slide whose picture can't be had again keeps
+    the carousel's own PNG, and if the layout fails they all do. Returns the slides and the numbers of those that
+    kept the carousel's."""
     import carousel
     work = (out_dir / "reel").resolve()
     try:
         made = carousel.lay_out(conn, [{"role": s.get("role") if s.get("role") in carousel.ROLES else "point",
                                         "heading": s.get("heading") or "", "body": s.get("body") or "",
-                                        "image": carousel.clean_image(s.get("image"))} for s in slides], work, reel=True)
+                                        "image": carousel.clean_image(s.get("image"))} for s in slides], work, reel=True,
+                                kit=kit)
     except Exception as e:  # the carousel's own slides beat no Reel
         log.warning("Couldn't lay the slides out for the Reel (%s: %s); the carousel's own are used", type(e).__name__, e)
         shutil.rmtree(work, ignore_errors=True)
@@ -386,8 +389,8 @@ html,body{margin:0;width:1080px;height:1920px;overflow:hidden;background:var(--c
 """ % {"x": SLIDE_X, "y": SLIDE_Y, "w": SLIDE_W, "h": SLIDE_H}
 
 
-def page(shown: list[dict], total: float, end: dict | None, push: bool, style: str | None = None
-         ) -> tuple[list[str], list[str]]:
+def page(shown: list[dict], total: float, end: dict | None, push: bool, style: str | None = None,
+         kit: dict | None = None) -> tuple[list[str], list[str]]:
     """The composition's clips and GSAP lines: the backdrop, each slide (the first one up from the first frame,
     the rest crossfading in over the one before; slowly pushed in, the next eased back out, and so on), and the
     end card (in the Reel's look, style)."""
@@ -407,28 +410,34 @@ def page(shown: list[dict], total: float, end: dict | None, push: bool, style: s
             anims.append(f"tl.fromTo('#s{k} .frame',{{scale:{a}}},{{scale:{b},duration:{span:.3f},"
                          f"ease:'none'}},{start:.3f});")
     if end:
-        markup, anim = editor.end_card_html(end, style)
+        markup, anim = editor.end_card_html(end, style, kit)
         clips.append(markup)
         anims.append(anim)
     return clips, anims
 
 
 def compose(shown: list[dict], total: float, end: dict | None, out: Path, accent: str, font: str | None = None,
-            push: bool = True, style: str | None = None) -> None:
+            push: bool = True, style: str | None = None, kit: dict | None = None) -> None:
     """The slides and the end card as one 1080x1920 video (HyperFrames, headless Chrome), no sound. style: the
-    Reel's look (editor.title_style), for its end card (Site Notes': over the last slide, Archivo)."""
+    Reel's look (editor.title_style), for its end card (Site Notes': over the last slide, Archivo); kit: its brand
+    kit (the end card's colours, font and logo; the backdrop in the slides' colours once they're changed)."""
     style = editor.title_style(style)
     site = style == "site"
-    with tempfile.TemporaryDirectory(prefix="studio-slideshow-") as tmp:
+    kit = kit if kit and kit.get("preset") == style else None
+    import brand_kit
+    backdrop = brand_kit.backdrop_vars(kit)
+    with tempfile.TemporaryDirectory(prefix="studio-slideshow-") as tmp, brand_kit.measuring(kit):
         project = Path(tmp) / "slideshow"
         project.mkdir()
-        css = editor._overlay_assets(project, font, serif=bool(end) and not site, site=site and bool(end))
+        css = editor._overlay_assets(project, font, serif=bool(end) and not site, site=site and bool(end), kit=kit)
         for k, s in enumerate(shown):
             shutil.copy(s["file"], project / f"s{k:02d}.png")
-        clips, anims = page(shown, total, end, push, style)
+        clips, anims = page(shown, total, end, push, style, kit)
         (project / "index.html").write_text(
             '<!doctype html><html><head><meta charset="utf-8"><script src="gsap.min.js"></script>'
-            f"<style>{''.join(css)}{editor._theme_css(accent, style)}{_CSS}{editor.end_css(style) if end else ''}</style>"
+            f"<style>{''.join(css)}{editor._theme_css(accent, style, kit)}"
+            + (":root{" + ";".join(f"--{k}:{v}" for k, v in backdrop.items()) + "}" if backdrop else "")
+            + f"{_CSS}{editor.kit_css(editor.end_css(style), style, kit) if end else ''}</style>"
             f'</head><body><div id="slideshow" data-composition-id="slideshow" data-start="0" '
             f'data-duration="{total:.3f}" data-width="{W}" data-height="{H}">' + "".join(clips) + "</div>"
             "<script>const tl=gsap.timeline({paused:true});" + "".join(anims) +
@@ -518,7 +527,9 @@ def _render(conn, production: dict, plan: dict, slides: list[dict], state: dict,
     total = round(close_at + (card["seconds"] if card else 0.0), 3)
     end = {"start": close_at, "duration": card["seconds"], "ask": card["ask"], "handle": card["handle"]} if card else None
     push = settings.SLIDESHOW_PUSH_IN
-    look = editor.look_now()
+    # The look and brand kit the slides were laid out in (run), so the end card matches them.
+    look = (plan.get("reel_layout") or {}).get("look") or editor.look_now(
+        carousel_kind(conn, production), production.get("brand") or "urban_makers")
     music_file, music_info = _music(conn, production, plan, state, total, find_track, keep_music, ref)
     checks = [{"did": f"slide {s['n']} has a lot of words for a Reel: it's up for the longest a slide gets "
                       f"({MAX_SECONDS:.0f}s)", "counted": False}
@@ -532,7 +543,7 @@ def _render(conn, production: dict, plan: dict, slides: list[dict], state: dict,
     with tempfile.TemporaryDirectory(prefix="studio-slides-") as tmp:
         work = Path(tmp)
         compose(shown, total, end, work / "slides.mp4", editor.ACCENT.get(production["brand"], editor.ACCENT["urban_makers"]),
-                font=look["caption_font"], push=push, style=look["titles"])
+                font=look["caption_font"], push=push, style=look["titles"], kit=look.get("kit"))
         _with_silence(work / "slides.mp4", work / "cut.mp4", total)
         if music_file:
             sound = editor.mix_final(work / "cut.mp4", None, music_file, state["music"]["volume_db"], total, final)
@@ -573,6 +584,15 @@ def _render(conn, production: dict, plan: dict, slides: list[dict], state: dict,
     return final
 
 
+def carousel_kind(conn, production: dict) -> str | None:
+    """The post's kind now (its idea's; it can change in the planner after it's made), for its brand kit."""
+    import carousel
+    try:
+        return carousel.post_type(conn, production)
+    except Exception:
+        return json.loads(production.get("plan") or "{}").get("post_type")
+
+
 def _row(conn, production_id: int) -> dict:
     row = conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
     if row is None:
@@ -589,7 +609,12 @@ def run(conn, production_id: int, client=None, find_track=None) -> Path:
     production = _row(conn, production_id)
     was = production["status"]
     plan = json.loads(production["plan"] or "{}")
-    slides = _own_slides(conn, production_id, plan)
+    # A new draft (not one of Studio's own fix rounds) is in today's look and brand kit: slides laid out in an older
+    # kit are laid out again (cheap: no picture is drawn again).
+    look = editor.look_now(carousel_kind(conn, production), production.get("brand") or "urban_makers")
+    if isinstance(plan.get("reel_layout"), dict) and (plan["reel_layout"].get("look") or {}).get("kit") != look.get("kit"):
+        plan.pop("reel_layout")
+    slides = _own_slides(conn, production_id, plan, look=look)
     catalog.set_production_status(conn, production_id, "producing")
     notes = [dict(r) for r in conn.execute(
         "SELECT * FROM feedback WHERE target = 'production' AND target_id = ? AND status = 'open' ORDER BY id",

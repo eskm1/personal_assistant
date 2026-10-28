@@ -327,6 +327,18 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   v+1 with the same cut, no Claude, $0, the read carried over; refuses a new sentence, >2 words added/cut, >40%
   changed). Remember this word adds the typed term to `Studio/glossary.txt` (`glossary.add`). `POST
   /api/production/<id>/words`. `tests/quality/suite_transcript_edit.py`. The team may tick Remember too (Bryan, 2026-10-28).
+- Brand kit, built 2026-10-28 (Bryan, 2026-10-28: "introduce fonts, colour scheme as part of the brand design kit ...
+  similar to how canva does it ... tweak based on content type"; he said "build"), not yet proven on the server:
+  `brand_kit.py` (Studio/brand_kit.json, uploads in Studio/BrandKit/; presets site/gallery/classic = today's looks;
+  colour roles text/label/key/key_ink/end and slide_bg/slide_heading/slide_body/slide_accent/slide_end; font roles
+  titles/captions/slide_headings/slide_text; per kind of post overrides; WCAG 4.5:1 and missing-bold warnings; fonts
+  checked from their bytes with Pillow, logo PNG re-saved), `brand_kit_routes.py` (`/api/brand-kit*`, the live
+  preview built from the real overlay/carousel pages), Review's More > Brand kit (`web/brandkit.js`/`.css`, lazy).
+  Renders: `editor.render_overlay(kit=)` (only what differs from the look's own is changed: an unedited kit draws
+  byte-identical pages), `carousel.lay_out(kit=)`, slideshow slides/end card/backdrop. A draft keeps its kit
+  (`edl["look"]["kit"]`, a carousel version's `"kit"`, a slideshow's `plan["reel_layout"]["look"]`); an unedited kit
+  isn't stored. Drawn inserts (motion.py), the picture label and Resolve's drawings still use Site Notes' own look.
+  Bryan saves, team views (`STUDIO_BRAND_KIT_TEAM`). `tests/quality/suite_brand_kit.py`.
 - Photo carousels from OneDrive, built 2026-10-28 (the content lead's showcase brief, at Bryan's request: the long condo's
   six photo carousels and the 21 Finished homes ideas re-dated; not yet proven on the server or real OneDrive): a
   carousel job's payload `photos` {folder, files, cover} sets the slides from those OneDrive photos first

@@ -309,7 +309,7 @@ def build(conn, production_id: int) -> Path:
                "handle": card.get("handle", "")} if card else None
         chunks = editor.caption_chunks(editor.timeline(cuts, clips), close_at)
         accent = editor.ACCENT.get(production["brand"], "#ff4d6d")
-        look = editor.draft_look(edl)  # the draft's own titles and caption font
+        look = editor.draft_look(edl)  # the draft's own titles, caption font and brand kit
         if look["titles"] in ("gallery", "site"):
             chunks = editor.lit_captions(editor.key_word_captions(chunks, edl.get("key_words") or []), edl.get("bright"))
             if pip.get("spans"):
@@ -338,12 +338,12 @@ def build(conn, production_id: int) -> Path:
         if edl.get("hook_text", "").strip() or cards or end:
             editor.render_overlay([], edl.get("hook_text", ""), whole, work / "graphics.mov",
                                   cards, accent, fmt="mov", font=look["caption_font"], style=look["titles"],
-                                  hook_italic=edl.get("hook_italic"), end=end)
+                                  hook_italic=edl.get("hook_italic"), end=end, kit=look.get("kit"))
             layers.append(("Hook, graphics and end card" if end else "Hook and graphics", work / "graphics.mov", lane))
         if chunks:
             paper = [(g["start"], g["start"] + g["duration"]) for g in scenes if g.get("look") == "cutaway"]
             editor.render_overlay(chunks, "", whole, work / "captions.mov", accent=accent, fmt="mov", paper=paper,
-                                  font=look["caption_font"], style=look["titles"],
+                                  font=look["caption_font"], style=look["titles"], kit=look.get("kit"),
                                   **({"pip": {"side": pip["side"], "spans": pip["spans"]}} if pip.get("spans") else {}))
             layers.append(("Captions", work / "captions.mov", lane + 1))
             (work / "captions.srt").write_text(srt(chunks), encoding="utf-8")

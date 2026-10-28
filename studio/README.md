@@ -1369,6 +1369,39 @@ access**: the key Studio's own weekly review uses to read `GET /api/report/weekl
 finished, median time, where people stopped), dead and rage clicks, cancelled dialogs, errors, flags, questions to
 Ask Studio and "did anyone use what we built last week?" (`usage_report.FEATURES`). **New key** stops the old one at once.
 
+## 19. Brand kit: fonts, colours and logo
+
+**More > Brand kit** (in Review; the planner's More links to it) holds the fonts, colours and logo every Reel,
+carousel and slideshow Reel is drawn in, like a brand kit in Canva. Until it's changed it is exactly today's look
+(Site Notes for Reels, the green and amber slides), so nothing changes by itself.
+
+- **Start from**: Site Notes (one bold font, words on dark labels), Gallery (a serif title, captions that glow) or
+  Classic (boxed titles and captions). Picking one puts its colours and fonts back.
+- **Colours**, by what they colour. Reels: **Words** (captions and the words on labels and cards), **Labels**
+  (behind the hook, callouts and cards), **Key word** (the key word, callout labels, the handle), **Words on key
+  colour**, **End card** (the shade over the last frame). Carousels: **Background**, **Headings**, **Body**,
+  **Accent** (the bar, tags, Swipe, the ask) and **Last slide**. Pick a colour or type its #code.
+- **Fonts**: Reels' **Titles** and **Captions**, carousels' **Headings** and **Body**. Pick one of Studio's fonts,
+  or add your own: drop a .ttf, .otf or .woff2 (up to 3 MB) on **Add a font**. Studio reads the file itself (never
+  trusting its name) and refuses anything that isn't a font with Latin letters. Add each weight you have; titles
+  need a bold one.
+- **Logo**: a PNG (a see-through background works best) in place of the Urban Makers mark on the end card and the
+  slides. **Use the Urban Makers mark** goes back.
+- **Kit for** a kind of post (Know-how, Ideas, On site, Finished homes, Work with us): change a colour or font for
+  that kind only; everything else follows the main kit. **Use the main kit's** undoes one.
+- The **preview** is the real page each render uses, in the kit as you edit it: a Reel frame (**Title**,
+  **Callout**, **Card**, **End**; on a phone one button steps through them) and a slide (**Cover**, **Point**,
+  **Last**). On a phone it stays at the top while you scroll.
+- **Check these** says when words are hard to read (under 4.5 to 1 on what they sit on, as WCAG measures it) or a
+  font has no bold the look needs (Studio then uses the look's own font, and says which).
+- Nothing changes until **Save**. New drafts use it. A draft keeps the kit it was made with: **Edit words** and
+  Studio's own fixes keep its look; a send-back, a new edit and **Edit it again** use the kit of the day (Edit it
+  again remakes a waiting draft in it). Removing an uploaded font keeps its file, so drafts made with it still render.
+- Bryan saves; the team can look (`STUDIO_BRAND_KIT_TEAM=1` lets them change it too). Kept on the Studio machine:
+  `Studio\brand_kit.json`, fonts and logos in `Studio\BrandKit\` (`brand_kit.py`, `brand_kit_routes.py`). The
+  planner's small slide previews take the saved slide colours from Studio's heartbeat. Drawn animations, the
+  picture's Concept label and the DaVinci Resolve export's drawings keep Site Notes' own look for now.
+
 ## Day to day
 
 **Updates install themselves.** Every 10 minutes, when Studio is idle (nothing uploading,

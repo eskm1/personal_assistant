@@ -71,6 +71,8 @@ FEATURES = [
      "events": [("view", r"^insights$"), ("click", r"^#pr-insights$"), ("action", r"^insights_(memo|all)$")]},
     {"key": "grid", "name": "The profile grid (Plan > More > Grid)", "shipped": "2026-10-28",
      "events": [("view", r"^grid$"), ("action", r"^grid_panel$")]},
+    {"key": "brand_kit", "name": "The brand kit (More > Brand kit: fonts, colours, logo, per kind)", "shipped": "2026-10-28",
+     "events": [("view", r"^brand_kit$"), ("action", r"^brand_kit_(saved|font_added|logo|kind)$")]},
     {"key": "edit_words", "name": "Edit words (correct the transcript, Fix captions)", "shipped": "2026-10-27",
      "events": [("click", r"^#words-(edit|fix)\b"), ("action", r"^words_(edit|fixed)$")]},
     {"key": "grid_order", "name": "Drag to reorder the grid, Save this order", "shipped": "2026-10-28",

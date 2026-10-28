@@ -575,7 +575,14 @@ def shown(edl: dict, total: float) -> list[dict]:
     {n (its number in the read, None for the hook), kind, style, start, end, text, box (None when
     it fills the screen: a card, a full-screen drawing, the end card; Site Notes' card is a panel or labels over
     the footage, so it has its box), g (the graphic)}; on a slideshow
-    Reel each slide too (kind "slide", n None, slide: its number)."""
+    Reel each slide too (kind "slide", n None, slide: its number). Site Notes' boxes are measured in the draft's
+    own titles font (its brand kit)."""
+    import brand_kit
+    with brand_kit.measuring(editor.draft_look(edl).get("kit")):
+        return _shown(edl, total)
+
+
+def _shown(edl: dict, total: float) -> list[dict]:
     look = editor.draft_look(edl)["titles"]
     close = edl.get("close") or {}
     card = close.get("card")

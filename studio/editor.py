@@ -24,7 +24,8 @@ The editor (phase 5): turns a planned production into a draft Reel.
      (STUDIO_TITLE_STYLE): site, Bryan's pick of 2026-10-22 (Site Notes: one bold font, words on
      dark labels, a key word now and then in brass, cards as a dark panel over the footage), gallery
      (a serif title with one italic word, captions glow, a key word in the serif italic), or the
-     classic first look. A draft keeps the look it was made in (edl["look"]).
+     classic first look. Colours, fonts and the logo come from the brand kit (brand_kit.py; until it's
+     edited, exactly these looks). A draft keeps the look it was made in (edl["look"], with its kit).
      Drawn inserts (STUDIO_EDIT_SCENES): where Bryan explains something the footage doesn't
      show, or a shot is missing, Claude may place a scene from the motion library (motion.py);
      Studio checks it (place_scenes: the library's rules, timing to his words, how many, a
@@ -56,6 +57,7 @@ from pathlib import Path
 
 import anthropic
 
+import brand_kit
 import catalog
 import extract
 import framing
@@ -1738,21 +1740,36 @@ def title_style(name: str | None = None) -> str:
     return key
 
 
-def look_now() -> dict:
-    """The look a new draft is made in, kept in its edit plan (edl["look"]). Site Notes has one font
-    for everything (Archivo), whatever STUDIO_CAPTION_FONT says."""
-    titles = title_style()
-    return {"titles": titles, "caption_font": TITLE_STYLES[titles].get("font") or _font_key()}
+def look_now(kind: str | None = None, brand: str = "urban_makers") -> dict:
+    """The look a new draft is made in, kept in its edit plan (edl["look"]): the brand kit's look and, once the
+    kit differs from that look's own values, the kit for this kind of post ("kit": brand_kit.resolve, a snapshot).
+    Site Notes has one font for everything (Archivo, or the kit's), whatever STUDIO_CAPTION_FONT says."""
+    return look_of_kit(brand_kit.resolve(kind, brand))
+
+
+def look_of_kit(kit: dict | None) -> dict:
+    """The look for a brand kit snapshot (None: the settings' look). An unedited kit isn't kept: a draft without
+    one is drawn in its look's own values, the same thing."""
+    titles = title_style(kit["preset"] if kit else None)
+    font = (kit or {}).get("fonts", {}).get("captions")
+    look = {"titles": titles, "caption_font": TITLE_STYLES[titles].get("font") or _font_key(
+        font if font in CAPTION_FONTS else None)}
+    if kit and not brand_kit.is_default(kit):
+        look["kit"] = kit
+    return look
 
 
 def draft_look(edl: dict) -> dict:
-    """The look a draft was made in, so a re-render or its Resolve project doesn't change it. Drafts
+    """The look a draft was made in, so a re-render or its Resolve project doesn't change it: with its brand kit
+    when it was made with an edited one (a draft without was drawn in the look's own values). Drafts
     from before the look was kept were classic, in the caption font of the day (Figtree, the old
     default, unless another was set)."""
     look = edl.get("look") or {}
     if look.get("titles"):
         titles = title_style(look["titles"])
-        return {"titles": titles, "caption_font": TITLE_STYLES[titles].get("font") or _font_key(look.get("caption_font"))}
+        kit = look.get("kit")
+        return {"titles": titles, "caption_font": TITLE_STYLES[titles].get("font") or _font_key(look.get("caption_font")),
+                **({"kit": kit} if isinstance(kit, dict) and kit.get("preset") == titles else {})}
     old = settings.CAPTION_FONT if settings.CAPTION_FONT in CAPTION_FONTS and settings.CAPTION_FONT != "inter" else "figtree"
     return {"titles": "classic", "caption_font": old}
 
@@ -2022,7 +2039,7 @@ def _end_card_html(card: dict) -> tuple[str, str]:
     px = 92 if len(text) <= 22 else 76 if len(text) <= 36 else 64
     handle = card.get("handle") or ""
     markup = (f'<div id="endcard" class="endcard clip" data-start="{s:.3f}" data-duration="{d:.3f}" data-track-index="40">'
-              f'<div class="bg"></div><div class="inner"><div class="mk">{motion.mark_svg()}</div>'
+              f'<div class="bg"></div><div class="inner"><div class="mk">{card.get("mark") or motion.mark_svg()}</div>'
               f'<h2 style="font-size:{px}px">{_italic_html(text, italic, masks=True)}</h2><div class="rule"></div>'
               + (f'<div class="hd">{html.escape(handle)}</div>' if handle else "") + "</div></div>")
     anim = (f"tl.from('#endcard',{{opacity:0,duration:.45,ease:'power1.out'}},{s:.3f});"
@@ -2049,7 +2066,6 @@ SITE_LABELS = {"lb": (SITE_HOOK_PX, "800", -0.015, (10, 24, 18, 24)), "s": (50, 
                "k": (34, "700", 0.12, (10, 16, 10, 16))}
 SITE_GAP = 12             # between two labels of a stack
 _PANEL_W = W - 2 * 64 - 88  # the words' width inside a panel (64 px each side, 44 px padding)
-_SITE_MEASURE = {}
 
 _SITE_CSS = """
 .cap,.lbs,.panel{font-family:"Archivo","Noto Sans CJK SC","Noto Sans SC","Microsoft YaHei",sans-serif;
@@ -2115,11 +2131,8 @@ def _site_width(text: str, px: float, weight: str = "800", track: float = 0.0) -
     it). Chinese is a square a character (it comes from the system's CJK font)."""
     cjk = len(_CJK.findall(text))
     rest = _CJK.sub("", text)
-    try:
-        if weight not in _SITE_MEASURE:
-            from PIL import ImageFont
-            _SITE_MEASURE[weight] = ImageFont.truetype(str(SITE_FONTS[weight]), 200)
-        width = _SITE_MEASURE[weight].getlength(rest) * px / 200
+    try:  # in the draft's own titles font while a render or a measure sets it (brand_kit.measuring), else Archivo
+        width = brand_kit.measure_font(weight, SITE_FONTS[weight]).getlength(rest) * px / 200
     except Exception:
         width = len(rest) * 0.56 * px
     return width + cjk * px + track * px * len(text)
@@ -2375,7 +2388,7 @@ def _site_end_html(card: dict) -> tuple[str, str]:
         h2 += f'<span class="ln"><span>{_italic_html(x, word)}</span></span>'
     handle = card.get("handle") or ""
     markup = (f'<div id="endcard" class="endcard clip" data-start="{s:.3f}" data-duration="{d:.3f}" data-track-index="40">'
-              f'<div class="shade"></div><div class="inner"><div class="mk">{motion.mark_svg()}</div>'
+              f'<div class="shade"></div><div class="inner"><div class="mk">{card.get("mark") or motion.mark_svg()}</div>'
               f'<h2 style="font-size:{px}px">{h2}</h2>'
               + (f'<span class="hd">{html.escape(handle)}</span>' if handle else "") + "</div></div>")
     anim = (f"tl.from('#endcard .shade',{{opacity:0,duration:.45,ease:'power1.out'}},{s:.3f});"
@@ -2390,9 +2403,33 @@ def end_css(style: str | None = None) -> str:
     return _SITE_END_CSS if title_style(style) == "site" else _END_CSS
 
 
-def end_card_html(card: dict, style: str | None = None) -> tuple[str, str]:
-    """The end card's markup and animation in a look (end_css)."""
+def end_card_html(card: dict, style: str | None = None, kit: dict | None = None) -> tuple[str, str]:
+    """The end card's markup and animation in a look (end_css); the brand kit's logo in place of the mark when it
+    has one (_overlay_assets copies it next to the page as logo.png)."""
+    if brand_kit.logo_path(kit):
+        card = {**card, "mark": '<img class="logo" src="logo.png" alt="">'}
     return _site_end_html(card) if title_style(style) == "site" else _end_card_html(card)
+
+
+def kit_css(css: str, style: str, kit: dict | None) -> str:
+    """A look's styles (_SITE_CSS and its end card's, or another look's) in the brand kit's words colour and fonts:
+    only what differs from the look's own is changed, so an unedited kit draws the very page it always did. The
+    kit's other colours are the page's variables (_theme_css); its fonts' faces come from _overlay_assets."""
+    if not kit:
+        return css
+    c, own = kit["colours"], brand_kit.preset_values(style)
+    if style == "site":
+        if c["text"].upper() != own["colours"]["text"]:
+            css = css.replace("color:#fff", f"color:{c['text']}").replace(
+                "rgba(255,255,255,", f"rgba({brand_kit.rgb_text(c['text'])},")
+        if c["end"].upper() != own["colours"]["end"]:
+            css = css.replace("background:rgba(var(--label-rgb),.74)", "background:rgba(var(--end-rgb),.74)")
+        titles, captions = (brand_kit.family(kit, r) for r in ("titles", "captions"))
+        if titles != "Archivo":
+            css = css.replace('font-family:"Archivo"', f'font-family:"{titles}"')
+        if captions != titles and ".cap{" in css:
+            css += f'.cap{{font-family:"{captions}","Noto Sans CJK SC","Noto Sans SC","Microsoft YaHei",sans-serif}}'
+    return css
 
 
 # Each account's look for captions and graphics: Urban Makers' green, warm white and amber (as on its
@@ -2412,11 +2449,14 @@ PAPER = {"paper-rgb": "251,250,247", "paper-ink": "#1E2A32"}
 ACCENT = {k: v["accent"] for k, v in THEME.items()}
 
 
-def _theme_css(accent: str, style: str | None = None) -> str:
+def _theme_css(accent: str, style: str | None = None, kit: dict | None = None) -> str:
+    """The page's colours: the account's THEME, with the brand kit's where they differ from the look's own
+    (brand_kit.theme_vars)."""
     theme = next((t for t in THEME.values() if t["accent"] == accent), THEME["urban_makers"])
     site = style == "site"
-    return ":root{" + ";".join(f"--{k}:{v}" for k, v in {**theme, **PAPER, "accent": accent}.items()
-                               if site or k not in SITE_KEYS) + "}"
+    values = {**theme, **PAPER, "accent": accent, **brand_kit.theme_vars(kit, style)}
+    return ":root{" + ";".join(f"--{k}:{v}" for k, v in values.items() if site or k not in SITE_KEYS) + "}" + (
+        ".cap em{color:var(--key)}" if style == "gallery" and "key" in values else "")
 
 
 def _card_sizes(title: str, lines: list[str], style: str = "classic") -> tuple[int, int]:
@@ -2575,24 +2615,42 @@ def caption_shade(chunks: list[dict], paper: list[tuple[float, float]] = (), joi
     return [(round(s, 3), round(e, 3)) for s, e in runs if e - s >= 0.3]
 
 
-def _overlay_assets(project: Path, font: str | None = None, serif: bool = False, site: bool = False) -> list[str]:
+def _overlay_assets(project: Path, font: str | None = None, serif: bool = False, site: bool = False,
+                    kit: dict | None = None) -> list[str]:
     """GSAP and the bundled fonts copied into a HyperFrames project: the caption font (caption_font) and,
     with serif, the gallery look's serif (titles, the end card); with site, Archivo alone (Site Notes'
-    one family, whatever the caption font). Returns their @font-face rules."""
+    one family, whatever the caption font). With a brand kit, its fonts where they differ (Site Notes: each
+    under its own name, kit_css; gallery and classic: as "Studio Caption" and "Studio Serif") and its logo
+    (logo.png). Returns their @font-face rules."""
     shutil.copy(render.RENDER_DIR / "node_modules" / "gsap" / "dist" / "gsap.min.js", project)
     css = []
+    if brand_kit.logo_path(kit):
+        shutil.copy(brand_kit.logo_path(kit), project / "logo.png")
+        css.append(brand_kit.LOGO_CSS)
+    fonts = (kit or {}).get("fonts") or {}
     if site:
+        roles = {fonts.get(r) or "archivo": r for r in ("captions", "titles")}
+        if list(roles) != ["archivo"]:
+            for key, role in roles.items():
+                css.append(brand_kit.face_css(brand_kit.family(kit, role), brand_kit.faces(kit, role), project,
+                                              brand_kit.file_prefix(key), style_prop=True))
+            return css
         for weight, path in SITE_FONTS.items():
             shutil.copy(path, project / f"archivo-{weight}.woff2")
             css.append(f'@font-face{{font-family:"Archivo";src:url("archivo-{weight}.woff2") format("woff2");'
                        f'font-weight:{weight};font-style:normal;font-display:block}}')
         return css
-    for n, (path, weight) in enumerate(caption_font(font)[1]):
+    cap = fonts.get("captions")
+    if cap and cap not in CAPTION_FONTS:   # a font Bryan uploaded
+        css.append(brand_kit.face_css("Studio Caption", brand_kit.faces(kit, "captions"), project, "caption"))
+    for n, (path, weight) in enumerate(() if cap and cap not in CAPTION_FONTS else caption_font(cap or font)[1]):
         name = "caption.woff2" if n == 0 else f"caption-{n + 1}.woff2"
         shutil.copy(path, project / name)
         css.append(f'@font-face{{font-family:"Studio Caption";src:url("{name}") format("woff2");'
                    f'font-weight:{weight};font-display:block}}')
-    if serif:
+    if serif and kit and kit["preset"] == "gallery" and fonts.get("titles") != TITLE_STYLES["gallery"]["serif"]:
+        css.append(brand_kit.face_css("Studio Serif", brand_kit.faces(kit, "titles"), project, "serif", style_prop=True))
+    elif serif:
         _, regular, italic = TITLE_FONTS[TITLE_STYLES["gallery"]["serif"]]
         shutil.copy(regular, project / "serif.woff2")
         shutil.copy(italic, project / "serif-italic.woff2")
@@ -2606,7 +2664,8 @@ def _overlay_assets(project: Path, font: str | None = None, serif: bool = False,
 def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
                    graphics: list[dict] = (), accent: str = "#f5a524", fmt: str = "webm", font: str | None = None,
                    paper: list[tuple[float, float]] = (), style: str | None = None, hook_italic: str | None = None,
-                   end: dict | None = None, pip: dict | None = None) -> None:
+                   end: dict | None = None, pip: dict | None = None, kit: dict | None = None,
+                   keep: Path | None = None) -> None:
     """Captions, hook and B-roll graphics as a transparent video (HyperFrames, headless Chrome):
     VP9 WebM for the draft, ProRes 4444 MOV (fmt="mov") for DaVinci Resolve. style: the title style
     (title_style; the draft's own look, draft_look). The fonts are bundled ones (caption_font, and the
@@ -2616,8 +2675,18 @@ def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
     Site Notes has no paper (a drawing is a dark panel over the footage), so its captions stay as they are.
     hook_italic: the hook's italic word (None: from the hook's text, title_parts). end: the end card
     ({start, duration, ask, handle}, _end_card_html); no caption is shown from its start. pip: a voice-over's
-    window ({side, spans}, voiceover.py): while it's up the captions and their shade move beside it."""
+    window ({side, spans}, voiceover.py): while it's up the captions and their shade move beside it. kit: the
+    draft's brand kit (draft_look; brand_kit.resolve) for its colours, fonts and logo; None: the look's own.
+    keep: copy the page and its files there instead of rendering (the Brand kit page's preview)."""
     style = title_style(style)
+    kit = kit if kit and kit.get("preset") == style else None
+    with brand_kit.measuring(kit):  # Site Notes' labels are measured in the kit's titles font
+        _render_overlay(chunks, hook, total, out, graphics, accent, fmt, font, paper, style, hook_italic, end, pip, kit,
+                        keep)
+
+
+def _render_overlay(chunks, hook, total, out, graphics, accent, fmt, font, paper, style, hook_italic, end, pip, kit,
+                    keep=None):
     site = style == "site"
     if site:
         paper = ()
@@ -2631,7 +2700,7 @@ def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
     with tempfile.TemporaryDirectory(prefix="studio-overlay-") as tmp:
         project = Path(tmp) / "overlay"
         project.mkdir()
-        css = _overlay_assets(project, font, serif=not site and (style == "gallery" or bool(end)), site=site)
+        css = _overlay_assets(project, font, serif=not site and (style == "gallery" or bool(end)), site=site, kit=kit)
         clips, animations = [], []
         if hook_plain:
             # The hook gives way to the first card or callout.
@@ -2663,14 +2732,14 @@ def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
             clips.append(markup)
             animations.append(anim)
         if end:
-            markup, anim = end_card_html(end, style)
+            markup, anim = end_card_html(end, style, kit)
             clips.append(markup)
             animations.append(anim)
-        looks = _SITE_CSS if site else _GALLERY_CSS if style == "gallery" else _OVERLAY_CSS
+        looks = kit_css(_SITE_CSS if site else _GALLERY_CSS if style == "gallery" else _OVERLAY_CSS, style, kit)
         (project / "index.html").write_text(
             '<!doctype html><html><head><meta charset="utf-8"><script src="gsap.min.js"></script>'
-            f"<style>{''.join(css)}{_theme_css(accent, style)}{_OVERLAY_BASE}"
-            f"{looks}{end_css(style) if end else ''}"
+            f"<style>{''.join(css)}{_theme_css(accent, style, kit)}{_OVERLAY_BASE}"
+            f"{looks}{kit_css(end_css(style), style, kit) if end else ''}"
             f"{_pip_css(pip['side'], style) if spans else ''}</style></head><body>"
             f'<div id="overlay" data-composition-id="overlay" data-start="0" data-duration="{total:.3f}" '
             f'data-width="{W}" data-height="{H}">' + "".join(clips) + "</div>"
@@ -2679,6 +2748,9 @@ def render_overlay(chunks: list[dict], hook: str, total: float, out: Path,
             encoding="utf-8")
         (project / "meta.json").write_text(json.dumps({"id": "overlay", "name": "overlay", "width": W,
                                                        "height": H, "fps": FPS}), encoding="utf-8")
+        if keep is not None:
+            shutil.copytree(project, keep, dirs_exist_ok=True)
+            return
         result = render.hyperframes(["render", str(project), "--format", fmt, "--quality", "standard",
                                      "--fps", str(FPS), "--output", str(out)])
         if result.returncode != 0 or not out.exists():
@@ -3627,9 +3699,11 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
             if (edl.get("voiceover") or {}).get("on"):
                 edl["pip_notes"] = notes or ["kept you full screen all through"]
         window = {"side": pip["side"], "spans": pip["spans"]} if pip and pip["spans"] else None
-        # The look: a new plan takes today's settings; a re-render keeps the draft's own (draft_look).
-        look = edl["look"] = draft_look(edl) if placed or edl.get("look") else look_now()
+        # The look: a new plan takes today's settings and brand kit (for its kind of post); a re-render keeps the
+        # draft's own (draft_look).
         import pictures
+        look = edl["look"] = draft_look(edl) if placed or edl.get("look") else look_now(
+            pictures.post_type(conn, production), production.get("brand") or "urban_makers")
         if placed:  # a re-render: the graphics are where the draft had them
             cards = [g for g in edl.get("graphics", []) if g.get("style") not in ("scene", "picture")]
             scenes = [g for g in edl.get("graphics", []) if g.get("style") == "scene"]
@@ -3721,7 +3795,7 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
             paper = [(g["start"], g["start"] + g["duration"]) for g in scenes if g.get("look") == "cutaway"]
             render_overlay(chunks, edl["hook_text"], total, overlay, cards,
                            ACCENT.get(production["brand"], ACCENT["urban_makers"]), font=look["caption_font"],
-                           style=look["titles"], hook_italic=edl.get("hook_italic"), end=end,
+                           style=look["titles"], hook_italic=edl.get("hook_italic"), end=end, kit=look.get("kit"),
                            **({"paper": paper} if paper else {}), **({"pip": window} if window else {}))
 
         music_info, music_file = {"mood": edl["music"]["mood"], "tempo_bpm": edl["music"]["tempo_bpm"]}, None

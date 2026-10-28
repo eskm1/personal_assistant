@@ -5,7 +5,7 @@
 // <div id="shell" class="shell" data-half="plan|review"> is filled in when this script
 // runs, before the page's own script. The page then fills the status pill (#laptop-*)
 // and the account menu (#account-menu), and tells the shell where it is:
-//   StudioShell.setCurrent("plan" | "ideas" | "today" | "review" | "refs" | "style" | "content" | "questions" | "library"
+//   StudioShell.setCurrent("plan" | "ideas" | "today" | "review" | "refs" | "style" | "brand" | "content" | "questions" | "library"
 //                          | "grid" | "calendar" | "results" | "insights" | "instagram" | "")
 //   StudioShell.setLinks({ today: "#/today/3", ... })   ("" hides that item)
 //   StudioShell.setBadge(2)                              (drafts waiting for review)
@@ -47,6 +47,7 @@ window.StudioShell = (() => {
     insights: `${planner}#/insights`,
     instagram: `${planner}#/instagram`,
     library: dash && `${dash}#/tab/library`,
+    brand: dash && `${dash}#/brand-kit`,   // the brand kit lives in Review (on the Studio machine, where renders are)
   };
   if (half === "review") links.plan = "/plan/";
 
@@ -59,6 +60,7 @@ window.StudioShell = (() => {
     more: '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
     refs: '<path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"/>',
     style: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+    brand: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.2 0 1.8-.9 1.8-1.8 0-1.3-1-1.7-1-2.7 0-.9.8-1.6 1.7-1.6h1.8a3.2 3.2 0 0 0 3.2-3.2c0-4.3-3.4-7.7-7.5-7.7z"/><circle cx="7.6" cy="11" r="1.1"/><circle cx="10" cy="7.4" r="1.1"/><circle cx="14.4" cy="7.4" r="1.1"/>',
     content: '<rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M8 16v-3M12 16V9M16 16v-5"/>',
     questions: '<path d="M4.5 5.5h15a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H10l-4.5 3.5v-3.5h-1a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"/><path d="M10.2 9.4a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.6-.8 1.1v.3M12 14.2v.1"/>',
     library: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M6 4h12M10 11l4 2.5-4 2.5z"/>',
@@ -78,7 +80,7 @@ window.StudioShell = (() => {
   // The owner's own tools at the end of More: what people flagged, and the weekly report's key (help.js).
   const OWNER_TOOLS = [["feedback", "Feedback"], ["report", "Weekly report access"]];
   const MORE = [["grid", "Grid"], ["calendar", "Posting calendar"], ["results", "Results"], ["insights", "Insights"], ["refs", "References"], ["style", "Style guide"],
-    ["content", "Content plan"], ["questions", "Client questions"], ["today", "Today on site"], ["library", "Library"],
+    ["brand", "Brand kit"], ["content", "Content plan"], ["questions", "Client questions"], ["today", "Today on site"], ["library", "Library"],
     ["instagram", "Instagram"]];
   root.innerHTML = `<header class="shell-top" id="shell-top">
       <a class="shell-mark" data-sec="plan" href="#" aria-label="Studio: Plan"><span class="wordmark">URBAN MAKERS</span><span class="studio-tag">Studio</span></a>

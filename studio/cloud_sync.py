@@ -254,8 +254,19 @@ def _heartbeat(api: Client) -> None:
                  # Can Studio draw AI concept pictures (the image key is set)? Never the key itself.
                  "concepts": concepts.info(),
                  # Is Instagram connected, as whom, any problem (posting.py)? Never the token.
-                 "instagram": _instagram_info()},
+                 "instagram": _instagram_info(),
+                 # The brand kit's slide colours, once it's been saved (the planner's slide previews).
+                 "brand_kit": _brand_kit_info()},
     }, on_conflict="id", resolution="merge-duplicates", returning=False)
+
+
+def _brand_kit_info() -> dict | None:
+    try:
+        import brand_kit
+        return brand_kit.planner_info()
+    except Exception as e:
+        log.debug("No brand kit info: %s", e)
+        return None
 
 
 def _instagram_info() -> dict | None:
