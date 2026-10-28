@@ -108,21 +108,42 @@ REMAKE_NOTE = "Made again from the drafts as written (the photos-only carousel h
 RETIRABLE = ("ready", "failed")
 
 
-def retire(conn, idea_id: int) -> int | None:
-    """Before a carousel is made again ("remake"): its draft, if it's waiting for review or failed, is rejected and
-    archived (Done > Archived, its files and history kept, a note saying why) and the idea is free to be made anew.
-    Returns the old production's id, None when the idea had none. Raises ShowcaseError when the draft is approved,
-    scheduled or still being made: those are never touched."""
+def current_words(conn, idea_id: int) -> tuple[str, str] | None:
+    """(caption, cover line) of the idea's draft as it is now (Bryan may have edited the caption in Review), for a
+    carousel made again with only its photos changed ("keep"). None when it has no draft."""
+    import carousel
+    row = conn.execute("SELECT p.* FROM productions p JOIN ideas i ON i.production_id = p.id WHERE i.id = ?",
+                       (idea_id,)).fetchone()
+    if row is None:
+        return None
+    slides = (carousel.current(row) or {}).get("slides") or []
+    return row["caption"] or "", (slides[0].get("heading") or "") if slides else ""
+
+
+def retire(conn, idea_id: int, allow_approved: bool = False) -> int | None:
+    """Before a carousel is made again ("remake"): its draft, if it's waiting for review or failed (or approved, with
+    allow_approved, as long as it isn't scheduled or posted), is rejected and archived (Done > Archived, its files and
+    history kept, a note saying why; its open notes closed) and the idea is free to be made anew. Returns the old
+    production's id, None when the idea had none. Raises ShowcaseError when the draft is scheduled, posted or still
+    being made: those are never touched."""
     row = conn.execute("SELECT production_id FROM ideas WHERE id = ?", (idea_id,)).fetchone()
     pid = row["production_id"] if row else None
     if not pid:
         return None
     old = conn.execute("SELECT id, status, version FROM productions WHERE id = ?", (pid,)).fetchone()
-    if old is not None and old["status"] not in RETIRABLE:
-        raise ShowcaseError(f"its draft is {old['status']}, so it isn't made again (only one waiting for review is)")
+    ok_status = RETIRABLE + (("approved",) if allow_approved else ())
+    if old is not None and old["status"] not in ok_status:
+        raise ShowcaseError(f"its draft is {old['status']}, so it isn't made again (only one waiting for review is"
+                            f"{', or an approved one with --include-approved' if old['status'] == 'approved' else ''})")
+    live = conn.execute("SELECT state FROM posts WHERE production_id = ? AND state IN ('scheduled', 'publishing', 'posted')",
+                        (pid,)).fetchone()
+    if live is not None:
+        raise ShowcaseError(f"its draft is {live['state']} on Instagram, so it isn't made again")
     stamp = catalog.now()
     with conn:
         if old is not None:
+            conn.execute("""UPDATE feedback SET status = 'addressed'
+                            WHERE target = 'production' AND target_id = ? AND status = 'open'""", (pid,))
             conn.execute("""INSERT INTO feedback (target, target_id, version, body, status, created_at)
                             VALUES ('production', ?, ?, ?, 'addressed', ?)""", (pid, old["version"], REMAKE_NOTE, stamp))
             conn.execute("UPDATE productions SET status = 'rejected', archived_at = ?, updated_at = ? WHERE id = ?",

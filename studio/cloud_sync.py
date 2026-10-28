@@ -689,7 +689,11 @@ def run_jobs(api: Client, conn, idea_map: dict[int, int]) -> list[str]:
                     if payload.get("remake"):  # made again from the drafts as written: the old draft is archived first
                         showcase.check_spec(payload["photos"])
                         showcase.match(showcase.listing(payload["photos"]["folder"]), payload["photos"]["files"])
-                        showcase.retire(conn, local_id)
+                        words = showcase.current_words(conn, local_id) if payload.get("keep") else None
+                        if words:  # only the photos change: the caption and cover line as they are now, exactly
+                            caption = words[0]
+                            payload["photos"] = {**payload["photos"], "cover": words[1]}
+                        showcase.retire(conn, local_id, allow_approved=bool(payload.get("include_approved")))
                     slides, layout = showcase.import_photos(api, payload["photos"]), carousel.PHOTOS
                     api.update("ideas", {"id": f"eq.{job['idea_id']}"},
                                {"slides": slides, **({"slide_layout": layout} if check_grid(api) else {})})

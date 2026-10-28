@@ -8,11 +8,8 @@
    "grid": "Week 1 is the top row, pinned after Friday 6 Nov.",
    "photos": [
     "Other 12",
-    "11",
-    "Other 1",
-    "Other 4",
-    "Other 3",
-    "16"
+    "Other 21",
+    "Other 2"
    ],
    "cover": "One long room, one long table.",
    "caption": "A long, narrow condo, and a table that runs the same way.\nKitchen and dining share one strip of floor, so we set the table along the room, not across it.\nStone top [check], steel base, and the wine fridge built into the cabinets.\nLong table or round?\n#condorenovation #singaporeinteriordesign #sginterior #diningroom"
@@ -38,7 +35,6 @@
    "photos": [
     "GIF 1",
     "GIF 20",
-    "8",
     "Other 5"
    ],
    "cover": "There's a door in this wall.",
@@ -64,7 +60,6 @@
    "photos": [
     "Other 28",
     "Other 31",
-    "Other 37",
     "33",
     "35",
     "Other 36"
@@ -160,5 +155,6 @@
    "title": "There's a door behind this island",
    "grid": "Weeks 3 to 7 fill the sixth row up to the second."
   }
- ]
+ ],
+ "note": "Captions: the live ones are in Studio (Review); the Proximo captions here are the brief's first drafts. Bryan edited and approved some since (2026-10-29), so a rebuild of an existing draft uses --remake --keep-current."
 }

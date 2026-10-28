@@ -30,6 +30,7 @@ from flask import Flask, Response, abort, g, jsonify, redirect, render_template_
 from flask.sessions import SecureCookieSessionInterface
 
 import auth
+import carousel
 import cloud_sync
 import settings
 import playbook
@@ -615,7 +616,9 @@ def _carousel_detail(row: sqlite3.Row) -> dict:
                  "music": None, "qa": None, "resolve": None, "slides": slides, **_posting_detail(row),
                  "download": f"/api/production/{row['id']}/download" if pngs else None,
                  # Bryan's "Make a slideshow Reel": can it be made now, and the one made (slideshow.py)
-                 "slideshow": slideshow.carousel_detail(db(), row) if is_owner() else None})
+                 # Not on a photos-only carousel: a slideshow lays its photos inside the words carousel's green frame.
+                 "slideshow": slideshow.carousel_detail(db(), row)
+                 if is_owner() and carousel.layout_of(row) != carousel.PHOTOS else None})
     clip_ids = json.loads(row["source_clips"] or "[]")
     if clip_ids:
         marks = ",".join("?" * len(clip_ids))
@@ -1312,6 +1315,9 @@ def make_slideshow(production_id: int):
     row = db().execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
     if row is None:
         abort(404)
+    if row["format"] == "carousel" and carousel.layout_of(row) == carousel.PHOTOS:
+        return jsonify({"error": "A photos-only carousel isn't made into a slideshow Reel: its photos would sit inside "
+                                 "a frame. Post it as a carousel."}), 400
     try:
         new_id, made = slideshow.make(db(), production_id)
     except RuntimeError as e:

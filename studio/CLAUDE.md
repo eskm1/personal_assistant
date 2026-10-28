@@ -349,6 +349,10 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   carousel a `[check]` is never removed or filled and no offer the draft lacked is added (`carousel.guard_words`). A Finished homes post never carries an offer (Bryan,
   2026-10-28: the caption ends on a one-word question): the guard, the read, the kind's ask (`content_plan` + `prompts.ts`,
   NEEDS CTO cloud_setup --update), and a playbook rule (`playbook.SEED_ADDS`, added once to an existing playbook).
+  Bryan's notes on one go to `carousel.revise_photos` (remove/reorder/cover/caption; a named photo swapped in from the
+  folder via the idea's carousel job; a described one left open). `--remake --keep-current [--include-approved] --only`
+  rebuilds with only the photos changed (the live caption and cover kept; an approved draft comes back to To review).
+  No slideshow Reel from a photos-only carousel (it framed the photos in green).
   `tests/quality/suite_showcase.py`.
 - Reference library and taste report built 2026-10-19 (not yet proven against Instagram or real Claude):
   Import many (paste or CSV, dedupe by shortcode, `import_references()`), held until Bryan presses Analyse

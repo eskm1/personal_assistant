@@ -146,8 +146,23 @@ def main() -> int:
                                                              "duplicates; dates, titles, captions and carousels untouched")
     ap.add_argument("--remake", action="store_true", help="make the carousels again even if made: each draft waiting "
                                                           "for review is archived and made from the spec as written")
+    ap.add_argument("--only", action="append", default=[], help="only the entries whose title has these words "
+                                                                  "(give it once per entry)")
+    ap.add_argument("--keep-current", action="store_true", help="with --remake: only the photos change; each draft's "
+                    "caption and cover line are kept exactly as they are now, and the ideas' dates, titles, captions "
+                    "and grid notes are left alone")
+    ap.add_argument("--include-approved", action="store_true", help="with --remake: an approved draft (not scheduled "
+                    "or posted) may be made again too; it comes back to To review for Bryan to approve again")
     args = ap.parse_args()
+    if (args.keep_current or args.include_approved) and not args.remake:
+        ap.error("--keep-current and --include-approved go with --remake")
     spec = json.loads(open(args.spec, encoding="utf-8").read())
+    if args.only:
+        want = [norm(o) for o in args.only]
+        spec["ideas"] = [e for e in spec.get("ideas") or [] if any(w in norm(e.get("title")) for w in want)]
+        if len(spec["ideas"]) != len(want):
+            print(f"--only matched {len(spec['ideas'])} entries for {len(want)} names; nothing changed.")
+            return 1
     if args.folder:
         spec["folder"] = args.folder
     spec["remake"] = args.remake
@@ -167,13 +182,24 @@ def main() -> int:
     rows, problems = plan(spec, ideas, comments)
     for r in rows:
         i = r["idea"]
+        if args.keep_current:
+            prod = i.get("production") or {}
+            print(f"#{i['id']}: {i['title']!r}: its draft #{prod.get('id', '?')} ({prod.get('status', 'none')}) made again "
+                  f"from {len(r['make']['files']) if r['make'] else 0} photos, caption and cover line kept as they are"
+                  + ("; needs --include-approved" if prod.get("status") == "approved" and not args.include_approved else ""))
+            continue
         print(f"#{i['id']}: {i['title']!r} -> {r['sets']['title']!r}, posting {r['sets']['post_on']}"
               f"{', caption replaced' if 'caption' in r['sets'] else ''}"
               f"{', grid comment ' + ('changed' if r['grid_old'] else 'added') if r['grid'] else ''}"
               f"{', ' + str(len(r['extra'])) + ' duplicate grid note(s) removed' if r.get('extra') else ''}"
               f"{(', then made again from ' if r['idea'].get('production') else ', then made from ') + str(len(r['make']['files'])) + ' photos' if r['make'] else ''}")
     left = [i for i in ideas if i["id"] not in {r["idea"]["id"] for r in rows}]
-    if left:
+    if args.keep_current:
+        problems += [f"#{r['idea']['id']}: no photos named" for r in rows if not r["make"]]
+        problems += [f"#{r['idea']['id']}: its draft is approved; add --include-approved to make it again"
+                     for r in rows if (r["idea"].get("production") or {}).get("status") == "approved"
+                     and not args.include_approved]
+    if left and not args.only:
         print(f"Not in the spec (left as they are): {', '.join('#' + str(i['id']) for i in left)}")
     if not problems and not args.no_photo_check:
         print("\nThe photos in OneDrive:")
@@ -186,6 +212,8 @@ def main() -> int:
         return 0
     for r in rows:
         iid = r["idea"]["id"]
+        if args.keep_current:
+            continue  # only the photos change
         if not args.grid_only:
             api.update("ideas", {"id": f"eq.{iid}"}, r["sets"])
         if r["grid"]:
@@ -202,10 +230,13 @@ def main() -> int:
         if r["make"] and not args.grid_only:
             api.insert("jobs", {"kind": "carousel", "runner": "laptop", "state": "queued", "idea_id": r["idea"]["id"],
                                 "payload": {"caption": r["sets"].get("caption", r["idea"].get("caption") or ""),
-                                            "photos": r["make"], **({"remake": True} if spec.get("remake") else {})}},
+                                            "photos": r["make"], **({"remake": True} if spec.get("remake") else {}),
+                                            **({"keep": True} if args.keep_current else {}),
+                                            **({"include_approved": True} if args.include_approved else {})}},
                        returning=False)
             queued += 1
-    print(f"\nDone: {len(rows)} ideas changed, {queued} carousels sent to Studio. They land in Review in a few minutes.")
+    print(f"\nDone: {0 if args.keep_current else len(rows)} ideas changed, {queued} carousels sent to Studio. They land in "
+          "Review (To review) in a few minutes.")
     return 0
 
 

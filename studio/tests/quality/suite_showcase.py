@@ -520,4 +520,87 @@ ok(rev["slides"][0]["heading"] == "One long room. [check]" and all(not s["headin
    and rev["caption"] == "", "the cover line and its [check] kept, no words added, the caption's new offer refused (Finished homes)")
 ok({a["note_id"] for a in rev["notes_addressed"]} == {1, 3}, "the notes it acted on are addressed; the open one isn't")
 
+# ── Fewer photos, the live words kept (the CTO, 2026-10-29: 22, 24 and 26 rebuilt; Bryan had edited and approved
+# captions in Review, so a rebuild must carry them, character for character) ──
+print("== made again with the words as they are")
+cur = conn.execute("""INSERT INTO ideas (title, brand, format, status, decision, origin, batch, angle, beats, segments, wishlist,
+                      created_at, post_type, remote_id) VALUES ('Fri 6 Nov · There''s a door in this wall', 'urban_makers',
+                      'carousel', 'new', 'go', 'plan', 'plan', '', '[]', '[]', '[]', ?, 'finished', 7010)""", (catalog.now(),))
+door = cur.lastrowid
+conn.commit()
+first_job = {"id": 20, "kind": "carousel", "state": "queued", "idea_id": 7010, "created_at": catalog.now(),
+             "payload": {"caption": "Draft caption.\nDid you spot it?", "photos": {"folder": FOLDER, "files": ["GIF 1", "11", "Other 1"],
+                                                                                   "cover": "There's a door in this wall."}}}
+cloud_sync.run_jobs(FakeApi(jobs=[first_job], ideas=[{"id": 7010, "format": "carousel", "slides": [], "caption": "",
+                                                      "slide_layout": "photos"}]), conn, {7010: door})
+old_id = conn.execute("SELECT production_id FROM ideas WHERE id = ?", (door,)).fetchone()[0]
+EDITED = "Swipe once: the door is part of the fluted wall.\nBehind it: the study [check].\nDid you spot it before you swiped?\n#hiddendoor"
+data_ = carousel.current(conn.execute("SELECT * FROM productions WHERE id = ?", (old_id,)).fetchone())
+data_["slides"][0]["heading"] = "There's a door in this wall, edited."
+conn.execute("UPDATE productions SET status = 'approved', caption = ?, slides = ? WHERE id = ?", (EDITED, json.dumps(data_), old_id))
+conn.execute("""INSERT INTO feedback (target, target_id, version, body, status, created_at)
+                VALUES ('production', ?, 1, 'Remove photo 8', 'open', ?)""", (old_id, catalog.now()))
+conn.commit()
+keep_job = lambda jid, approved=True: {"id": jid, "kind": "carousel", "state": "queued", "idea_id": 7010, "created_at": catalog.now(),
+                                       "payload": {"caption": "the batch file's old caption", "remake": True, "keep": True,
+                                                   **({"include_approved": True} if approved else {}),
+                                                   "photos": {"folder": FOLDER, "files": ["GIF 1", "Other 1"], "cover": "batch cover"}}}
+a1 = FakeApi(jobs=[keep_job(21, approved=False)], ideas=[{"id": 7010, "format": "carousel", "slides": [], "caption": "", "slide_layout": "photos"}])
+cloud_sync.run_jobs(a1, conn, {7010: door})
+ok(a1.jobs[0]["state"] == "failed" and "approved" in a1.jobs[0]["error"]
+   and conn.execute("SELECT status FROM productions WHERE id = ?", (old_id,)).fetchone()[0] == "approved",
+   "an approved draft isn't made again unless asked (--include-approved)")
+conn.execute("INSERT INTO posts (production_id, kind, scheduled_at, state, created_at, updated_at) VALUES (?, 'carousel', ?, 'scheduled', ?, ?)", (old_id, catalog.now(), catalog.now(), catalog.now()))
+conn.commit()
+a2 = FakeApi(jobs=[keep_job(22)], ideas=[{"id": 7010, "format": "carousel", "slides": [], "caption": "", "slide_layout": "photos"}])
+cloud_sync.run_jobs(a2, conn, {7010: door})
+ok(a2.jobs[0]["state"] == "failed" and "scheduled" in a2.jobs[0]["error"], "a scheduled one never is")
+conn.execute("DELETE FROM posts WHERE production_id = ?", (old_id,))
+conn.commit()
+a3 = FakeApi(jobs=[keep_job(23)], ideas=[{"id": 7010, "format": "carousel", "slides": [], "caption": "", "slide_layout": "photos"}])
+cloud_sync.run_jobs(a3, conn, {7010: door})
+new_door = conn.execute("SELECT production_id FROM ideas WHERE id = ?", (door,)).fetchone()[0]
+nd = conn.execute("SELECT * FROM productions WHERE id = ?", (new_door,)).fetchone()
+nplan = json.loads(nd["plan"])
+ok(a3.jobs[0]["state"] == "done" and new_door != old_id and nd["status"] in ("planned", "producing", "ready"),
+   f"with it, the approved draft is made again; the new one goes to To review, not approved ({nd['status']})")
+ok(nd["caption"] == EDITED, "the caption Bryan edited is carried character for character, not the batch file's")
+ok(nplan["slides"][0]["heading"] == "There's a door in this wall, edited." and len(nplan["slides"]) == 2
+   and all(not x["heading"] for x in nplan["slides"][1:]), "the cover line as it was; only the photos change (two now)")
+ok(conn.execute("SELECT COUNT(*) FROM feedback WHERE target = 'production' AND target_id = ? AND status = 'open'",
+                (old_id,)).fetchone()[0] == 0, "the old draft's open notes are closed when it's archived")
+
+# The batch: --only and --keep-current queue just those, change nothing else.
+bapi2 = BatchApi()
+bapi2.comments = []
+spec2 = ROOT / "keep_spec.json"
+spec2.write_text(json.dumps({"project": "Finished homes", "folder": FOLDER, "ideas": [
+    {"title": "One long room, one long table", "date": "2026-11-02", "caption": "C1", "photos": ["Other 12", "11"], "cover": "x"},
+    {"title": "The living room", "date": "2026-11-04", "photos": ["Other 12", "11"], "cover": "y"},
+    {"title": "The aquarium bar", "date": "2026-12-02", "photos": ["Other 12", "11"]}]}))
+showcase_batch.cloud_sync.Client = lambda: bapi2
+_sys.argv = ["showcase_batch.py", str(spec2), "--remake", "--keep-current", "--include-approved", "--only", "one long room",
+             "--only", "living room", "--apply", "--no-photo-check"]
+code4 = showcase_batch.main()
+_sys.argv, showcase_batch.cloud_sync.Client = argv, real_client
+jobs = [c[2] for c in bapi2.calls if c[0] == "insert" and c[1] == "jobs"]
+ok(code4 == 0 and len(jobs) == 2 and {j["idea_id"] for j in jobs} == {24, 25}
+   and all(j["payload"].get("keep") and j["payload"].get("include_approved") and j["payload"].get("remake") for j in jobs)
+   and not [c for c in bapi2.calls if c[0] == "update" and c[1] == "ideas"] and not [c for c in bapi2.calls if c[1] == "comments"],
+   "--only and --keep-current: just those two sent, keeping their words; no idea, date, title, caption or grid note touched")
+
+# ── No slideshow Reel from a photos-only carousel (the CTO: its photos landed inside a green frame) ──
+print("== no slideshow from photos")
+import auth, dashboard
+owner_id = auth.create_user(conn, "bryan@x.com", "Bryan", "correct horse battery", auth.OWNER)
+web = dashboard.app.test_client()
+with web.session_transaction() as ss:
+    ss["uid"] = owner_id; ss["sv"] = 1
+conn.execute("UPDATE productions SET status = 'ready' WHERE id = ?", (new_door,))
+conn.commit()
+det = web.get(f"/api/production/{new_door}").json
+ok(det is not None and det.get("slideshow") is None, "Review doesn't offer Make a slideshow Reel on a photos-only carousel")
+r = web.post(f"/api/production/{new_door}/slideshow", json={})
+ok(r.status_code == 400 and "photos-only" in r.json["error"], f"and refuses it if asked ({r.json})")
+
 finish()
