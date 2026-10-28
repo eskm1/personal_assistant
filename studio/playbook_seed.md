@@ -15,6 +15,7 @@ personal footage. They are a starting point, not law.
 - One idea per post. Hook, a line of context, the proof or process, then the payoff.
 - Close the loop you opened: if the hook asks "how", the post shows how.
 - Never invent results, prices, timelines or claims the footage and Bryan's words don't support.
+- Finished homes posts carry no offer, ever: not on a slide, not in the caption, not even a free consultation. The caption ends on a one-word question to the reader. A missing offer is never a fault there (Bryan, 2026-10-28).
 - End on a complete sentence, then a short beat on the last shot and the Urban Makers end card; never stop mid-sentence or mid-animation.
 
 ## Pacing and cutting

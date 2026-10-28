@@ -26,6 +26,11 @@ SEED_CHANGES = [
      "- Talking head: cut between sentences and ideas, keep the natural pauses inside a sentence; trim only long "
      "silences. Captions on every phrase, B-roll over the words it illustrates."),
 ]
+# Seed lines added after a playbook was first copied: each goes in under its heading once, if the playbook doesn't
+# have it word for word (Bryan may have moved or reworded it; a reworded one gets the new line too, so he sees both).
+SEED_ADDS = [
+    ("## Story", "- Finished homes posts carry no offer, ever: not on a slide, not in the caption, not even a free consultation. The caption ends on a one-word question to the reader. A missing offer is never a fault there (Bryan, 2026-10-28)."),
+]
 _migrated = False
 
 
@@ -46,6 +51,21 @@ def migrate(path: Path | None = None) -> list[str]:
             if body.rstrip() == old:
                 lines[i] = new + line[len(body):]
                 done.append(new)
+    have = {ln.rstrip("\r\n").rstrip() for ln in lines}
+    for heading, new in SEED_ADDS:
+        if new in have or new in done:
+            continue
+        at = next((i for i, ln in enumerate(lines) if ln.strip() == heading), None)
+        if at is None:
+            lines += ["\n" if lines and not lines[-1].endswith("\n") else "", f"{new}\n"]
+        else:
+            end = at + 1
+            while end < len(lines) and not lines[end].startswith("## "):
+                end += 1
+            while end > at + 1 and not lines[end - 1].strip():
+                end -= 1
+            lines.insert(end, f"{new}\n")
+        done.append(new)
     if done:
         path.write_text("".join(lines), encoding="utf-8")
         for new in done:

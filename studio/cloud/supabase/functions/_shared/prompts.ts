@@ -42,7 +42,7 @@ export const KINDS: Record<string, { label: string; stage: string; job: string; 
     label: "Finished homes",
     stage: "Build trust",
     job: "proof: the portfolio, before and after, the owners' reaction",
-    ask: "see the whole project / talk to us about yours",
+    ask: "a one-word question to the reader (no offer, ever: not even a free consultation)",
   },
   offer: {
     label: "Work with us",

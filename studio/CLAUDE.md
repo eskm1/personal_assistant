@@ -346,7 +346,9 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   400 50 px; `showcase_batch.py` (run on the server: it has OneDrive and the service key) re-dates/re-titles/re-captions, changes the "Grid" comment and
   queues the carousel jobs (`--remake` makes one again, its waiting draft archived); `batches/2026-11-showcases.json`.
   A photos-only carousel is never rewritten by Studio (read only, no fix rounds: `self_fix` stops "photos"); in any
-  carousel a `[check]` is never removed or filled and no offer the draft lacked is added (`carousel.guard_words`).
+  carousel a `[check]` is never removed or filled and no offer the draft lacked is added (`carousel.guard_words`). A Finished homes post never carries an offer (Bryan,
+  2026-10-28: the caption ends on a one-word question): the guard, the read, the kind's ask (`content_plan` + `prompts.ts`,
+  NEEDS CTO cloud_setup --update), and a playbook rule (`playbook.SEED_ADDS`, added once to an existing playbook).
   `tests/quality/suite_showcase.py`.
 - Reference library and taste report built 2026-10-19 (not yet proven against Instagram or real Claude):
   Import many (paste or CSV, dedupe by shortcode, `import_references()`), held until Bryan presses Analyse

@@ -193,11 +193,14 @@ def _offers(text: str) -> set[str]:
     return {re.sub(r"\s+", " ", m.lower()) for m in OFFER.findall(text or "")}
 
 
-def guard_words(old: str, new: str, allowed: str = "") -> tuple[str, str | None]:
+def guard_words(old: str, new: str, allowed: str = "", no_offers: bool = False) -> tuple[str, str | None]:
     """new, unless it drops or fills a [check] marker old has, or adds an offer old (or allowed, e.g. Bryan's own
-    note) doesn't have: then old, and why in plain words."""
+    note) doesn't have, or (no_offers: a Finished homes post, which never carries one) has any offer at all: then
+    old, and why in plain words."""
     if new == old:
         return new, None
+    if no_offers and _offers(new):
+        return old, "a Finished homes post never carries an offer"
     if _marks(new) != _marks(old):
         return old, "it would have removed or filled in a [check] for Bryan"
     if _offers(new) - _offers(old) - _offers(allowed):
@@ -825,6 +828,7 @@ def patch(conn, production_id: int, actions: list[dict], round_no: int) -> tuple
     slides = json.loads(json.dumps(data["slides"]))
     caption, results = row["caption"], []
     photos = layout_of(row) == PHOTOS
+    finished = post_type(conn, row) == concepts.FINISHED
     for item in actions:
         a = item["action"]
         res = {"n": item["n"], "type": a.get("type")}
@@ -832,7 +836,7 @@ def patch(conn, production_id: int, actions: list[dict], round_no: int) -> tuple
         field, n = a.get("field"), a.get("item")
         old = caption if field == "caption" else (slides[n - 1].get(field, "") if field in SLIDE_FIELDS and isinstance(n, int)
                                                     and 1 <= n <= len(slides) else "")
-        _, why = guard_words(old, to)
+        _, why = guard_words(old, to, no_offers=finished)
         if photos:
             res.update(ok=False, why="a photos-only carousel keeps its photos, cover line and caption as written")
         elif why and to:
@@ -1161,15 +1165,17 @@ def revise(conn, production: dict, slides: list[dict], notes: list[dict], client
             new[int(n)][k] = text
     # Never a [check] removed or filled, never an offer the draft didn't have (Bryan's own notes may ask for one).
     asked = "" if own else " ".join(str(n.get("body") or "") for n in notes)
+    finished = kind == concepts.FINISHED
     if caption:
-        caption, _ = guard_words(production.get("caption") or "", caption, asked)
+        caption, _ = guard_words(production.get("caption") or "", caption, asked, no_offers=finished)
         if caption == (production.get("caption") or ""):
             caption = ""
     for n, s in enumerate(new):
         before = slides[n] if n < len(slides) else {}
         for k in ("heading", "body"):
             if s.get(k):
-                s[k], _ = guard_words(before.get(k, "") if before.get("key") == s.get("key") else "", s[k], asked)
+                s[k], _ = guard_words(before.get(k, "") if before.get("key") == s.get("key") else "", s[k], asked,
+                                      no_offers=finished)
     marks = [m for s in slides for k in ("heading", "body") for m in _marks(s.get(k, ""))]
     if sorted(m for s in new for k in ("heading", "body") for m in _marks(s.get(k, ""))) != sorted(marks):
         new = json.loads(json.dumps(slides))  # a slide's [check] went: the slides stay as they were

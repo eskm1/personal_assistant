@@ -39,6 +39,7 @@ import re
 import sys
 from datetime import date
 
+import carousel
 import cloud_sync
 import showcase
 
@@ -74,6 +75,9 @@ def plan(spec: dict, ideas: list[dict], comments: dict[int, list[dict]]) -> tupl
         sets = {"post_on": day.isoformat(), "title": stamp(day, e.get("title") or idea["title"])}
         if isinstance(e.get("caption"), str):
             sets["caption"] = e["caption"].strip()
+            if carousel._offers(sets["caption"]):  # Finished homes posts never carry one (Bryan, 2026-10-28)
+                problems.append(f"entry {n}: the caption has an offer ({', '.join(sorted(carousel._offers(sets['caption'])))}); "
+                                "a Finished homes post never carries one")
         make = None
         if e.get("photos"):
             try:

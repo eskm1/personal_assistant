@@ -36,7 +36,7 @@ KINDS = {
                "ask": "follow this project"},
     "finished": {"label": "Finished homes", "stage": "Build trust",
                  "job": "proof: the portfolio, before and after, the owners' reaction",
-                 "ask": "see the whole project / talk to us about yours"},
+                 "ask": "a one-word question to the reader (no offer, ever: not even a free consultation)"},
     "offer": {"label": "Work with us", "stage": "Get enquiries",
               "job": "turn followers into enquiries: how we work, what's included, one of the offers below",
               "ask": "one of the offers below"},

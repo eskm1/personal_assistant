@@ -337,6 +337,40 @@ cap_now = conn.execute("SELECT caption FROM productions WHERE id = ?", (w,)).fet
 ok([x["ok"] for x in res] == [False, False, False, True] and "[check]" in res[0]["why"] and "[check]" in res[1]["why"]
    and "offer" in res[2]["why"] and cap_now == old,
    f"a words carousel's patches: a [check] removed or filled and a new offer refused, saying why; the rest made ({[x.get('why') for x in res]})")
+# Finished homes: no offer, ever (Bryan, 2026-10-28, via the content lead).
+ok(g("Long table or round?", "Long table or round? Free consultation this month.", "add a free consultation", no_offers=True)[0]
+   == "Long table or round?" and g("Book a free consultation.", "Book now.", no_offers=True)[0] == "Book a free consultation.",
+   "a Finished homes post: no offer at all, not even one Bryan's note asked for or the draft had")
+ok(g("Long table or round?", "Long table, or round?", no_offers=True)[0] == "Long table, or round?", "other words change as before")
+fin = dict(row, plan=json.dumps({**json.loads(row["plan"]), "post_type": "finished"}))
+ctx = draft_review.carousel_context(fin, {"slides": plan["slides"], "pictures": []})
+ok("no offer, ever" in ctx and "A missing offer is never a fault" in ctx, "Studio's read: a missing offer is never a fault on a Finished homes post")
+import content_plan, playbook
+ok("no offer" in content_plan.KINDS["finished"]["ask"] and "talk to us" not in content_plan.KINDS["finished"]["ask"],
+   "the Finished homes kind's ask is a one-word question, no offer")
+ts = (Path(settings.__file__).parent / "cloud/supabase/functions/_shared/prompts.ts").read_text()
+ok('ask: "a one-word question to the reader (no offer, ever: not even a free consultation)"' in ts, "and the planner's the same")
+old_pb = ROOT / "old_playbook.md"
+old_pb.write_text("# Studio playbook\n\n## Story\n\n- One idea per post.\n\n## Pacing and cutting\n\n- Cut between phrases.\n")
+added = playbook.migrate(old_pb)
+text_pb = old_pb.read_text()
+ok(len(added) == 1 and "Finished homes posts carry no offer, ever" in text_pb
+   and text_pb.index("carry no offer") < text_pb.index("## Pacing"), "an existing playbook gets the rule once, under Story")
+ok(playbook.migrate(old_pb) == [] and old_pb.read_text() == text_pb, "and never twice")
+ok("Finished homes posts carry no offer, ever" in playbook.SEED.read_text(), "a new playbook starts with it")
+fw = conn.execute("""INSERT INTO productions (title, brand, format, status, version, caption, plan, created_at, updated_at)
+                     VALUES ('Fin', 'urban_makers', 'carousel', 'ready', 1, 'Long table or round?', ?, ?, ?)""",
+                  (json.dumps({"post_type": "finished"}), catalog.now(), catalog.now())).lastrowid
+conn.execute("UPDATE productions SET slides = ? WHERE id = ?", (json.dumps({"version": 1, "slides": [
+    {"key": "a", "role": "cover", "heading": "Cover", "body": "", "image": {"source": "text"}},
+    {"key": "b", "role": "point", "heading": "Point", "body": "", "image": {"source": "text"}}], "files": []}), fw))
+conn.commit()
+_, res = carousel.patch(conn, fw, [{"n": 1, "action": {"type": "slide_text", "item": None, "field": "caption",
+                                                       "to": "Long table or round? Free consultation for new homeowners."}}], 1)
+ok(not res[0]["ok"] and "Finished homes" in res[0]["why"], f"Studio's fix round can't add one to a Finished homes post ({res[0].get('why')})")
+_, probs = showcase_batch.plan({"project": "x", "ideas": [{"title": "Kitchen and bathroom", "date": "2026-11-02",
+                                                           "caption": "Nice. Book a free consultation!"}]}, ideas, {})
+ok(any("offer" in p for p in probs), "the batch refuses a Finished homes caption with an offer")
 kept = carousel.photos_only([{"key": "a", "heading": "Cover [check]", "body": "", "image": {}}, {"key": "b", "heading": "", "body": "", "image": {}}],
                             [{"key": "z", "heading": "Cover, better", "body": "More words", "image": {}}, {"key": "y", "heading": "Ask", "body": "Book now", "image": {}},
                              {"key": "x", "heading": "Extra", "body": "", "image": {}}], cover_from_notes=True)

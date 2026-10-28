@@ -337,6 +337,10 @@ def carousel_context(production: dict, data: dict) -> str:
     lines = [f"Post: {production['title']}, a carousel of {len(data['slides'])} slides, draft v{production['version']}.",
              "Kind of post: " + (f"{kind['label']} (its ask: {kind['ask']})" if kind else "not set"),
              "Slides (the words on each, and its picture):"]
+    if plan.get("post_type") == "finished":
+        lines.append("Finished homes: no offer, ever (Bryan): not on a slide, not in the caption, not even a free "
+                     "consultation; the caption ends on a one-word question. A missing offer is never a fault here; "
+                     "an offer on a slide or in the caption is a fix to remove it.")
     if carousel.layout_of(production) == carousel.PHOTOS:
         lines.append("Photos only, by design: every slide is a photo, slide 1 carries a small cover line, the other "
                      "slides have no words and there is no closing slide; the ask is in the caption (a question to the "
