@@ -42,7 +42,7 @@ import settings
 
 log = logging.getLogger("studio.voiceover")
 
-FOOTAGE_VERSION = 1
+FOOTAGE_VERSION = 2  # 2: the camera measure on copies of its frames (2026-10-28)
 # A talking head: someone talks this share of the clip at least (and says this many words), and a face looks at
 # the camera in this share of its stills. B-roll: talking under BROLL_SPEECH of it, or fewer words than that.
 TALK_SPEECH, TALK_WORDS, FACE_SHARE, BROLL_SPEECH = 0.45, 10, 0.5, 0.25
@@ -185,7 +185,9 @@ def camera_move(clip: dict) -> float | None:
         frames = np.frombuffer(raw[:len(raw) // (w * h) * w * h], np.uint8).reshape(-1, h, w).astype(np.float32)
         win = cv2.createHanningWindow((w, h), cv2.CV_32F)
         for a, b in zip(frames, frames[1:]):
-            (dx, dy), _ = cv2.phaseCorrelate(a, b, win)
+            # copies: phaseCorrelate windows its frames in place when it needn't pad them (16:9, 1:1, 4:5 ...),
+            # and each middle frame is in two pairs
+            (dx, dy), _ = cv2.phaseCorrelate(a.copy(), b.copy(), win)
             moves.append(math.hypot(dx, dy) / w)
     return round(statistics.median(moves), 5) if moves else None
 

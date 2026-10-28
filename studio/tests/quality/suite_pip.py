@@ -87,6 +87,24 @@ t0 = time.time()
 again = voiceover.recognise(CL[STUDIO])
 ok(again == rec[STUDIO] and (Path(CL[STUDIO]["clip_dir"]) / "footage.json").exists() and time.time() - t0 < 0.2,
    f"kept beside the clip: {first:.1f}s for all six the first time, {1000 * (time.time() - t0):.0f} ms again")
+# A 16:9 picture (192 x 108, no padding to its DFT size) is one phaseCorrelate windows in place: each middle frame
+# must reach it the same as the second of one pair and the first of the next (the 9:16 clips above can't show it).
+wide = P / "wide"
+wide.mkdir()
+subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(M / "site.mp4"), "-t", "3", "-an", "-vf", "crop=1080:608",
+                "-c:v", "libx264", "-preset", "veryfast", str(wide / "wide.mp4")], check=True)
+import cv2
+seen, real_pc = [], cv2.phaseCorrelate
+cv2.phaseCorrelate = lambda a, b, *rest: (seen.append((a.copy(), b.copy())), real_pc(a, b, *rest))[1]
+try:
+    wide_move = voiceover.camera_move({"duration": 3.0, "clip_dir": str(wide), "video_path": str(wide / "wide.mp4"),
+                                       "width": 1080, "height": 608})
+finally:
+    cv2.phaseCorrelate = real_pc
+same = sum(np.array_equal(a, prev_b) for (_, prev_b), (a, _) in zip(seen, seen[1:]))
+ok(len(seen) >= 2 and seen[0][0].shape == (108, 192) and same == len(seen) - 1 and wide_move,
+   f"the camera measure on 16:9 footage: every frame read as it is in both its pairs ({same} of {len(seen) - 1}), "
+   f"move {wide_move}")
 
 
 def mode_of(*ids):

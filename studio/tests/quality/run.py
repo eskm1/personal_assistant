@@ -25,7 +25,7 @@ STUDIO = HERE.parents[1]
 # name: (script, extra args, the checks it makes). Longest first, so the slow ones start at once.
 SUITES = {
     "finalcheck": ("suite_finalcheck.py", [], 59),
-    "pip": ("suite_pip.py", [], 80),
+    "pip": ("suite_pip.py", [], 81),
     "selffix": ("suite_selffix.py", [], 67),
     "ending": ("suite_ending.py", [], 71),
     "patches": ("suite_patches.py", [], 59),
