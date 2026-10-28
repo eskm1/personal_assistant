@@ -2843,9 +2843,9 @@ async function fixWords(d) {
     mark("words_fixed", { changes: r.changes.length, remember: w.remember, team: !isOwner() });
     state.wordsEdit = null;
     const kept = r.remembered?.length ? ` Remembered: ${r.remembered.join(", ")}.` : "";
+    // On to the next draft, as Approve and Send back do (Bryan, 2026-10-28); this one comes back as v+1.
+    await nextForReview();
     toast(`Fixing ${plural(r.changes.length, "caption")}, same cut, no cost. v${d.version + 1} comes back to To review in a few minutes.${kept}`, 6000);
-    await loadDetail();
-    sync();
   } catch (err) {
     w.error = err.message;
     btn.disabled = false;
