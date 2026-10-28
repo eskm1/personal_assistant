@@ -455,7 +455,8 @@ The jump cuts, reframing and punch-ins are settings in `.env` (all on by default
 sentences only), `STUDIO_END_CARD` (default on),
 `STUDIO_EDIT_REFRAME`, `STUDIO_EDIT_PUNCH_INS`, `STUDIO_EDIT_PUNCH_ZOOM` (default 1.12), `STUDIO_EDIT_SCENES`,
 `STUDIO_EDIT_SCENES_MAX` (default 3; `0` = none), `STUDIO_REEL_PICTURES` (AI pictures, below; default on),
-`STUDIO_REEL_PICTURES_MAX` (default 4), `STUDIO_SFX` (sound effects, below; default on), `STUDIO_SFX_LEVEL_DB`
+`STUDIO_REEL_PICTURES_MAX` (default 4), `STUDIO_EDIT_BEHIND` (words behind you, below; default on),
+`STUDIO_EDIT_BEHIND_MAX` (default 2), `STUDIO_SFX` (sound effects, below; default on), `STUDIO_SFX_LEVEL_DB`
 (default 24), `STUDIO_SFX_MAX` (default 5). The fix rounds,
 learning, caption font and music gap are too: `STUDIO_SELF_FIX_ROUNDS`, `STUDIO_SELF_FIX_MAX_USD`, `STUDIO_FINAL_CHECK`,
 `STUDIO_SPELL_CHECK`, `STUDIO_SPELL_MODEL`, `STUDIO_LEARN_RULES`,
@@ -538,6 +539,35 @@ card. Calm, never jarring"):
   deliberate and may flag one as too loud or jarring; its own round then takes that one off or turns them all down.
 - **Turning them off**: `STUDIO_SFX=0` (then a draft is made exactly as before). Slideshow Reels get none. Free: Epidemic's
   are in your subscription, Openverse's are CC0. The DaVinci Resolve project doesn't carry them yet.
+
+### Words behind you
+
+Big words can pop up in the background **behind your head**, so you stand in front of them (your ask of 2026-10-28:
+"Have words pop up behind my head together in the background"). The first of the layered looks.
+
+- **When**: the editor may choose it for the hook or one key line, on a shot of you talking where you're clearly in
+  the picture, alone, with a still camera and some wall around your head. At most `STUDIO_EDIT_BEHIND_MAX` (default
+  2, never more) a Reel, usually one or none. Each is up 1.5 to 4 seconds, timed to your words, never with a card, a
+  drawing or a picture at the same time, never in your small window in a voice-over, never in the last second.
+- **How it looks**: the words in the look's own font (Archivo, bold, in Site Notes), as big as fits, in one to three
+  lines, the key word in brass. They pop up together (a quick grow), hold, and fade. White with a soft shadow over a
+  dark or busy wall; dark over a light one. Placed behind and around your head inside the frame's safe area (never cut
+  off at the edge, never under the captions), with every word mostly readable. Your face is never covered: Studio cuts
+  your outline out of the words, and keeps the face it finds clear again on top of that.
+- **How it's made**: Studio finds you in every frame of that stretch (Google's MediaPipe person finder, on the Studio
+  machine's own processor, no cost), smooths your outline over time so it doesn't flicker, fits it to the picture's edges
+  and softens it, then lays the words with your shape cut out over the footage, under the captions, in the same one
+  encode. About 7 to 8 seconds of the machine's work for each second of the effect (a 2.5 s stretch: about 11 s).
+- **When it doesn't**: if Studio isn't sure of you there (you're small in the picture or missing from some frames,
+  your outline keeps changing, there's more than one person, the camera moves, it can't see your face, or you fill
+  so much of the picture that the words wouldn't read), the words go on top the usual way instead (the hook as the
+  hook, a key line as a callout) and the draft's checks say why. The watch-through also looks for words over your face
+  in the finished file, and Studio's own round takes them off if it finds any.
+- **Your say**: pause where you want them and write "**words behind me here**" (or "**put 'Screed first' behind
+  me**"); "**no words behind me**" takes them off for that post. Studio's read can add or take off the same way.
+- **The first time**: the person finder's model (16 MB, from Google's model store) is fetched once into
+  `Studio\Models`; if it can't be fetched, the words go on top and it's tried again an hour later.
+  `STUDIO_EDIT_BEHIND=0` turns it off. The DaVinci Resolve project has the words on the animations track.
 
 ### Voice-overs: film on site, talk in the studio
 

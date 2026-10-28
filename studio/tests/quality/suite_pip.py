@@ -487,8 +487,10 @@ old.render_cut = old_render
 # In the look the editor before made (gallery): Site Notes (2026-10-22, suite_look.py) changed the look on purpose
 # since, and the prompt's three lines on titles, key words and cards with it (LOOK_WORDING); nothing else. And without
 # the sound effects (2026-10-26, suite_sfx.py), added on purpose since: off, a draft is made exactly as before them.
+# Nor words behind him (2026-10-28, suite_behind.py): off, the prompt is the one before them (the plan the same either way).
 settings.TITLE_STYLE = "gallery"
 settings.SFX = False
+settings.EDIT_BEHIND = False
 pid_o, fake_o = production([SITE], "On site (before)", SITE_CUTS, picture=False)
 anthropic.Anthropic = lambda **kw: fake_o
 final_o = old.edit(conn, pid_o, client=fake_o, find_track=fake_track)
@@ -497,7 +499,8 @@ anthropic.Anthropic = lambda **kw: fake_n
 final_n = editor.edit(conn, pid_n, client=fake_n, find_track=fake_track)
 settings.TITLE_STYLE = "site"
 settings.SFX = True
-eo, en = json.loads(row(pid_o)["edl"]), json.loads(row(pid_n)["edl"])
+settings.EDIT_BEHIND = True
+eo, en =json.loads(row(pid_o)["edl"]), json.loads(row(pid_n)["edl"])
 ok(eo == en, "on site, talking head only: the edit plan is exactly what the editor before made"
    + ("" if eo == en else f" (differs in {sorted(k for k in set(eo) | set(en) if eo.get(k) != en.get(k))})"))
 LOOK_WORDING = [

@@ -40,7 +40,7 @@ _item = {"anyOf": [{"type": "integer"}, {"type": "null"}]}
 
 # What a fix the editor can make does, exactly (fix_actions.py makes it): one machine action per fix.
 REEL_ACTIONS = ("caption_word", "drop_words", "restore_words", "trim_pause", "move_cut", "graphic", "hook_text",
-                "music_level", "sound_effects", "layout", "replan", "none")
+                "music_level", "sound_effects", "layout", "behind", "replan", "none")
 CAROUSEL_ACTIONS = ("slide_text", "replan", "none")
 ACTION_FIELDS = ("", "before", "after", "time", "title", "lines", "remove", "heading", "body", "caption", "full", "window",
                  "left", "right", "picture")
@@ -178,6 +178,10 @@ by (negative = quieter, item null, field "").
   - layout: only in a voice-over (Bryan in a small window over site footage): field "full" shows him full \
 screen from start to end (start alone: the sentence he says there; both null: all through), "window" puts the \
 site footage and his window back there, "left" or "right" moves his window to that corner for the whole draft.
+  - behind: only when the material lists words behind Bryan, or a talking shot where he is alone and still would \
+be stronger with them: item = its number (B2 = 2) with field "remove" takes those words off (item null: all of them); \
+field "" puts words behind him: start and end = when (on a shot of him talking), to = 1 to 4 words (one *key* word \
+or none).
   - replan: only when none of these can make it (reordering, a different take, a new drawn animation, \
 caption timing, anything across many places): reason = why, in a few words.
   A fix that isn't editor_can_fix has type "none". Fields a type doesn't use are null, or "" (field "").
@@ -549,7 +553,9 @@ def _context(conn, production: dict) -> str:
     cut_words = _cut_words(cuts, clips, total)
     if cut_words:
         lines.append(cut_words)
-    lines.append(f"Hook text on screen for the first ~2.5s: {edl.get('hook_text') or '(none)'}")
+    behind_hook = next((f"\"{b['words']}\", behind Bryan (B{k}, not on top)" for k, b in enumerate(edl.get("behind") or [], 1)
+                        if b.get("role") == "hook"), "")
+    lines.append(f"Hook text on screen for the first ~2.5s: {edl.get('hook_text') or behind_hook or '(none)'}")
     vo = edl.get("voiceover") or {}
     if vo.get("on"):
         import voiceover
@@ -593,6 +599,9 @@ def _context(conn, production: dict) -> str:
                                  for n, d in shown))
     if pictures.available():
         lines.append(f"Studio can't make pictures for this draft ({pictures.available()}): no \"picture\" fixes.")
+    import behind
+    if behind.read_line(edl):
+        lines.append(behind.read_line(edl) + ". Judge them like graphics: readable, his face clear, not too many.")
     import sfx
     if sfx.listed(edl):
         lines.append(sfx.listed(edl) + f". They sit about {edl['sfx'].get('level_db', settings.SFX_LEVEL_DB):.0f} dB "
@@ -846,7 +855,8 @@ def run(conn, production_id: int, client=None, ref: str | None = None) -> dict:
     grid = [total * (i + 0.5) / STILLS for i in range(STILLS)]
     import pictures
     import sfx
-    extra = [round((d["start"] + d["end"]) / 2, 2) for d in inserts(edl) + pictures.listed(edl)
+    import behind
+    extra = [round((d["start"] + d["end"]) / 2, 2) for d in inserts(edl) + pictures.listed(edl) + behind.listed(edl)
              if not any(d["start"] <= t <= d["end"] for t in grid)]
     with tempfile.TemporaryDirectory(prefix="studio-review-") as tmp:
         content = []

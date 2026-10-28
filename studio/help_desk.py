@@ -63,7 +63,7 @@ PAGE_WORDS = {
     "content": "content plan month mix kinds targets offers",
     "questions": "client questions topics suggest",
     "review": "review drafts approve send back notes",
-    "draft": "draft notes approve send back reject caption studio read fixes video slideshow voice over window full screen picture pictures image animation drawn concept sound effects whoosh chime",
+    "draft": "draft notes approve send back reject caption studio read fixes video slideshow voice over window full screen picture pictures image animation drawn concept sound effects whoosh chime words behind me head",
     "carousel": "carousel slides notes approve send back concept pictures slideshow reel music",
     "producing": "being edited editor revising",
     "done": "done approved rejected archive remove back to review",

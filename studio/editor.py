@@ -317,6 +317,9 @@ def _schema(pictures_on: bool = False) -> dict:
     if pictures_on:
         import pictures
         schema = pictures.schema(schema)
+    import behind
+    if not behind.available():  # words behind Bryan (behind.py)
+        schema = behind.schema(schema)
     return schema
 
 
@@ -384,6 +387,8 @@ def _revision_block(conn, production: dict, fixes: list[dict] | None = None) -> 
             f"  {g['start']:.1f}-{g['start'] + g['duration']:.1f}s in the draft: clip {g['clip_id']} at {g['at']:.2f}s, "
             f"{g['duration']:.1f}s, {g.get('look', 'cutaway')}, {g.get('role', 'explain')}, why: {g.get('why') or '-'}, "
             f"title: {g.get('title', '')}, image: {g.get('image', '')}" for g in pics)
+    import behind
+    shown += behind.describe(previous)
     import voiceover
     picture = voiceover.describe(previous.get("pip"))
     if picture:
@@ -467,6 +472,7 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes
     (_fresh_block), nothing of the previous edit in the prompt. A voice-over (voiceover.mode: a studio
     talking head and site B-roll) is planned with the B-roll before the words it shows, and comes back
     split: edl["cuts"] his voice, edl["broll"] what's laid over it (voiceover.split_plan)."""
+    import behind
     import pictures
     import voiceover
     plan = json.loads(production["plan"] or "{}")
@@ -504,7 +510,7 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes
         output_config={"effort": "high", "format": {"type": "json_schema", "schema": voiceover.schema(_schema(bool(picture_rule)))
                                                                        if vo["on"] else _schema(bool(picture_rule))}},
         system=_SYSTEM.replace("{playbook}", playbook.text()).replace("{music_rule}", music_rule)
-        .replace("{pause_rule}", pause_rule).replace("{scene_rule}", _scene_rule()).replace("{picture_rule}", picture_rule)
+        .replace("{pause_rule}", pause_rule).replace("{scene_rule}", _scene_rule()).replace("{picture_rule}", picture_rule + behind.rule())
         .replace("{voiceover_rule}", voiceover.plan_rule(vo) + "\n" if vo["on"] else "") + "\n\n" + wording.guide(),
         messages=[{"role": "user", "content": user}],
     )
@@ -516,6 +522,7 @@ def plan_edit(conn, production: dict, clips: dict[int, dict], client=None, fixes
         raise RuntimeError("Claude's edit plan was cut off (max_tokens)")
     edl = json.loads(next(b.text for b in response.content if b.type == "text"))
     edl = tidy_plan(polish_plan(edl, ref or f"production:{production['id']}", client))
+    behind.take(edl, json.loads(production.get("edl") or "{}"))  # words behind him: edl["behind_plan"] (behind.py)
     picture = edl.pop("picture", None)
     if vo["on"]:
         voiceover.split_plan(edl, vo, picture)
@@ -3161,6 +3168,8 @@ def edit(conn, production_id: int, client=None, find_track=None) -> Path:
     previous = json.loads(production.get("edl") or "{}")
     if notes and previous.get("cuts"):
         edl["picture_asks"] = pictures.apply_asks(edl, pictures.asks_from_notes(notes, previous))
+        import behind  # "words behind me here", "no words behind me" (behind.py)
+        edl["picture_asks"] += behind.apply_asks(edl, behind.asks_from_notes(notes, previous, clips))
     # A note on the sound effects ("no sound effects", "the whoosh is too loud") holds for this post from then on.
     if settings.SFX:
         import sfx
@@ -3673,6 +3682,18 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
         else:
             edl.pop("pictures", None)
         checks += [{"did": n, "counted": False} for n in scene_notes + pic_notes]
+        # Words behind him (behind.py): big words with his shape cut out, over the footage and under the captions; any
+        # that can't be made are shown on top as usual (the hook as the hook, a key line as a callout), and say why.
+        import behind
+        behind_layers, behind_cards, behind_notes = behind.run(
+            edl, cuts, picture, words, clear_by, cards + scenes + pics, window["spans"] if window else [], look,
+            production["brand"])
+        if behind_cards:
+            cards = sorted(cards + behind_cards, key=lambda g: g["start"])
+            graphics = edl["graphics"] = sorted(graphics + behind_cards, key=lambda g: g["start"])
+        checks += [{"did": n, "counted": False} for n in behind_notes]
+        if edl.get("behind") and not placed:
+            edl["summary"] = (edl.get("summary", "").rstrip() + " " + behind.summary(edl)).strip()
         if scenes and not placed:
             edl["summary"] = (edl.get("summary", "").rstrip() + " " + scene_summary(
                 [g for g in scenes if not g.get("instead_of_picture")])).strip()
@@ -3720,8 +3741,8 @@ def _render(conn, production: dict, clips: dict, edl: dict, plan: dict, version:
                               note=f"Add music in the Instagram app: {edl['music']['mood']}, around "
                                    f"{edl['music']['tempo_bpm']:.0f} BPM, kept low under your voice.")
 
-        layers = {"inserts": [(insert_file(g), g["start"]) for g in sorted(scenes + pics, key=lambda g: g["start"])]} \
-            if scenes or pics else {}
+        inserts = [(insert_file(g), g["start"]) for g in sorted(scenes + pics, key=lambda g: g["start"])] + behind_layers
+        layers = {"inserts": inserts} if inserts else {}
         # Soft sound effects on the graphics (sfx.py): a whoosh as each comes in, ticks on a numbers panel, the end
         # card's chime; sparse, clear of his loud words, well under his voice. None (and no edl["sfx"]) when off.
         import sfx
