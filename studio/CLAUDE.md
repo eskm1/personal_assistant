@@ -211,6 +211,19 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   `Studio/SoundEffects`, `edl["sfx"]` with source/id/licence), mixed in `editor.mix_final` (`effects_stem`,
   `STUDIO_SFX_LEVEL_DB` 24 under the voice's loud parts), notes/`edl["sfx_pref"]`, the read's `sound_effects` action.
   `STUDIO_SFX`, `STUDIO_SFX_MAX` (5). Slideshows and Resolve: none. `tests/quality/suite_sfx.py`.
+- Words behind Bryan, built 2026-10-28 (Bryan: "Have words pop up behind my head together in the background"; the
+  first layered effect, wall text in perspective later; **not yet proven on real footage on the server**, only on
+  synthetic clips and the fixture photo): `behind.py`, graphics style `behind` in the plan (moved to `edl["behind_plan"]`
+  by `take`, so nothing else reads a new graphics style), placed (`place`: the hook from 0 or a key line, 1.5-4 s, one
+  framing, clear of cards/inserts/the pip window), the person found per frame by MediaPipe's selfie multiclass model on
+  LiteRT (`ai-edge-litert`, CPU; model fetched once from storage.googleapis.com into `Studio/Models`, sha256 checked),
+  smoothed over time, guided-filtered, feathered, the confidence check (`confidence`), the words laid out round his head
+  (`choose`), rendered as one more transparent insert under the captions (`edl["behind"]`, cached in `Renders/inserts`,
+  ~7-8 CPU s a second of effect); any failure = words on top (hook / callout) with why in the checks. Notes ("words
+  behind me here", "no words behind me": `asks_from_notes`/`apply_asks`, `edl["behind_off"]`), the read's action
+  `behind` (`fix_actions._behind`), `final_check._behind_face` (words over the face in the finished file). Needs the
+  updater's pip install (ai-edge-litert) on the server's next update. `STUDIO_EDIT_BEHIND`, `STUDIO_EDIT_BEHIND_MAX` (2).
+  `tests/quality/suite_behind.py`.
 - Editor upgrades built (not yet proven on real footage): jump cuts (`editor.tighten`), face-tracked
   reframing of horizontal footage and punch-ins (`framing.py`, OpenCV), each a `STUDIO_EDIT_*` setting.
   Still offered: numbered chapter labels, screenshots floating above the speaker.

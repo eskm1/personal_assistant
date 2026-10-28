@@ -176,6 +176,7 @@ window.StudioHelp = (() => {
       "A slideshow Reel (a carousel with music): a note can change a slide's time, the order or the music.",
       "A voice-over (you in a small window over site footage): write **full screen here**, **move me to the left** or **no window**.",
       "A wrong word in the captions: **Transcript**, **Edit words**, correct it, **Fix captions**. Same cut, no cost.",
+      "Want the words behind you? Pause there and write **words behind me here**, or **no words behind me**.",
     ], tour: [
       ["#player-frame", "The draft. Tap to play."],
       ["#quick-note, #note-jump, #note-body", "Type a note. It pins to the moment the video is at."],

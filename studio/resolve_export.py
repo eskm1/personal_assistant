@@ -6,7 +6,8 @@ by hand in the free DaVinci Resolve, with every layer still editable.
         timeline.fcpxml   the cut, pointing at the ORIGINAL clips (full quality,
                           every cut can be trimmed back out), plus the layers below
         captions.mov      the styled captions on a transparent layer (ProRes 4444)
-        animations.mov    the drawn animations (motion library inserts) and AI pictures (pictures.py), same, on their own track
+        animations.mov    the drawn animations (motion library inserts), AI pictures (pictures.py) and the words behind Bryan
+                          (behind.py: his shape cut out of them, so they match this cut), same, on their own track
         window.mov        a voice-over's window (Bryan over the site footage), same; the site footage itself is
                           on V2 as clips from the originals
         graphics.mov      the hook and B-roll cards, same
@@ -322,11 +323,16 @@ def build(conn, production_id: int) -> Path:
                 layers.append(("Your window over the site footage", work / "window.mov", lane))
                 lane += 1
         # The drawn animations get a track of their own, under the cards and the captions.
+        import behind
         inserts = [g for g in edl.get("graphics", []) if g.get("style") in ("scene", "picture") and "start" in g]
         scenes = [g for g in inserts if g.get("style") == "scene"]
+        inserts += behind.for_resolve(edl)
         if inserts and editor.scenes_layer(inserts, whole, work / "animations.mov"):
             pics = any(g.get("style") == "picture" for g in inserts)
-            layers.append(("Drawn animations and pictures" if pics else "Drawn animations", work / "animations.mov", lane))
+            name = "Drawn animations and pictures" if pics else "Drawn animations"
+            if any(g.get("style") == behind.STYLE for g in inserts):
+                name = "Words behind you" if len(inserts) == len(behind.for_resolve(edl)) else name + ", words behind you"
+            layers.append((name, work / "animations.mov", lane))
             lane += 1
         cards = [g for g in edl.get("graphics", []) if g.get("style") not in ("scene", "picture")]
         if edl.get("hook_text", "").strip() or cards or end:

@@ -4,7 +4,8 @@ the reference study (beat timeline, structure, YouTube through Gemini; refused d
 the service, study folders), sound effects on the graphics, the profile grid (photos-only carousels, the grid flag, the
 account's stills and profile), reference downloads (hand-added first, the library's hourly cap, the sign-in that needs
 attention, Instagram's 400 as a refusal, uploaded files and OneDrive drops attached to their reference), Edit words (the
-corrected transcript as caption corrections, the next version with the same cut and no Claude). One line per suite with its
+corrected transcript as caption corrections, the next version with the same cut and no Claude), words behind Bryan (his
+shape cut out of big words, the confidence check and its fallbacks, the notes and patches). One line per suite with its
 pass count; exits 1 if any check fails.
 
     python tests/quality/run.py                # from studio/, all suites, 4 at a time
@@ -30,6 +31,7 @@ SUITES = {
     "patches": ("suite_patches.py", [], 59),
     "slideshow": ("suite_slideshow.py", [], 97),
     "pictures": ("suite_pictures.py", [], 67),
+    "behind": ("suite_behind.py", [], 86),
     "sfx": ("suite_sfx.py", [], 67),
     "look": ("suite_look.py", [], 55),
     "cuts": ("suite_cuts.py", [], 41),

@@ -19,6 +19,8 @@ draft is rendered again with every code check (voice edges, the clipped-word che
   music_level     the music turned down or up by some dB
   sound_effects   the soft sound effects (sfx.py): one taken off (by its number in the read), all off, or all
                   quieter or louder by some dB
+  behind          words behind Bryan (behind.py): one taken off (by its number in the read, B2 = 2) or all, or
+                  words put behind him from a start to an end
   layout          a voice-over's picture (voiceover.py): Bryan full screen for a stretch ("full"), the site
                   footage and his window back there ("window"), or his window moved "left" or "right"
   replan          only when nothing smaller fits: the old way, a new edit plan from the editor
@@ -42,7 +44,7 @@ import voice_edges
 log = logging.getLogger("studio.fix_actions")
 
 PATCHES = ("caption_word", "drop_words", "restore_words", "trim_pause", "move_cut", "graphic", "hook_text",
-           "music_level", "sound_effects", "layout", "slide_text")
+           "music_level", "sound_effects", "layout", "behind", "slide_text")
 CUTS = ("drop_words", "restore_words", "trim_pause", "move_cut")
 
 NEAR = 3.0               # seconds: how far from the read's time its words or join may be
@@ -567,6 +569,10 @@ def _hook(edl: dict, a: dict) -> str:
         raise NotApplied("the new hook is longer than 8 words")
     if text == (edl.get("hook_text") or "") and italic == (edl.get("hook_italic") or ""):
         raise NotApplied("the hook already says that")
+    import behind
+    behind_did = behind.reword_hook(edl, text, italic)  # the hook shown behind him: reworded there, not twice
+    if behind_did:
+        return behind_did
     edl["hook_text"], edl["hook_italic"] = text, italic
     return f"the hook now reads \"{text}\"" if text else "took the hook text off"
 
@@ -618,6 +624,14 @@ def _layout(draft: Draft, edl: dict, a: dict) -> str:
             + (f" at {_mmss(start)}" if start is not None else " all through"))
 
 
+def _behind(draft: Draft, edl: dict, a: dict) -> str:
+    import behind
+    try:
+        return behind.patch(edl, draft, a)
+    except ValueError as e:
+        raise NotApplied(str(e))
+
+
 def _remap(old: Draft, new: Draft, t: float) -> float:
     """A moment on the old draft's clock on the new one (the same footage)."""
     src = old.to_source(t)
@@ -651,6 +665,8 @@ def apply(edl: dict, clips: dict[int, dict], actions: list[dict]) -> tuple[dict,
                 res["did"] = _effects(new, a)
             elif kind == "layout":
                 res["did"] = _layout(draft, new, a)
+            elif kind == "behind":
+                res["did"] = _behind(draft, new, a)
             elif kind in CUTS:
                 planned, did = {"drop_words": _plan_drop, "restore_words": _plan_restore,
                                 "trim_pause": _plan_pause, "move_cut": _plan_move}[kind](draft, a)
@@ -677,7 +693,7 @@ def apply(edl: dict, clips: dict[int, dict], actions: list[dict]) -> tuple[dict,
             pieces = cuts
         else:
             after = Draft(pieces, clips)
-            for g in new.get("graphics") or []:
+            for g in (new.get("graphics") or []) + (new.get("behind") or []):
                 if "start" in g:
                     g["start"] = round(_remap(draft, after, g["start"]), 3)
                     g["duration"] = round(min(g["duration"], max(after.total - g["start"], 1.0)), 3)

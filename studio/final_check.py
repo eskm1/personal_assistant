@@ -20,7 +20,8 @@ Listen back: the finished sound against the words the cut list meant to keep.
 Watch through: the picture at SAMPLE_FPS against the edit plan's hook, cards, drawings and pictures.
   covers_face  the hook, a callout or a panel (drawn or a picture; in Site Notes a card too, a panel over the
                footage) over the face (framing.find_faces) for more than COVER_SECONDS; full-screen cards,
-               drawings and pictures replace the picture on purpose
+               drawings and pictures replace the picture on purpose; words behind him (behind.py) showing over
+               the middle of his face (the cut-out missed it: their own layer's words, where the face finder sees him)
   flash        a graphic up for less than FLASH seconds
   too_fast     words that leave before they can be read: READ_BASE + READ_PER_CHAR a character,
                at least READ_MIN (the end card is deliberate and not held to it); a picture (pictures.py)
@@ -718,6 +719,7 @@ def watch(job: dict) -> tuple[list[dict], int]:
         # Still on at the close
         if x["n"] is not None and x["end"] > clear_by + 0.05:
             out.append(_late_fix(x, name, clear_by, graphics))
+    out += _behind_face(edl, faces)
     # The same animation twice back to back
     for a, b in zip(graphics, graphics[1:]):
         if b["start"] - a["end"] < REPEAT_GAP and _same(a, b, grey):
@@ -735,6 +737,41 @@ def watch(job: dict) -> tuple[list[dict], int]:
                             total - 0.5, total, None, "the end card",
                             left_note="Studio can't change how the end card moves; worth a look before posting."))
     return out, len(grey)
+
+
+FACE_CORE = 0.6          # the middle of the face finder's box: all face, no background beside it
+BEHIND_OVER = 0.1        # words behind him over this share of that middle: the cut-out missed his face
+
+
+def _behind_face(edl: dict, faces: "_Faces") -> list[dict]:
+    """Words behind him (behind.py) that show over his face: his shape is cut out of them, so where the face finder
+    (not the person finder that made the cut-out) sees his face, the layer's own words must not be. A broken cut-out
+    is flagged like a title over the face, and the fix takes those words off."""
+    import behind
+    out = []
+    sx, sy = FRAME_W / editor.W, FRAME_H / editor.H
+    for n, b in enumerate(edl.get("behind") or [], 1):
+        f = editor.INSERTS / f"{b.get('file')}.webm"
+        if not b.get("file") or not f.exists():
+            continue
+        alpha = behind.alpha_frames(f, SAMPLE_FPS, (FRAME_W, FRAME_H))
+        run = best = 0
+        for k in range(len(alpha)):
+            face = faces.at(int(round((b["start"] + k / SAMPLE_FPS) * SAMPLE_FPS)))
+            hit = False
+            if face is not None:
+                cx, cy = (face[0] + face[2]) / 2 * sx, (face[1] + face[3]) / 2 * sy
+                hw, hh = (face[2] - face[0]) * sx * FACE_CORE / 2, (face[3] - face[1]) * sy * FACE_CORE / 2
+                core = alpha[k, max(0, int(cy - hh)):int(cy + hh) + 1, max(0, int(cx - hw)):int(cx + hw) + 1]
+                hit = core.size > 0 and float((core > 128).mean()) >= BEHIND_OVER
+            run = run + 1 if hit else 0
+            best = max(best, run)
+        if best / SAMPLE_FPS > COVER_SECONDS:
+            end = b["start"] + b["duration"]
+            out.append(_fix("covers_face", f"Take the words \"{b['words']}\" from behind you at {_mmss(b['start'])}",
+                            "They show over your face: Studio's cut-out of you missed there.", b["start"], end,
+                            _action("behind", start=b["start"], end=end, item=n, field="remove"), b["words"]))
+    return out
 
 
 def _same(a: dict, b: dict, grey: np.ndarray) -> bool:

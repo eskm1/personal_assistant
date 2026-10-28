@@ -155,6 +155,11 @@ EDIT_SCENES_MAX = min(max(int(_env("STUDIO_EDIT_SCENES_MAX", "3") or 3), 0), 6)
 # draft (one picture each, a second only when the check finds it wrong). Needs GEMINI_API_KEY; off = drawings.
 REEL_PICTURES = _flag("STUDIO_REEL_PICTURES", True)
 REEL_PICTURES_MAX = min(max(int(_env("STUDIO_REEL_PICTURES_MAX", "4") or 4), 0), 8)
+# Words behind Bryan (behind.py; Bryan, 2026-10-28: "Have words pop up behind my head together in the background"):
+# big words in the background that he stands in front of, for the hook or a key line, at most EDIT_BEHIND_MAX a Reel
+# (2 at most). Needs the person finder (ai-edge-litert, its model fetched once into Studio/Models). Off = words on top.
+EDIT_BEHIND = _flag("STUDIO_EDIT_BEHIND", True)
+EDIT_BEHIND_MAX = min(max(int(_env("STUDIO_EDIT_BEHIND_MAX", "2") or 2), 0), 2)
 # Studio fixes its own list (self_fix.py): after a draft renders and Studio's read runs, the
 # fixes the editor can make itself are made, up to this many rounds, before Bryan sees the draft.
 # Most are made directly (a caption word, a stutter, a pause, a cut point, a card, the hook, the
