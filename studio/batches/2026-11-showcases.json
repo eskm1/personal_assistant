@@ -1,6 +1,6 @@
 {
  "project": "Finished homes",
- "folder": "Showcases/<the long condo's folder: pass --folder>",
+ "folder": "<the long condo's folder: its full path from OneDrive's top, passed with --folder>",
  "ideas": [
   {
    "date": "2026-11-02",

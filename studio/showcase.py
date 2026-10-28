@@ -4,12 +4,15 @@ carousels are photos only, every slide 4:5, a small cover line on slide 1, no te
 
 A carousel job (cloud_sync, "Make this") may carry, in its payload,
 
-    "photos": {"folder": "<a OneDrive folder>", "files": ["Other 12", "11", ...], "cover": "One long room."}
+    "photos": {"folder": "<the folder's path in OneDrive>", "files": ["Other 12", "11", "GIF 1"], "cover": "One long room."}
 
-and Studio then sets the idea's slides from those photos, in that order, before it lays the carousel out: each
-name is a file in the folder whose name without its extension matches (case and extra spaces ignored), a .jpg,
-.jpeg, .png, .heic, .heif, .webp or .gif (a GIF's first frame). The cover line goes on slide 1 only. Nothing is
-changed unless every photo is found and read: a missing or doubled name stops the job with the names said.
+and Studio then sets the idea's slides from those photos, in that order, before it lays the carousel out. The folder
+is its full path from OneDrive's top (e.g. "<...>/Showcases/<home>"), and its subfolders are read too. A name is a
+picture's name without its extension (case and extra spaces ignored): "11" is a picture at the top of the folder, and
+"Other 12" a picture called 12 in a subfolder whose name starts with "Other" ("Other photos/12.jpg"); the picture's
+path without its extension ("Other photos/12") works as well. A .jpg, .jpeg, .png, .heic, .heif, .webp or .gif (a
+GIF's first frame). The cover line goes on slide 1 only. Nothing is changed unless every photo is found and read: a
+missing name, or one that fits more than one picture, stops the job with the names said.
 The folder name is never written into the idea or the draft (it may name a place); only the photos are kept.
 
 showcase_batch.py (run on the laptop) queues these jobs, with the posting dates, titles and captions.
@@ -61,15 +64,26 @@ def check_spec(spec) -> dict:
     return {"folder": folder, "files": [f.strip() for f in files], "cover": cover}
 
 
+def names_of(path: str) -> set[str]:
+    """The names a picture answers to, from its path in the folder: "11.jpg" -> {"11"}; "Other photos/12.jpg" ->
+    {"other photos/12", "other 12"} (the subfolder's first word and the name)."""
+    parts = [p for p in str(path).replace("\\", "/").split("/") if p]
+    stem = Path(parts[-1]).stem
+    if len(parts) == 1:
+        return {_norm(stem)}
+    first = _norm(parts[-2]).split(" ")[0]
+    return {_norm("/".join(parts[:-1]) + "/" + stem), _norm(f"{first} {stem}")}
+
+
 def match(entries: list[dict], files: list[str]) -> list[dict]:
-    """The folder's listing (rclone lsjson) matched to the names, in their order. Raises ShowcaseError naming
+    """The folder's listing (rclone lsjson -R) matched to the names, in their order. Raises ShowcaseError naming
     every photo that isn't there or matches more than one file."""
     by_stem: dict[str, list[dict]] = {}
     for e in entries:
-        name = str(e.get("Name") or "")
-        stem, ext = Path(name).stem, Path(name).suffix.lower()
-        if ext in EXTS and not e.get("IsDir"):
-            by_stem.setdefault(_norm(stem), []).append(e)
+        path = str(e.get("Path") or e.get("Name") or "")
+        if Path(path).suffix.lower() in EXTS and not e.get("IsDir"):
+            for key in names_of(path):
+                by_stem.setdefault(key, []).append(e)
     missing, doubled, out = [], [], []
     for f in files:
         hits = by_stem.get(_norm(f), [])
@@ -89,6 +103,17 @@ def match(entries: list[dict], files: list[str]) -> list[dict]:
     return out
 
 
+def listing(folder: str) -> list[dict]:
+    """Every file in the folder and its subfolders (rclone lsjson -R). Raises ShowcaseError when the folder isn't
+    there."""
+    try:
+        return onedrive._lsjson(folder, recursive=True, timeout=180)
+    except onedrive.OneDriveError as e:
+        if "not found" in str(e).lower() or "directory not found" in str(e).lower():
+            raise ShowcaseError("that OneDrive folder wasn't found (give its full path from OneDrive's top)") from None
+        raise
+
+
 def _key() -> str:
     return "s" + secrets.token_hex(4)
 
@@ -100,13 +125,13 @@ def import_photos(api, spec: dict) -> list[dict]:
     spec = check_spec(spec)
     if onedrive.rclone_path() is None:
         raise ShowcaseError("OneDrive isn't connected on the Studio machine")
-    entries = onedrive._lsjson(spec["folder"], timeout=120)
-    found = match(entries, spec["files"])
+    found = match(listing(spec["folder"]), spec["files"])
     slides = []
     with tempfile.TemporaryDirectory(prefix="showcase-", dir=settings.ROOT) as tmp:
         for n, e in enumerate(found, 1):
-            local = Path(tmp) / f"{n:02d}{Path(e['Name']).suffix.lower()}"
-            onedrive._run(["copyto", onedrive._remote(spec["folder"], e["Name"]), str(local)], timeout=300)
+            rel = str(e.get("Path") or e["Name"])
+            local = Path(tmp) / f"{n:02d}{Path(rel).suffix.lower()}"
+            onedrive._run(["copyto", onedrive._remote(spec["folder"], rel), str(local)], timeout=300)
             try:
                 photo = slide_images.save_photo(local)
             except ValueError as err:

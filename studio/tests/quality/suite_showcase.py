@@ -16,29 +16,42 @@ conn = catalog.connect()
 
 # ── A fake OneDrive folder ────────────────────────────────────────────────────
 DRIVE = ROOT / "t_drive"
-FOLDER = "Showcases/Home A"
+FOLDER = "Work/Showcases/Home A"   # a full path from OneDrive's top, as on the server
 shutil.rmtree(DRIVE, ignore_errors=True)
 (DRIVE / FOLDER).mkdir(parents=True)
 
 
 def pic(name, colour, size=(1600, 2000), fmt=None):
     img = Image.new("RGB", size, colour)
+    (DRIVE / FOLDER / name).parent.mkdir(parents=True, exist_ok=True)
     img.save(DRIVE / FOLDER / name, fmt)
 
 
-pic("Other 12.jpg", (200, 40, 40))
+# Like the long condo's folder: pictures at the top, and subfolders "Other photos/" and "GIF/".
+pic("Other photos/12.jpg", (200, 40, 40))
 pic("11.JPG", (40, 200, 40))
-pic("other  1.png", (40, 40, 200))
-pic("GIF 1.gif", (220, 220, 40), fmt="GIF")
+pic("Other photos/1.png", (40, 40, 200))
+pic("GIF/1.gif", (220, 220, 40), fmt="GIF")
+pic("12.jpg", (90, 90, 90))                      # a 12 at the top too: "12" and "Other 12" stay apart
 pic("16.heic.txt", (0, 0, 0), fmt="PNG")       # not a picture name: ignored
 pic("Dup.jpg", (10, 10, 10))
 pic("Dup.png", (10, 10, 10))
+pic("Other photos/5.jpg", (10, 10, 10))
+pic("Other pics/5.jpg", (10, 10, 10))            # "Other 5" fits two pictures
 copied = []
+
+
+listed = []
 
 
 def fake_ls(*parts, recursive=False, dirs=False, timeout=300):
     folder = DRIVE / "/".join(parts)
-    return [{"Name": p.name, "IsDir": p.is_dir(), "Size": p.stat().st_size} for p in sorted(folder.iterdir())]
+    listed.append(("/".join(parts), recursive))
+    if not folder.is_dir():
+        raise onedrive.OneDriveError("OneDrive problem: directory not found")
+    found = sorted(folder.rglob("*") if recursive else folder.iterdir())
+    return [{"Path": p.relative_to(folder).as_posix(), "Name": p.name, "IsDir": p.is_dir(), "Size": p.stat().st_size}
+            for p in found if not (dirs is False and p.is_dir())]
 
 
 def fake_run(args, timeout):
@@ -106,16 +119,22 @@ for bad, why in (({"folder": "", "files": ["a", "b"]}, "no folder"), ({"folder":
         ok(False, f"refused: {why}")
     except showcase.ShowcaseError as e:
         ok(True, f"refused: {why} ({e})")
-entries = fake_ls(FOLDER)
-got = showcase.match(entries, ["other 12", "11", "Other 1", "gif 1"])
-ok([e["Name"] for e in got] == ["Other 12.jpg", "11.JPG", "other  1.png", "GIF 1.gif"],
-   f"matched by name, case and spaces ignored, in the order given ({[e['Name'] for e in got]})")
+entries = showcase.listing(FOLDER)
+ok(listed[-1] == (FOLDER, True), "the folder is listed with its subfolders")
+got = showcase.match(entries, ["other 12", "11", "Other  1", "gif 1", "12", "Other photos/12"])
+ok([e["Path"] for e in got] == ["Other photos/12.jpg", "11.JPG", "Other photos/1.png", "GIF/1.gif", "12.jpg", "Other photos/12.jpg"],
+   f"\"Other 12\" is 12 in the Other subfolder, \"11\" at the top, the path works too; case and spaces ignored ({[e['Path'] for e in got]})")
 try:
-    showcase.match(entries, ["Other 12", "19", "Dup", "16"])
+    showcase.match(entries, ["Other 12", "19", "Dup", "16", "Other 5", "GIF 2"])
     ok(False, "a missing or doubled photo stops it")
 except showcase.ShowcaseError as e:
-    ok("19" in str(e) and "16" in str(e) and "Dup" in str(e) and "Nothing was changed" in str(e),
+    ok(all(n in str(e) for n in ("19", "16", "Dup", "Other 5", "GIF 2")) and "Nothing was changed" in str(e),
        f"a missing or doubled photo stops it, each named ({e})")
+try:
+    showcase.listing("Work/Showcases/Nowhere")
+    ok(False, "a folder that isn't there says so")
+except showcase.ShowcaseError as e:
+    ok("full path" in str(e), f"a folder that isn't there says so ({e})")
 
 # ── The job: photos become the slides, then Make this ─────────────────────────
 print("== the carousel job")
@@ -140,8 +159,8 @@ ok(len(slides) == 4 and all(s["image"]["source"] == "photo" for s in slides) and
    "the idea's slides are the four photos, laid out photos only")
 ok(slides[0]["heading"] == "One long room, one long table." and all(not s["heading"] and not s["body"] for s in slides[1:]),
    "the cover line on slide 1 only; no words on the others")
-ok(copied == [f"{FOLDER}/Other 12.jpg", f"{FOLDER}/11.JPG", f"{FOLDER}/other  1.png", f"{FOLDER}/GIF 1.gif"],
-   "fetched from OneDrive in the order given")
+ok(copied == [f"{FOLDER}/Other photos/12.jpg", f"{FOLDER}/11.JPG", f"{FOLDER}/Other photos/1.png", f"{FOLDER}/GIF/1.gif"],
+   "fetched from OneDrive in the order given, from their subfolders")
 ok(len(api.uploads) == 4 and all(u.startswith("photos/") for u in api.uploads), "each photo's preview uploaded for the planner")
 cols = [Image.open(slide_images.photo_path(s["image"]["photo_id"])).convert("RGB").getpixel((5, 5)) for s in slides]
 ok(cols[0][0] > 150 and cols[1][1] > 150 and cols[2][2] > 150 and cols[3][0] > 150 and cols[3][1] > 150,
@@ -218,6 +237,11 @@ ok(rows[0]["sets"]["post_on"] == "2026-11-02" and rows[0]["sets"]["caption"] == 
 ok(rows[0]["grid_old"] and rows[0]["grid_old"][0]["id"] == 501 and not rows[1]["grid_old"], "the grid comment found to change, or added")
 ok(rows[0]["make"] and rows[0]["make"]["folder"] == FOLDER and rows[1]["make"] is None and rows[2]["make"] is None,
    "only an unmade idea with photos is sent; one already made is left as it is")
+ok(not showcase_batch.check_photos(rows), "the dry run finds every carousel's photos in OneDrive")
+spec["ideas"][0]["photos"] = ["Other 12", "Other 99"]
+rows2, _ = showcase_batch.plan(spec, ideas, comments)
+bad = showcase_batch.check_photos(rows2)
+ok(len(bad) == 1 and "Other 99" in bad[0] and "#24" in bad[0], f"a missing photo shows in the dry run, before anything changes ({bad})")
 _, problems = showcase_batch.plan({"project": "x", "folder": FOLDER, "ideas": [{"title": "room", "date": "2026-11-02"}]}, ideas, {})
 ok(problems and "3 ideas match" in problems[0], f"a title matching several ideas stops it ({problems})")
 _, problems = showcase_batch.plan({"project": "x", "ideas": [{"title": "Kitchen", "date": "2026-11-02"},

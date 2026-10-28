@@ -2,24 +2,28 @@
 Re-date, re-title and re-caption a set of planned carousels, and send the ready ones to Studio as photo carousels
 (the content lead's showcase brief, 2026-10-28). Run on the laptop, with studio\\.env's Supabase service key:
 
-    .\\venv\\Scripts\\python showcase_batch.py spec.json            # shows what it would change; changes nothing
-    .\\venv\\Scripts\\python showcase_batch.py spec.json --apply    # changes it, then queues the carousels
+    .\\venv\\Scripts\\python showcase_batch.py spec.json --folder "<path>"           # shows what it would change
+    .\\venv\\Scripts\\python showcase_batch.py spec.json --folder "<path>" --apply   # changes it, queues the carousels
+
+Both runs list the photos' folder in OneDrive (with rclone, as Studio does) and match every carousel's photos first,
+so a missing photo shows before anything changes.
 
 spec.json (batches/ holds them; a folder that names a place is passed with --folder, never written in the repo):
 
-    {"project": "Finished homes", "year": 2026, "folder": "Showcases/<the home's folder>",
+    {"project": "Finished homes", "year": 2026, "folder": "<the folder's full path from OneDrive's top>",
      "ideas": [{"match": "words in the idea's title now", "date": "2026-11-02",
                 "title": "One long room, one long table", "grid": "Week 1 is the top row, ...",
                 "caption": "...", "photos": ["Other 12", "11"], "cover": "One long room, one long table.",
-                "folder": "Showcases/<another folder>"}]}
+                "folder": "<another folder's full path>"}]}
 
 - match: picks the idea by its title now (case ignored); defaults to "title". Every entry must match exactly one
   idea in the project and no idea twice, or nothing changes.
 - date and title: the posting date and the title, written "Mon 2 Nov · One long room, one long table".
 - grid: the idea's grid comment (a comment starting "Grid"), changed in place, or added.
 - caption, photos, cover: with photos, the carousel is queued like "Make this" (a carousel job): Studio fetches
-  the photos from the folder in that order (showcase.py), slide 1 gets the cover line, and the draft lands in
-  Review. Nothing is posted or scheduled. An idea already made is left as it is.
+  the photos from the folder in that order (showcase.py: "11" at the folder's top, "Other 12" a picture called 12
+  in the subfolder starting "Other"), slide 1 gets the cover line, and the draft lands in Review. Nothing is posted
+  or scheduled. An idea already made is left as it is.
 """
 import argparse
 import json
@@ -78,11 +82,36 @@ def plan(spec: dict, ideas: list[dict], comments: dict[int, list[dict]]) -> tupl
     return out, problems
 
 
+def check_photos(rows: list[dict]) -> list[str]:
+    """Every carousel's photos found in OneDrive, each folder listed once; prints what each matched. Returns the
+    problems (a missing or ambiguous photo, a folder not found, rclone missing here)."""
+    import onedrive
+    makes = [r for r in rows if r["make"]]
+    if not makes:
+        return []
+    if onedrive.rclone_path() is None:
+        return ["the photos can't be checked on this computer (rclone isn't installed); run it where Studio's "
+                "OneDrive connection is, or add --no-photo-check"]
+    problems, listed = [], {}
+    for r in makes:
+        folder = r["make"]["folder"]
+        try:
+            if folder not in listed:
+                listed[folder] = showcase.listing(folder)
+            found = showcase.match(listed[folder], r["make"]["files"])
+            print(f"  #{r['idea']['id']} photos: " + ", ".join(str(e.get("Path") or e["Name"]) for e in found))
+        except (showcase.ShowcaseError, onedrive.OneDriveError) as err:
+            problems.append(f"entry {r['n']} (#{r['idea']['id']}): {err}")
+    return problems
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("spec")
     ap.add_argument("--apply", action="store_true", help="make the changes and queue the carousels")
-    ap.add_argument("--folder", help="the OneDrive folder of the photos (instead of the spec's; it may name a place)")
+    ap.add_argument("--folder", help="the OneDrive folder of the photos, its full path (instead of the spec's; it may "
+                                     "name a place)")
+    ap.add_argument("--no-photo-check", action="store_true", help="don't list OneDrive first (Studio still checks)")
     args = ap.parse_args()
     spec = json.loads(open(args.spec, encoding="utf-8").read())
     if args.folder:
@@ -110,6 +139,9 @@ def main() -> int:
     left = [i for i in ideas if i["id"] not in {r["idea"]["id"] for r in rows}]
     if left:
         print(f"Not in the spec (left as they are): {', '.join('#' + str(i['id']) for i in left)}")
+    if not problems and not args.no_photo_check:
+        print("\nThe photos in OneDrive:")
+        problems += check_photos(rows)
     if problems:
         print("\nNothing changed:\n- " + "\n- ".join(problems))
         return 1

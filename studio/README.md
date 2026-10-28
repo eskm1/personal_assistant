@@ -1275,9 +1275,11 @@ Instagram allows; past 10 it says which were left out. Before the database updat
 **Photos from OneDrive, many carousels at once** (`showcase.py`, `showcase_batch.py`): a batch file in `batches/` lists
 ideas with their posting date, title, caption, grid comment and, for those to make now, the photos by name from a
 OneDrive folder and the cover line. On the laptop, `.\venv\Scripts\python showcase_batch.py batches\<file>.json
---folder "Showcases\<folder>"` shows what it would change; add `--apply` to change the ideas and send the carousels to
-Studio (like Make this). Studio fetches the photos in that order; if one is missing or two files share its name, that
-carousel isn't made and the planner says which. Nothing is posted or scheduled.
+--folder "<the folder's full path from OneDrive's top>"` shows what it would change and checks every photo in OneDrive;
+add `--apply` to change the ideas and send the carousels to Studio (like Make this). A photo's name is its file name
+without the extension: "11" at the top of the folder, "Other 12" for 12 in the subfolder starting "Other" ("Other
+photos/12.jpg"). Studio fetches the photos in that order; if one is missing or a name fits two pictures, that carousel
+isn't made and says which. Nothing is posted or scheduled.
 
 Settings in `.env` (then **Restart Studio**): `STUDIO_POSTING=0` stops all posting; `STUDIO_POSTS_PER_WEEK` (blank =
 the content plan's); `STUDIO_POST_TIME` (19:30); `STUDIO_RESULTS_HOUR` (9); `STUDIO_PUBLIC_URL` (blank = the
