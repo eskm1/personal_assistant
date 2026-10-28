@@ -771,9 +771,11 @@ def run(conn, production_id: int, client=None) -> Path:
                source_clips = ?, duration = NULL, error = NULL, updated_at = ?, self_fix = ? WHERE id = ?""",
         (version, str(thumb), json.dumps(stored, ensure_ascii=False), caption, json.dumps(clip_ids), catalog.now(),
          json.dumps({"version": version, "pending": True}), production_id))
-    if revision is not None or not redraws:
-        conn.execute("""UPDATE feedback SET status = 'addressed'
-                        WHERE target = 'production' AND target_id = ? AND status = 'open'""", (production_id,))
+    if revision is not None or not redraws:  # a note asking for a different photo stays open (revise_photos)
+        still = [int(i) for i in (revision or {}).get("keep_open") or []]
+        conn.execute(f"""UPDATE feedback SET status = 'addressed'
+                         WHERE target = 'production' AND target_id = ? AND status = 'open'
+                         {"AND id NOT IN (" + ",".join("?" * len(still)) + ")" if still else ""}""", (production_id, *still))
     conn.commit()
     log.info("Carousel %s v%d laid out: %d slides", production_id, version, len(slides))
     if revision is not None:  # Bryan's editing notes become rules Studio keeps (learning.py)
@@ -1116,10 +1118,140 @@ def _context_text() -> str:
     return content_plan.context_text(api)
 
 
+PHOTOS_REVISE_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "slides": {"type": "array", "items": {"type": "integer"}},
+        "cover": {"type": "string"},
+        "caption_changed": {"type": "boolean"},
+        "caption": {"type": "string"},
+        "needs_photo": {"type": "array", "items": {"type": "object", "additionalProperties": False,
+                        "properties": {"note_id": {"type": "integer"}, "slide": {"type": "integer"}, "want": {"type": "string"},
+                                       "file": {"type": "string"}},
+                        "required": ["note_id", "slide", "want", "file"]}},
+        "summary": {"type": "string"},
+        "notes_addressed": {"type": "array", "items": {"type": "object", "additionalProperties": False,
+                            "properties": {"note_id": {"type": "integer"}, "how": {"type": "string"}},
+                            "required": ["note_id", "how"]}},
+    },
+    "required": ["slides", "cover", "caption_changed", "caption", "needs_photo", "summary", "notes_addressed"],
+}
+
+_PHOTOS_REVISE_SYSTEM = """You revise a photos-only Instagram carousel for Bryan (Urban Makers, a Singapore renovation \
+company) from his notes. Every slide is a photo; slide 1 carries a short cover line; no other slide has words; the \
+ask is in the caption. You can only: remove a photo, change the order, change the cover line (when a note asks), and \
+change the caption (when a note asks). You can't fetch, edit or swap in a different photo: a note asking for another \
+photo or another version of one (another angle, the curtains drawn, less clutter, a different crop) goes in \
+needs_photo with the slide and what's wanted, in a few plain words; file is the photo's name when the note gives one \
+("use Other 24", "swap in GIF 3": "Other 24", "GIF 3"), else "". That slide stays where it is unless the note also \
+says to remove it.
+- slides: the slide numbers to keep, in their new order (all of them, in order, when nothing is removed or moved).
+- cover: the cover line for the new first slide: the one now, word for word, unless a note asks for a change.
+- caption: only when a note asks (caption_changed true); otherwise "" and false. Never remove or fill in a [check]; \
+never add an offer, a price or a promotion.
+- notes_addressed: each note you acted on, with how in a few words. summary: one short line of what changed."""
+
+
+def revise_photos(conn, production: dict, slides: list[dict], notes: list[dict], client=None) -> dict:
+    """Bryan's notes on a photos-only carousel, as what a photos-only carousel can do: photos removed or moved, the
+    cover line, the caption (each guarded: a [check] kept, no offer added, none at all on a Finished homes post). A
+    note asking for a different photo stays open for Bryan (keep_open) and says what's wanted. One small Claude call.
+    Returns {slides, caption, summary, notes_addressed, keep_open, needs_photo}."""
+    import anthropic
+
+    import llm
+    import usage
+    lines = [f"The carousel: {production['title']}, draft v{production['version']}, {len(slides)} photos.", "Slides now:"]
+    for n, s in enumerate(slides, 1):
+        lines.append(f"  {n}. photo" + (f" | cover line: {s['heading']}" if n == 1 and s.get("heading") else ""))
+    lines.append(f"Caption now:\n{production.get('caption') or '(none)'}")
+    lines.append("Bryan's notes:")
+    for note in notes:
+        lines.append(f"  note {note['id']}" + (f" (slide {note['slide']})" if note.get("slide") else "") + f": {note['body']}")
+    client = client or anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY or None)
+    response = llm.final_message(
+        client, model=settings.CLAUDE_MODEL, max_tokens=4000,
+        output_config={"effort": "low", "format": {"type": "json_schema", "schema": PHOTOS_REVISE_SCHEMA}},
+        system=_PHOTOS_REVISE_SYSTEM, messages=[{"role": "user", "content": "\n".join(lines)}])
+    usage.record("carousel", f"production:{production['id']}", response)
+    if response.stop_reason in ("refusal", "max_tokens"):
+        raise RuntimeError(f"Claude couldn't read the notes ({response.stop_reason})")
+    answer = json.loads(next(b.text for b in response.content if b.type == "text"))
+    ids = {n["id"] for n in notes}
+    want = [w for w in answer.get("needs_photo") or [] if w.get("note_id") in ids and isinstance(w.get("slide"), int)
+            and 1 <= w["slide"] <= len(slides)]
+    # A photo named in the note: fetched from the folder the carousel's photos came from, in that slide's place.
+    swapped, still = [], []
+    slides = json.loads(json.dumps(slides))
+    named = [w for w in want if str(w.get("file") or "").strip()]
+    folder = api = None
+    if named:
+        import cloud_sync
+        import showcase
+        try:
+            api = cloud_sync.Client()
+            folder = showcase.folder_for(api, conn, json.loads(production.get("plan") or "{}").get("idea_id"))
+        except Exception as e:
+            log.info("Carousel %s: the photos' folder wasn't found: %s", production["id"], e)
+    for w in want:
+        name = str(w.get("file") or "").strip()
+        if name and folder:
+            try:
+                slides[w["slide"] - 1]["image"] = showcase.fetch_one(api, folder, name)
+                swapped.append({**w, "file": name})
+                continue
+            except Exception as e:  # not there, two pictures fit, OneDrive down: left for Bryan, saying why
+                w = {**w, "want": f"{_text(w.get('want'), 100)}; {name} wasn't found in the photos' folder"
+                     if "found" in str(e) else f"{_text(w.get('want'), 100)}; {e}"}
+        still.append(w)
+    want = still
+    order = [n for n in dict.fromkeys(answer.get("slides") or []) if isinstance(n, int) and 1 <= n <= len(slides)]
+    if len(order) < 2:  # a carousel needs two photos: the order as it was
+        order = list(range(1, len(slides) + 1))
+    new = [json.loads(json.dumps(slides[n - 1])) for n in order]
+    for s in new:
+        s["heading"], s["body"] = "", ""
+    finished = post_type(conn, production) == concepts.FINISHED
+    asked = " ".join(str(n.get("body") or "") for n in notes)
+    old_cover = slides[0].get("heading", "")
+    cover, _ = guard_words(old_cover, _text(answer.get("cover"), 120) or old_cover, asked, no_offers=finished)
+    new[0]["heading"] = cover
+    new[0]["role"] = "cover"
+    for s in new[1:]:
+        s["role"] = "point"
+    caption = _text(answer.get("caption"), 4000) if answer.get("caption_changed") else ""
+    if caption:
+        caption, _ = guard_words(production.get("caption") or "", caption, asked, no_offers=finished)
+        if caption == (production.get("caption") or ""):
+            caption = ""
+    keep_open = sorted({w["note_id"] for w in want})
+    gone = [n for n in range(1, len(slides) + 1) if n not in order]
+    said = [f"removed photo {', '.join(map(str, gone))}"] if gone else []
+    if order != sorted(order):
+        said.append("changed the order")
+    if cover != old_cover:
+        said.append("changed the cover line")
+    if caption:
+        said.append("changed the caption")
+    if swapped:
+        said.append("swapped in " + ", ".join(f"{w['file']} on slide {w['slide']}" for w in swapped))
+    summary = (("Studio " + ", ".join(said) + ".") if said else "Nothing Studio could change itself.") + "".join(
+        f" Slide {w['slide']} needs a different photo ({_text(w.get('want'), 160)}): send it back with a note naming "
+        "the photo to use (e.g. \"use Other 24\")." for w in want)
+    return {"slides": new, "caption": caption, "summary": summary, "keep_open": keep_open, "needs_photo": want,
+            "notes_addressed": [{"note_id": a["note_id"], "how": _text(a.get("how"), 300), "kind": "editing", "rule": "",
+                                 "same_rule": 0} for a in answer.get("notes_addressed", [])
+                                if a.get("note_id") in ids and a.get("note_id") not in keep_open]}
+
+
 def revise(conn, production: dict, slides: list[dict], notes: list[dict], client=None, own: bool = False) -> dict:
     """One Claude call: the slides (and caption, when a note asks) changed as the notes say.
     own: the notes are Studio's read (one of its own fix rounds): no pictures are drawn, and
-    the cost is counted apart. Returns {slides, caption, summary, notes_addressed}."""
+    the cost is counted apart. Returns {slides, caption, summary, notes_addressed}. A photos-only carousel's notes go
+    to revise_photos (what a photos-only carousel can do)."""
+    if layout_of(production) == PHOTOS and not own:
+        return revise_photos(conn, production, slides, [n for n in notes if not str(n.get("body", "")).startswith(
+            "From Studio's read:")], client)
     import self_fix
     import anthropic
 

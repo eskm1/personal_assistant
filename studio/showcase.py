@@ -132,6 +132,42 @@ def retire(conn, idea_id: int) -> int | None:
     return pid
 
 
+def folder_for(api, conn, idea_id: int) -> str | None:
+    """The OneDrive folder a carousel's photos came from: the newest carousel job of its idea that named one (the
+    planner's jobs table; the folder is never kept on the idea or the draft)."""
+    row = conn.execute("SELECT remote_id FROM ideas WHERE id = ?", (idea_id,)).fetchone()
+    if not row or not row["remote_id"]:
+        return None
+    jobs = api.select("jobs", {"idea_id": f"eq.{row['remote_id']}", "kind": "eq.carousel", "select": "id,payload",
+                               "order": "id.desc"})
+    for j in jobs:
+        folder = ((j.get("payload") or {}).get("photos") or {}).get("folder")
+        if folder:
+            return folder
+    return None
+
+
+def fetch_one(api, folder: str, name: str) -> dict:
+    """One photo by name from the folder (as match() reads names), kept as Studio's photo, its preview uploaded:
+    the slide's image. Raises ShowcaseError when it isn't there or fits more than one picture."""
+    e = match(listing(folder), [name])[0]
+    rel = str(e.get("Path") or e["Name"])
+    with tempfile.TemporaryDirectory(prefix="showcase-", dir=settings.ROOT) as tmp:
+        local = Path(tmp) / f"swap{Path(rel).suffix.lower()}"
+        onedrive._run(["copyto", onedrive._remote(folder, rel), str(local)], timeout=300)
+        try:
+            photo = slide_images.save_photo(local)
+        except ValueError as err:
+            raise ShowcaseError(f"Studio couldn't read the photo {name}: {err}") from None
+    thumb = f"photos/{photo['id']}.jpg"
+    try:
+        api.upload(thumb, slide_images.preview(photo["path"]))
+    except Exception as err:
+        log.warning("Photo %s kept, but its preview didn't upload: %s", photo["id"], err)
+        thumb = None
+    return {"source": "photo", "photo_id": photo["id"], **({"thumb_path": thumb} if thumb else {})}
+
+
 def listing(folder: str) -> list[dict]:
     """Every file in the folder and its subfolders (rclone lsjson -R). Raises ShowcaseError when the folder isn't
     there."""

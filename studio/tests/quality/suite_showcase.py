@@ -474,4 +474,50 @@ rows3, _ = showcase_batch.plan({**spec, "remake": True}, ideas, comments)
 ok(rows3[2]["make"] is not None and rows3[2]["make"]["files"] == ["Other 12", "11"], "--remake sends an idea already made too")
 
 
+# ── Bryan's notes on a photos-only carousel (2026-10-28: "Remove this photo", "use the version with the day curtains
+# drawn"): a photo removed or moved, one named in a note swapped in from the same folder, one he describes left open ──
+print("== notes on a photos-only carousel")
+import llm, types
+pids = [os.urandom(16).hex() for _ in range(5)]
+for k, p in enumerate(pids):
+    Image.new("RGB", (800, 1000), (40 * k, 90, 90)).save(slide_images.PHOTOS / f"{p}.jpg")
+ph = [{"key": f"k{k}", "role": "cover" if k == 0 else "point", "heading": "One long room. [check]" if k == 0 else "",
+       "body": "", "image": {"source": "photo", "photo_id": p}} for k, p in enumerate(pids)]
+prod = {"id": 9900, "title": "Mon 2 Nov · One long room", "version": 1, "caption": CAPTION,
+        "plan": json.dumps({"idea_id": local, "layout": "photos", "post_type": "finished"})}
+NOTES = [{"id": 1, "slide": 3, "body": "Remove this photo, it's too messy with all the lighting"},
+         {"id": 2, "slide": 4, "body": "Use the version of the photo that has the day curtains drawn"},
+         {"id": 3, "slide": 2, "body": "Use Other 1 instead"}]
+ANSWER = {"slides": [1, 2, 4, 5], "cover": "One long room. [check]", "caption_changed": True,
+          "caption": CAPTION.replace("Long table or round?", "Long table or round? Book a free consultation."),
+          "needs_photo": [{"note_id": 2, "slide": 4, "want": "the day curtains drawn", "file": ""},
+                          {"note_id": 3, "slide": 2, "want": "Other 1", "file": "Other 1"}],
+          "summary": "x", "notes_addressed": [{"note_id": 1, "how": "removed slide 3"}, {"note_id": 3, "how": "swapped"}]}
+asked_claude = []
+
+
+def fake_final(client, **req):
+    asked_claude.append(req)
+    return types.SimpleNamespace(stop_reason="end_turn", model="claude", usage=types.SimpleNamespace(input_tokens=10, output_tokens=10),
+                                 content=[types.SimpleNamespace(type="text", text=json.dumps(ANSWER))])
+
+
+real_final, real_client2, real_folder = llm.final_message, cloud_sync.Client, showcase.folder_for
+llm.final_message = fake_final
+cloud_sync.Client = lambda: FakeApi()
+showcase.folder_for = lambda api, c, idea: FOLDER
+rev = carousel.revise(conn, prod, ph, NOTES, client=object())
+llm.final_message, cloud_sync.Client, showcase.folder_for = real_final, real_client2, real_folder
+ok(len(asked_claude) == 1 and "photos-only" in asked_claude[0]["system"] and "slide 3" in asked_claude[0]["messages"][0]["content"],
+   "a photos-only carousel's notes go to its own small revision, not the slide writer")
+ok(len(rev["slides"]) == 4 and [s["key"] for s in rev["slides"]] == ["k0", "k1", "k3", "k4"], "the photo he removed is gone, the rest in order")
+ok(rev["slides"][1]["image"]["photo_id"] != pids[1] and rev["slides"][1]["image"]["source"] == "photo"
+   and Image.open(slide_images.photo_path(rev["slides"][1]["image"]["photo_id"])).convert("RGB").getpixel((5, 5))[2] > 150,
+   "the photo his note named (Other 1) is swapped in from the same folder")
+ok(rev["slides"][2]["image"]["photo_id"] == pids[3] and rev["keep_open"] == [2] and "day curtains" in rev["summary"]
+   and "naming" in rev["summary"], f"the one he described stays open, saying how to name the photo ({rev['summary']})")
+ok(rev["slides"][0]["heading"] == "One long room. [check]" and all(not s["heading"] and not s["body"] for s in rev["slides"][1:])
+   and rev["caption"] == "", "the cover line and its [check] kept, no words added, the caption's new offer refused (Finished homes)")
+ok({a["note_id"] for a in rev["notes_addressed"]} == {1, 3}, "the notes it acted on are addressed; the open one isn't")
+
 finish()
