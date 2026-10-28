@@ -1457,6 +1457,7 @@ from cleanup import bp as _cleanup_bp  # noqa: E402 - Review's clean-up: remove,
 from posting_routes import bp as _posting_bp  # noqa: E402 - Instagram: connect, schedule, results, public media
 from help_routes import bp as _help_bp  # noqa: E402 - help, feedback, usage capture and the weekly report
 from insights_routes import bp as _insights_bp  # noqa: E402 - what kinds of posts work (the planner's Insights)
+from brand_kit_routes import bp as _brand_kit_bp  # noqa: E402 - the brand kit: fonts, colours, logo, per kind of post
 
 app.register_blueprint(_plan_bp)
 app.register_blueprint(_planner_bp)
@@ -1467,6 +1468,7 @@ app.register_blueprint(_cleanup_bp)
 app.register_blueprint(_posting_bp)
 app.register_blueprint(_help_bp)
 app.register_blueprint(_insights_bp)
+app.register_blueprint(_brand_kit_bp)
 
 
 # ── Serve ─────────────────────────────────────────────────────────────────────

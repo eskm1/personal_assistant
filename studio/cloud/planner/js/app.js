@@ -264,6 +264,24 @@ function renderLaptop() {
   $("#laptop-info").innerHTML = on
     ? `<p><strong>Studio is on.</strong></p><p class="muted small">It syncs about every 30 seconds: new footage is matched to shots, and music shortlists, Make this, reference analysis and style guide drafts run there.</p>`
     : `<p><strong>Studio is offline${since ? ` (last seen ${esc(since)})` : ""}.</strong></p><p class="muted small">Planning works without it. Footage matching, music shortlists, Make this, reference analysis and style guide drafts wait for it and run as soon as it's back.</p>`;
+  brandColours();
+}
+
+// The brand kit's slide colours (Review > More > Brand kit; the heartbeat's info.brand_kit, only once it's been
+// changed) on the small slide previews and the grid's words-only tiles. CSSOM, which the page's CSP allows.
+const SLIDE_VARS = { slide_bg: "--slide-bg", slide_end: "--slide-bg-ask", slide_heading: "--slide-ink",
+  slide_body: "--slide-soft", slide_accent: "--slide-amber" };
+let brandSig = "";
+function brandColours() {
+  const kit = state.laptop?.info?.brand_kit?.main || null;
+  const sig = JSON.stringify(kit);
+  if (sig === brandSig) return;
+  brandSig = sig;
+  const style = document.documentElement.style;
+  for (const [role, v] of Object.entries(SLIDE_VARS)) {
+    const c = kit?.[role];
+    if (c && /^#[0-9A-Fa-f]{6}$/.test(c)) style.setProperty(v, c); else style.removeProperty(v);
+  }
 }
 setInterval(() => { if (state.me) renderLaptop(); }, 30e3);
 // In case a live update was missed (phone asleep), re-read the heartbeat now and then.

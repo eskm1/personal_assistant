@@ -65,6 +65,8 @@
   </div>
 
   <div class="checklist" id="checklist" hidden></div>
+  <!-- More > Brand kit (#/brand-kit): brandkit.js and its look are fetched the first time it opens. -->
+  <div class="brandkit" id="brandkit" hidden></div>
 
   <div class="modal" id="modal" hidden>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
@@ -81,5 +83,6 @@
   <script src="/static/app.js"></script>
   <!-- Help and its look, fetched by shell.js the first time Help is pressed. -->
   <template id="studio-lazy"><script src="/static/help.js"></script><link rel="stylesheet" href="/static/help.css"></template>
+  <template id="brandkit-lazy"><script src="/static/brandkit.js"></script><link rel="stylesheet" href="/static/brandkit.css"></template>
 </body>
 </html>

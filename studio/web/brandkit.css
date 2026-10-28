@@ -1,0 +1,93 @@
+/* The Brand kit page (web/brandkit.js): a page of its own under the top bar, like Today on site. Phone first: the
+   preview on top (a Reel frame and a slide side by side), then the kit; on a computer the preview stays beside it. */
+.brandkit { position: fixed; inset: var(--shell-top-h) 0 var(--shell-bottom, 0px); z-index: 4; background: var(--um-paper); overflow-y: auto; overscroll-behavior: contain; }
+.bk-loading { padding: 24px 16px; }
+.bk-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--um-line); background: var(--um-paper); }
+.bk-head .btn { min-height: 44px; flex: none; }
+.bk-title { min-width: 0; }
+.bk-title h1 { margin: 0; font-family: var(--um-font-display); font-size: var(--um-fs-h2); font-weight: 600; }
+.bk-title p { margin: 2px 0 0; }
+.bk-body { max-width: 1240px; margin: 0 auto; padding: 16px 16px 120px; display: grid; gap: 24px; }
+.bk-preview { display: flex; flex-direction: column; gap: 8px; }
+.bk-frames { display: grid; grid-template-columns: minmax(0, 9fr) minmax(0, 12fr); gap: 12px; align-items: start; }
+.bk-fig { margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.bk-fig figcaption { text-align: center; }
+.bk-frame { position: relative; width: 100%; overflow: hidden; border-radius: var(--um-radius); background: var(--um-paper-mid); border: 1px solid var(--um-line); }
+.bk-frame.reel { aspect-ratio: 9 / 16; }
+.bk-frame.slide { aspect-ratio: 4 / 5; }
+.bk-frame iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; transform: scale(var(--s, .3)); pointer-events: none; background: transparent; }
+.bk-frame.reel iframe { width: 1080px; height: 1920px; }
+.bk-frame.slide iframe { width: 1080px; height: 1350px; }
+.bk-frame iframe.next { visibility: hidden; }
+.bk-wait { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 8px; }
+.bk-seg { width: 100%; }
+.bk-seg button { flex: 1 1 0; padding: 0 4px; min-width: 0; }
+.bk-cycle { display: none; }
+.bk-controls { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.bk-team { margin: 0; padding: 10px 12px; border-radius: var(--um-radius-sm); background: var(--um-info-tint); border: 1px solid var(--um-info-line); }
+.bk-for { display: flex; flex-direction: column; gap: 6px; padding: 12px; background: var(--um-card); border: 1px solid var(--um-line); border-radius: var(--um-radius); }
+.bk-for select { width: 100%; font-weight: 500; }
+.bk-for p { margin: 0; }
+.bk-warn { padding: 10px 12px; border-radius: var(--um-radius-sm); background: var(--act-tint); border: 1px solid var(--act-line); color: var(--um-ink); }
+.bk-warn[hidden] { display: none; }
+.bk-warn ul { margin: 4px 0 0; padding-left: 18px; }
+.bk-group h2 { margin: 0 0 8px; font-size: var(--um-fs-lead); }
+.bk-group h3 { margin: 14px 0 6px; }
+.bk-group > p { margin: 6px 0 0; }
+.bk-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.bk-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 96px; gap: 10px; align-items: center; padding: 8px 10px; background: var(--um-card); border: 1px solid var(--um-line); border-radius: var(--um-radius-sm); }
+.bk-row.over, .bk-font.over { border-color: var(--um-info); box-shadow: inset 3px 0 0 var(--um-info); }
+.bk-row.warn, .bk-font.warn { border-color: var(--act); box-shadow: inset 3px 0 0 var(--act); }
+.bk-sw { display: block; width: 44px; height: 44px; }
+.bk-sw input { width: 44px; height: 44px; padding: 0; border: 1px solid var(--um-line); border-radius: var(--um-radius-sm); background: none; cursor: pointer; }
+.bk-sw input:disabled { cursor: default; }
+.bk-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bk-what label { cursor: pointer; }
+.bk-what .btn-link { align-self: flex-start; min-height: 24px; }
+.bk-hex { width: 96px; font-family: var(--um-mono); text-transform: uppercase; }
+.bk-hex.err { border-color: var(--um-danger); }
+.bk-font { display: flex; flex-direction: column; gap: 6px; padding: 10px; margin-bottom: 6px; background: var(--um-card); border: 1px solid var(--um-line); border-radius: var(--um-radius-sm); }
+.bk-font select { width: 100%; }
+.bk-font .btn-link { align-self: flex-start; }
+.bk-mine { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.bk-mine li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--um-card); border: 1px solid var(--um-line-soft); border-radius: var(--um-radius-sm); }
+.bk-drop { display: flex; flex-direction: column; gap: 4px; padding: 14px; min-height: 64px; justify-content: center; border: 1.5px dashed var(--um-line); border-radius: var(--um-radius); background: var(--um-card); cursor: pointer; }
+.bk-drop:hover, .bk-drop.over { border-color: var(--um-ink); background: var(--um-paper-mid); }
+.bk-drop.busy { opacity: .6; pointer-events: none; }
+.bk-drop:focus-within { outline: 2px solid var(--um-ink); outline-offset: 2px; }
+.bk-drop[aria-disabled=true] { cursor: default; opacity: .6; }
+.bk-logo { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px; align-items: start; }
+.bk-logo-show { height: 120px; display: grid; place-items: center; padding: 12px; border-radius: var(--um-radius); background: #12110E; color: #fff; text-align: center; }
+.bk-logo-show img { max-width: 100%; max-height: 96px; display: block; }
+.bk-logo-show .muted { color: #D8D5CC; }
+.bk-logo-act { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.bk-logo-act .bk-drop { width: 100%; }
+.bk-savebar { position: sticky; bottom: 0; z-index: 3; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--um-paper); border-top: 1px solid var(--um-line); }
+.bk-savebar #bk-state { margin-right: auto; }
+.bk-savebar .btn { min-height: 44px; }
+.bk-savebar .btn.act { min-width: 96px; }
+
+@media (min-width: 900px) {
+  .bk-body { grid-template-columns: minmax(0, 1fr) minmax(400px, 540px); align-items: start; }
+  .bk-preview { order: 2; position: sticky; top: 16px; }
+  .bk-controls { order: 1; }
+}
+/* A phone: the preview stays at the top while the kit scrolls under it (a Reel frame and a slide, a third of the
+   screen high), so a change shows where it's made. The Reel's moment is one button that steps through them. */
+@media (max-width: 720px) {
+  .bk-body { padding-top: 0; padding-bottom: 96px; gap: 16px; }
+  .bk-preview { position: sticky; top: 0; z-index: 2; margin: 0 -16px; padding: 8px 16px; background: var(--um-paper); border-bottom: 1px solid var(--um-line); }
+  .brandkit.typing .bk-preview { position: static; }
+  .bk-controls > *, .bk-row, .bk-font, .bk-drop { scroll-margin-top: calc(min(30vh, 260px) + 72px); }
+  .bk-frames { grid-template-columns: auto auto; justify-content: center; }
+  .bk-frame.reel, .bk-frame.slide { height: min(30vh, 260px); width: auto; }
+  .bk-fig { gap: 6px; }
+  .bk-fig figcaption { display: none; }
+  .bk-moments { display: none; }
+  .bk-cycle { display: inline-flex; width: 100%; min-height: 40px; font-size: var(--um-fs-meta); }
+  .bk-row { grid-template-columns: 44px minmax(0, 1fr); }
+  .bk-hex { grid-column: 2; width: 100%; }
+  .bk-seg button { min-height: 40px; font-size: var(--um-fs-meta); }
+  .bk-logo { grid-template-columns: 96px minmax(0, 1fr); }
+  .bk-logo-show { height: 96px; }
+}

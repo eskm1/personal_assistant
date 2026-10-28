@@ -142,6 +142,21 @@ window.StudioHelp = (() => {
       ["[data-sg-approve]", "Approve puts the draft in force."],
       ["#sg-active-h", "The guide in force now."],
     ] },
+    brand_kit: { name: "Brand kit", lines: [
+      "The fonts, colours and logo every Reel and carousel uses.",
+      "Change a colour or a font and the preview shows it at once. Nothing changes until **Save**.",
+      "**Kit for** a kind of post changes only that kind. The rest follows the main kit.",
+      "Add your own font: drop a .ttf, .otf or .woff2. Add its bold file too.",
+      "Drafts already made keep their look. **Edit it again** remakes one in the new kit.",
+      "Only Bryan can save changes. The team can look.",
+    ], tour: [
+      ["#bk-reel", "A Reel frame in this kit. Pick a moment under it."],
+      ["#bk-slide", "A carousel slide in this kit."],
+      ["#bk-kind", "Change the kit for one kind of post only."],
+      ["#bk-warn", "Words that are hard to read, or a font that can't be used, show here."],
+      ["#bk-font-drop", "Add your own font."],
+      ["#bk-save", "Save. New drafts use it."],
+    ] },
     content: { name: "Content plan", lines: [
       "The month's mix: how many posts of each kind.",
       "Targets and offers here steer what Studio suggests.",

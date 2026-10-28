@@ -238,6 +238,7 @@ function mark(name, detail) {
 // weekly report's golden paths start from (a draft waiting for review, an approved one).
 function pageNow() {
   const route = `/${location.hash || "#/"}`;
+  if (brandKitOpen()) return { key: "brand_kit", route };
   if (viewerOpen() && state.current) {
     const k = state.current.kind;
     const d = state.detail && String(state.detail.id) === String(state.current.id) ? state.detail : null;
@@ -508,7 +509,7 @@ function renderTabs() {
   $("#tabs-menu").innerHTML = extra.map((s) => `<button role="menuitemradio" aria-checked="${s.key === state.stage}" data-stage="${s.key}">
     <span class="grow">${esc(s.label)}</span><span class="count">${visible(s.key).length}</span></button>`).join("");
   $("#subnav").hidden = state.stage === "plan";
-  shell?.setCurrent(state.stage === "plan" ? "plan" : "review");
+  shell?.setCurrent(brandKitOpen() ? "brand" : state.stage === "plan" ? "plan" : "review");
   shell?.setBadge(state.items.filter((i) => i.stage === "review").length);
   if (state.tabsFor !== state.stage) {  // on a phone, the stage's tab scrolls into view
     state.tabsFor = state.stage;
@@ -1545,7 +1546,7 @@ const viewerOpen = () => !$("#viewer").hidden;
 // returns to the list where it was. On a computer it's the overlay it always was.
 history.scrollRestoration = "manual";
 function syncScrollLock() {
-  const lock = !$("#modal").hidden || !$("#checklist").hidden || (viewerOpen() && !phone());
+  const lock = !$("#modal").hidden || !$("#checklist").hidden || !$("#brandkit").hidden || (viewerOpen() && !phone());
   document.body.style.overflow = lock ? "hidden" : "";
 }
 function syncPage() {
@@ -4005,7 +4006,28 @@ $("#suggest").addEventListener("click", async () => {
 $("#prev").addEventListener("click", () => step(-1));
 $("#next").addEventListener("click", () => step(1));
 
-// Deep links (#/production/12, #/plan-idea/4, #/checklist/1) and the back button.
+// The Brand kit page's script and look (in <template id="brandkit-lazy">, so they carry the page's ?v=).
+let brandKitLoading = null;
+function loadBrandKit() {
+  if (window.StudioBrandKit) return Promise.resolve(window.StudioBrandKit);
+  if (brandKitLoading) return brandKitLoading;
+  const tpl = document.getElementById("brandkit-lazy");
+  brandKitLoading = new Promise((resolve, reject) => {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = tpl?.content.querySelector("link[href]")?.getAttribute("href") || "/static/brandkit.css";
+    document.head.appendChild(link);
+    const sc = document.createElement("script");
+    sc.src = tpl?.content.querySelector("script[src]")?.getAttribute("src") || "/static/brandkit.js";
+    sc.onload = () => (window.StudioBrandKit ? resolve(window.StudioBrandKit) : reject(new Error("didn't load")));
+    sc.onerror = () => { brandKitLoading = null; reject(new Error("didn't load")); };
+    document.head.appendChild(sc);
+  });
+  return brandKitLoading;
+}
+const brandKitOpen = () => !$("#brandkit").hidden;
+
+// Deep links (#/production/12, #/plan-idea/4, #/checklist/1, #/brand-kit) and the back button.
 async function routeFromHash() {
   const hash = location.hash;
   if (toPlan(hash)) { location.assign(PLAN_HERE); return; }  // Plan lives at /plan/ here
@@ -4015,7 +4037,17 @@ async function routeFromHash() {
   const closeOverlays = () => {
     if (!$("#viewer").hidden) closeViewer(true);
     if (!$("#checklist").hidden) closeChecklist(false);
+    if (!$("#brandkit").hidden) { window.StudioBrandKit?.close(); syncScrollLock(); render(); }
   };
+  if (hash === "#/brand-kit") {  // More > Brand kit: a page of its own (web/brandkit.js, fetched the first time)
+    if (!$("#viewer").hidden) closeViewer(true);
+    if (!$("#checklist").hidden) closeChecklist(false);
+    $("#brandkit").hidden = false;
+    syncScrollLock();
+    shell?.setCurrent("brand");
+    try { (await loadBrandKit()).open(); } catch { $("#brandkit").innerHTML = `<p class="error-text bk-loading" role="alert">The brand kit couldn't load. Check the connection and try again.</p>`; }
+    return;
+  }
   // #/tab/library etc.: links in Telegram digests and the top bar open a tab directly.
   const tab = hash.match(/^#\/tab\/(\w+)$/);
   if (tab && STAGES.some((s) => s.key === tab[1])) {

@@ -11,7 +11,8 @@ slides people swipe through, made without a shoot.
      'planned' production (format 'carousel') for the editing queue, like a Reel.
   3. run() has the concept pictures drawn and checked (concepts.prepare: two options each,
      cached, so nothing is drawn twice), then lays it out: each slide becomes a page in the Urban Makers look (the bundled
-     fonts in render/carousel/fonts, the brand green and amber), and the headless Chrome the
+     fonts in render/carousel/fonts, the brand green and amber; or the brand kit's: brand_kit.py, kept with the
+     version), and the headless Chrome the
      editor already uses saves each one as a PNG (render/carousel/shoot.mjs). The cover's
      words stay inside the middle of the slide, so the profile grid's 3:4 crop keeps them.
   4. Studio's read (draft_review.py) looks at the slides; Bryan approves, rejects or sends
@@ -40,6 +41,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
+import brand_kit
 import catalog
 import concepts
 import render
@@ -294,9 +296,10 @@ def current(row) -> dict:
 _ARROW = ('<svg width="34" height="22" viewBox="0 0 34 22" aria-hidden="true"><path d="M2 11h27M20 2l9 9-9 9" '
           'fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>')
 
+# The fonts (faces) and colours come from the brand kit (_kit_css; its defaults are Bricolage Grotesque, Figtree, the
+# green and the amber above).
 _CSS = """
-@font-face{font-family:"UM Display";src:url("%(display)s") format("woff2");font-weight:200 800;font-display:block}
-@font-face{font-family:"UM Text";src:url("%(text)s") format("woff2");font-weight:300 900;font-display:block}
+%(faces)s
 :root{--bg:%(bg)s;--deep:%(deep)s;--ink:%(ink)s;--soft:%(soft)s;--accent:%(accent)s}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:1080px;background:#000}
@@ -387,17 +390,30 @@ def _lines(text: str) -> str:
     return "<br>".join(html.escape(line) for line in text.split("\n"))
 
 
-def _logo() -> str:
+def _logo(kit: dict | None = None) -> str:
     """The Urban Makers mark (render/carousel/um-mark.svg, from Bryan), inline so the page
-    needs nothing from outside."""
+    needs nothing from outside; or the brand kit's logo (a PNG on the Studio machine)."""
+    logo = brand_kit.logo_path(kit)
+    if logo:
+        return f'<img class="logo" src="{html.escape(logo.resolve().as_uri())}" alt="">'
     svg = LOGO.read_text(encoding="utf-8")
     return re.sub(r'\s(width|height)="[^"]*"', "", svg, count=2).replace("<svg", '<svg aria-hidden="true"', 1)
 
 
-def slide_html(n: int, total: int, slide: dict, picture: Path | None, mark: str = "", reel: bool = False) -> str:
+def kit_css(kit: dict | None = None, css: str = None) -> str:
+    """The slides' styles with the brand kit's fonts and colours (None, or the kit's defaults: the look's own, the
+    very same page as before the kit) and its logo's size, when it has one."""
+    faces = (brand_kit.face_css("UM Display", brand_kit.faces(kit, "slide_headings", slide_ranges=True)) + "\n"
+             + brand_kit.face_css("UM Text", brand_kit.faces(kit, "slide_text", slide_ranges=True)))
+    return ((css or _CSS) % {"faces": faces, **brand_kit.slide_colours(kit)}
+            + (brand_kit.LOGO_CSS if brand_kit.logo_path(kit) else ""))
+
+
+def slide_html(n: int, total: int, slide: dict, picture: Path | None, mark: str = "", reel: bool = False,
+               kit: dict | None = None) -> str:
     """One slide as a section of the page (layout by role, and whether it has a picture). reel: laid out for a
     slideshow Reel (slideshow.py), without what only makes sense in a carousel: the "Swipe" cue and the "2/6"
-    counter. The Urban Makers mark stays."""
+    counter. The Urban Makers mark stays (or the brand kit's logo)."""
     role = slide["role"]
     layout = f"{role}-{'photo' if picture else 'text'}"
     h_px, b_px = SIZES[layout]
@@ -408,7 +424,7 @@ def slide_html(n: int, total: int, slide: dict, picture: Path | None, mark: str 
         parts.append(f'<img class="pic" src="{html.escape(picture.resolve().as_uri())}" alt="">')
         parts.append('<div class="shade-top"></div>')
         parts.append('<div class="panel"></div>' if split else '<div class="shade"></div>')
-    top_mark = f'<span class="mark">{_logo()}Urban Makers</span>' if role != "ask" else "<span></span>"
+    top_mark = f'<span class="mark">{_logo(kit)}Urban Makers</span>' if role != "ask" else "<span></span>"
     parts.append(f'<div class="top">{top_mark}' + ("" if reel else f'<span class="num">{n}/{total}</span>') + "</div>")
     if mark:
         parts.append(f'<span class="tag">{html.escape(mark)}</span>')
@@ -423,16 +439,17 @@ def slide_html(n: int, total: int, slide: dict, picture: Path | None, mark: str 
     if role == "cover" and total > 1 and not reel:
         parts.append(f'<div class="swipe">Swipe{_ARROW}</div>')
     if role == "ask" and not picture:
-        parts.append(f'<div class="sign">{_logo()}Urban Makers</div>')
+        parts.append(f'<div class="sign">{_logo(kit)}Urban Makers</div>')
     return (f'<section class="{" ".join(classes)}" id="slide-{n}" data-n="{n}" data-layout="{layout}" '
             f'data-h="{h_px}" data-b="{b_px}">{"".join(parts)}</section>')
 
 
-def page_html(slides: list[dict], pictures: list[tuple[Path | None, str]], reel: bool = False) -> str:
+def page_html(slides: list[dict], pictures: list[tuple[Path | None, str]], reel: bool = False,
+              kit: dict | None = None) -> str:
     """The whole carousel as one page: every slide 1080x1350, one under the other (reel: for a slideshow Reel,
-    slide_html)."""
-    css = _CSS % {"display": FONTS["display"].resolve().as_uri(), "text": FONTS["text"].resolve().as_uri(), **COLOURS}
-    body = "".join(slide_html(n, len(slides), s, pic, mark, reel)
+    slide_html), in the brand kit's fonts and colours (kit_css)."""
+    css = kit_css(kit)
+    body = "".join(slide_html(n, len(slides), s, pic, mark, reel, kit)
                    for n, (s, (pic, mark)) in enumerate(zip(slides, pictures), 1))
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><style>{css}</style></head>'
             f'<body>{body}<script>{_FIT % {"min": FIT_MIN}}</script></body></html>')
@@ -455,24 +472,31 @@ def shoot(page: str, out_dir: Path) -> dict:
     if result.returncode != 0:
         raise RuntimeError("laying out the slides failed: " + (result.stderr or result.stdout).strip()[-400:])
     report = json.loads(result.stdout)
-    unloaded = [f["family"] for f in report.get("fonts", []) if f.get("status") != "loaded"]
+    # A family with no face loaded, or a face that failed. (A brand kit font can have faces the slides don't use:
+    # those stay unloaded.)
+    fonts = report.get("fonts", [])
+    families = {f["family"] for f in fonts}
+    unloaded = sorted({f["family"] for f in fonts if f.get("status") == "error"}
+                      | {x for x in families if not any(f["family"] == x and f.get("status") == "loaded" for f in fonts)})
     if unloaded:
         raise RuntimeError(f"the carousel fonts didn't load ({', '.join(unloaded)})")
     return report
 
 
-def lay_out(conn, slides: list[dict], out_dir: Path, reel: bool = False, layout: str | None = None) -> dict:
+def lay_out(conn, slides: list[dict], out_dir: Path, reel: bool = False, layout: str | None = None,
+            kit: dict | None = None) -> dict:
     """Pictures, layout and PNGs for these slides (reel: for a slideshow Reel, no Swipe cue or counter;
-    layout 'photos': each photo is its slide, lay_out_photos). Returns {files, layout, pictures}."""
+    layout 'photos': each photo is its slide, lay_out_photos), in the brand kit (brand_kit.resolve; None: the
+    look's own). Returns {files, layout, pictures}."""
     if layout == PHOTOS and not reel:
-        return lay_out_photos(conn, slides, out_dir)
+        return lay_out_photos(conn, slides, out_dir, kit)
     pictures, notes = [], []
     for n, s in enumerate(slides, 1):
         path, mark, why = slide_images.picture(s["image"], conn)
         pictures.append((path, mark))
         notes.append({"n": n, "source": s["image"].get("source", "text") if path else "text",
                       **({"missing": why} if why else {})})
-    report = shoot(page_html(slides, pictures, reel), out_dir)
+    report = shoot(page_html(slides, pictures, reel, kit), out_dir)
     files = [s["file"] for s in report["slides"]]
     if len(files) != len(slides) or not all(Path(f).is_file() for f in files):
         raise RuntimeError("Chrome didn't save every slide")
@@ -483,7 +507,7 @@ def lay_out(conn, slides: list[dict], out_dir: Path, reel: bool = False, layout:
 # ── Photos only ───────────────────────────────────────────────────────────────
 
 _COVER_LINE_CSS = """
-@font-face{font-family:"UM Display";src:url("%(display)s") format("woff2");font-weight:200 800;font-display:block}
+%(faces)s
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:1080px;background:#000}
 .slide{position:relative;width:1080px;height:1350px;overflow:hidden;background:%(bg)s}
@@ -535,7 +559,7 @@ def photo_slide(src: Path, out: Path) -> dict:
         return {"width": img.width, "height": img.height, "cropped": cropped, "scaled": scaled}
 
 
-def lay_out_photos(conn, slides: list[dict], out_dir: Path) -> dict:
+def lay_out_photos(conn, slides: list[dict], out_dir: Path, kit: dict | None = None) -> dict:
     """A photos-only carousel: every slide is its photo (photo_slide). Slide 1's heading, if it has one, is a
     small cover line over the photo, laid out in Chrome at the slides' 1080x1350 (01.png). A slide without a
     picture is laid out as words, as usual. Returns {files, layout, pictures} like lay_out."""
@@ -553,7 +577,7 @@ def lay_out_photos(conn, slides: list[dict], out_dir: Path) -> dict:
         out = out_dir / f"{n:02d}.jpg"
         info = photo_slide(path, out)
         if n == 1 and s.get("heading"):
-            report = _cover_line(out, s["heading"], info["width"], out_dir)
+            report = _cover_line(out, s["heading"], info["width"], out_dir, kit)
             out = Path(report.pop("file"))
             layout.append({**report, "photo": info})
         else:
@@ -561,8 +585,8 @@ def lay_out_photos(conn, slides: list[dict], out_dir: Path) -> dict:
                            "boxes": {}})
         files.append(str(out))
     if words:  # pictures missing: those slides as words on the green, the usual way
-        css = _CSS % {"display": FONTS["display"].resolve().as_uri(), "text": FONTS["text"].resolve().as_uri(), **COLOURS}
-        body = "".join(slide_html(n, len(slides), s, None) for n, s in words)
+        css = kit_css(kit)
+        body = "".join(slide_html(n, len(slides), s, None, kit=kit) for n, s in words)
         page = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><style>{css}</style></head>'
                 f'<body>{body}<script>{_FIT % {"min": FIT_MIN}}</script></body></html>')
         report = shoot(page, out_dir)
@@ -574,10 +598,11 @@ def lay_out_photos(conn, slides: list[dict], out_dir: Path) -> dict:
     return {"files": files, "layout": layout, "pictures": notes, "fonts": []}
 
 
-def _cover_line(photo: Path, line: str, width: int, out_dir: Path) -> dict:
+def _cover_line(photo: Path, line: str, width: int, out_dir: Path, kit: dict | None = None) -> dict:
     """Slide 1 of a photos-only carousel with its small cover line, drawn over the photo in Chrome at the
     slides' 1080x1350 (Instagram shows 1080 wide; the other slides keep the photo's own size). 01.png."""
-    css = _COVER_LINE_CSS % {"display": FONTS["display"].resolve().as_uri(), **COLOURS}
+    css = _COVER_LINE_CSS % {"faces": brand_kit.face_css("UM Display", brand_kit.faces(kit, "slide_headings", True)),
+                             **brand_kit.slide_colours(kit)}
     page = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><style>{css}</style></head><body>'
             f'<section class="slide" id="slide-1" data-n="1"><img class="pic" src="{html.escape(photo.resolve().as_uri())}" alt="">'
             f'<div class="shade"></div><div class="copy"><div class="h">{_lines(line)}</div></div></section>'
@@ -615,6 +640,12 @@ def _summary(slides: list[dict], pictures: list[dict], revision: dict | None, dr
 
 
 # ── Rendering a version (the editing queue, worker.run_editor) ────────────────
+
+def version_kit(data: dict) -> dict | None:
+    """The brand kit a version was laid out in (None: the look's own, before the kit or unedited)."""
+    kit = (data or {}).get("kit")
+    return kit if isinstance(kit, dict) and kit.get("colours") else None
+
 
 def post_type(conn, production) -> str | None:
     """The post's kind now (it can change in the planner after it's made)."""
@@ -671,13 +702,17 @@ def run(conn, production_id: int, client=None) -> Path:
     out_dir = RENDERS / f"carousel_{production_id}_v{version}"
     if out_dir.exists():
         shutil.rmtree(out_dir)
-    made = lay_out(conn, slides, out_dir, layout=layout_of(row))
+    # A new version is laid out in today's brand kit for its kind of post, and keeps it (Studio's own fix rounds
+    # and the other concept option are laid out in it again); an unedited kit isn't kept (the look's own, the same).
+    kit = brand_kit.resolve(kind, row["brand"])
+    kit = None if brand_kit.is_default(kit) else kit
+    made = lay_out(conn, slides, out_dir, layout=layout_of(row), kit=kit)
     thumb = out_dir / "thumb.jpg"
     _thumb(Path(made["files"][0]), thumb)
     stored = {"version": version, "slides": slides, **made,
               "summary": _summary(slides, made["pictures"], revision, drew),
               "notes_addressed": (revision or {}).get("notes_addressed", []),
-              "concepts": {"drawn": drew["drawn"], "usd": drew["usd"]}}
+              "concepts": {"drawn": drew["drawn"], "usd": drew["usd"]}, **({"kit": kit} if kit else {})}
     caption = row["caption"]
     if revision and revision.get("caption"):
         caption = revision["caption"]
@@ -713,12 +748,13 @@ def self_revise(conn, production_id: int, notes: list[dict], round_no: int, clie
     out_dir = RENDERS / f"carousel_{production_id}_v{row['version']}_fix{round_no}"
     if out_dir.exists():
         shutil.rmtree(out_dir)
-    made = lay_out(conn, slides, out_dir, layout=layout_of(row))
+    made = lay_out(conn, slides, out_dir, layout=layout_of(row), kit=version_kit(data))
     thumb = out_dir / "thumb.jpg"
     _thumb(Path(made["files"][0]), thumb)
     stored = {"version": row["version"], "slides": slides, **made,
               "summary": _summary(slides, made["pictures"], revision),
-              "notes_addressed": revision.get("notes_addressed", []), "concepts": data.get("concepts")}
+              "notes_addressed": revision.get("notes_addressed", []), "concepts": data.get("concepts"),
+              **({"kit": version_kit(data)} if version_kit(data) else {})}
     clip_ids = list(dict.fromkeys(s["image"]["clip_id"] for s in slides if s["image"].get("source") == "clip"))
     conn.execute("""UPDATE productions SET thumb_path = ?, slides = ?, caption = ?, source_clips = ?, updated_at = ?
                     WHERE id = ?""",
@@ -775,7 +811,7 @@ def patch(conn, production_id: int, actions: list[dict], round_no: int) -> tuple
     out_dir = RENDERS / f"carousel_{production_id}_v{row['version']}_fix{round_no}"
     if out_dir.exists():
         shutil.rmtree(out_dir)
-    made = lay_out(conn, slides, out_dir, layout=layout_of(row))
+    made = lay_out(conn, slides, out_dir, layout=layout_of(row), kit=version_kit(data))
     thumb = out_dir / "thumb.jpg"
     _thumb(Path(made["files"][0]), thumb)
     did = "; ".join(r["did"] for r in results if r.get("ok"))
@@ -816,7 +852,7 @@ def choose(conn, production_id: int, n: int, option: str) -> dict:
     if shared:
         image["thumb_path"] = shared
     out_dir = RENDERS / f"carousel_{production_id}_v{row['version']}"
-    made = lay_out(conn, data["slides"], out_dir, layout=layout_of(row))
+    made = lay_out(conn, data["slides"], out_dir, layout=layout_of(row), kit=version_kit(data))
     _thumb(Path(made["files"][0]), out_dir / "thumb.jpg")
     data.update(made)
     data["layouts"] = int(data.get("layouts") or 1) + 1
