@@ -238,6 +238,14 @@ ok(rows[0]["grid_old"] and rows[0]["grid_old"][0]["id"] == 501 and not rows[1]["
 ok(rows[0]["make"] and rows[0]["make"]["folder"] == FOLDER and rows[1]["make"] is None and rows[2]["make"] is None,
    "only an unmade idea with photos is sent; one already made is left as it is")
 ok(not showcase_batch.check_photos(rows), "the dry run finds every carousel's photos in OneDrive")
+real_ls = onedrive._lsjson
+def not_here(*a, **k):
+    raise onedrive.OneDriveError(onedrive.NOT_CONNECTED)
+onedrive._lsjson = not_here
+here = showcase_batch.check_photos(rows)
+onedrive._lsjson = real_ls
+ok(len(here) == 1 and "Studio server" in here[0] and "server_move" not in here[0],
+   f"on a computer without Studio's OneDrive connection it says to run it on the server ({here})")
 spec["ideas"][0]["photos"] = ["Other 12", "Other 99"]
 rows2, _ = showcase_batch.plan(spec, ideas, comments)
 bad = showcase_batch.check_photos(rows2)

@@ -1304,8 +1304,9 @@ Instagram allows; past 10 it says which were left out. Before the database updat
 
 **Photos from OneDrive, many carousels at once** (`showcase.py`, `showcase_batch.py`): a batch file in `batches/` lists
 ideas with their posting date, title, caption, grid comment and, for those to make now, the photos by name from a
-OneDrive folder and the cover line. On the laptop, `.\venv\Scripts\python showcase_batch.py batches\<file>.json
---folder "<the folder's full path from OneDrive's top>"` shows what it would change and checks every photo in OneDrive;
+OneDrive folder and the cover line. On the Studio server (it has the OneDrive connection), `sudo -u studio ./venv/bin/python showcase_batch.py
+batches/<file>.json --folder "<the folder's full path from OneDrive's top>"` shows what it would change and checks every
+photo in OneDrive;
 add `--apply` to change the ideas and send the carousels to Studio (like Make this). A photo's name is its file name
 without the extension: "11" at the top of the folder, "Other 12" for 12 in the subfolder starting "Other" ("Other
 photos/12.jpg"). Studio fetches the photos in that order; if one is missing or a name fits two pictures, that carousel

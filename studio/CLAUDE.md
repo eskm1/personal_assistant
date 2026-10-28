@@ -343,7 +343,7 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   six photo carousels and the 21 Finished homes ideas re-dated; not yet proven on the server or real OneDrive): a
   carousel job's payload `photos` {folder, files, cover} sets the slides from those OneDrive photos first
   (`showcase.py`; all found or nothing changes; the folder name never kept), the photo cover line now Instrument Serif
-  400 50 px; `showcase_batch.py` (laptop, service key) re-dates/re-titles/re-captions, changes the "Grid" comment and
+  400 50 px; `showcase_batch.py` (run on the server: it has OneDrive and the service key) re-dates/re-titles/re-captions, changes the "Grid" comment and
   queues the carousel jobs; `batches/2026-11-showcases.json`. `tests/quality/suite_showcase.py`.
 - Reference library and taste report built 2026-10-19 (not yet proven against Instagram or real Claude):
   Import many (paste or CSV, dedupe by shortcode, `import_references()`), held until Bryan presses Analyse

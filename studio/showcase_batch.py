@@ -1,11 +1,17 @@
 """
 Re-date, re-title and re-caption a set of planned carousels, and send the ready ones to Studio as photo carousels
-(the content lead's showcase brief, 2026-10-28). Run on the laptop, with studio\\.env's Supabase service key:
+(the content lead's showcase brief, 2026-10-28). Run it on the Studio server, which has the OneDrive connection and the
+Supabase service key ([Hetzner box - after `ssh root@46.62.223.220`], in /home/studio/personal_assistant/studio):
 
-    .\\venv\\Scripts\\python showcase_batch.py spec.json --folder "<path>"           # shows what it would change
-    .\\venv\\Scripts\\python showcase_batch.py spec.json --folder "<path>" --apply   # changes it, queues the carousels
+    sudo -u studio ./venv/bin/python showcase_batch.py batches/<file>.json --folder "<path>"           # shows it
+    sudo -u studio ./venv/bin/python showcase_batch.py batches/<file>.json --folder "<path>" --apply   # does it
 
-Both runs list the photos' folder in OneDrive (with rclone, as Studio does) and match every carousel's photos first,
+On the laptop (no OneDrive connection there) it works only with --no-photo-check:
+
+    .\\venv\\Scripts\\python showcase_batch.py spec.json --folder "<path>" --no-photo-check           # shows it
+    .\\venv\\Scripts\\python showcase_batch.py spec.json --folder "<path>" --no-photo-check --apply   # does it
+
+On the server both runs list the photos' folder in OneDrive (with rclone, as Studio does) and match every carousel's photos first,
 so a missing photo shows before anything changes.
 
 spec.json (batches/ holds them; a folder that names a place is passed with --folder, never written in the repo):
@@ -89,9 +95,10 @@ def check_photos(rows: list[dict]) -> list[str]:
     makes = [r for r in rows if r["make"]]
     if not makes:
         return []
+    here = ["the photos can only be checked where Studio's OneDrive connection is: run this on the Studio server "
+            "(see the top of showcase_batch.py), or add --no-photo-check"]
     if onedrive.rclone_path() is None:
-        return ["the photos can't be checked on this computer (rclone isn't installed); run it where Studio's "
-                "OneDrive connection is, or add --no-photo-check"]
+        return here
     problems, listed = [], {}
     for r in makes:
         folder = r["make"]["folder"]
@@ -100,7 +107,11 @@ def check_photos(rows: list[dict]) -> list[str]:
                 listed[folder] = showcase.listing(folder)
             found = showcase.match(listed[folder], r["make"]["files"])
             print(f"  #{r['idea']['id']} photos: " + ", ".join(str(e.get("Path") or e["Name"]) for e in found))
-        except (showcase.ShowcaseError, onedrive.OneDriveError) as err:
+        except onedrive.OneDriveError as err:
+            if str(err) in (onedrive.NOT_CONNECTED, onedrive.SIGNED_OUT):
+                return here
+            problems.append(f"entry {r['n']} (#{r['idea']['id']}): {err}")
+        except showcase.ShowcaseError as err:
             problems.append(f"entry {r['n']} (#{r['idea']['id']}): {err}")
     return problems
 
