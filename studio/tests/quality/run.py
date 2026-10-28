@@ -4,7 +4,8 @@ the reference study (beat timeline, structure, YouTube through Gemini; refused d
 the service, study folders), sound effects on the graphics, the profile grid (photos-only carousels, the grid flag, the
 account's stills and profile), reference downloads (hand-added first, the library's hourly cap, the sign-in that needs
 attention, Instagram's 400 as a refusal, uploaded files and OneDrive drops attached to their reference), Edit words (the
-corrected transcript as caption corrections, the next version with the same cut and no Claude). One line per suite with its
+corrected transcript as caption corrections, the next version with the same cut and no Claude), photo carousels from a
+OneDrive folder (the named photos as the slides, the serif cover line, nothing changed when one is missing). One line per suite with its
 pass count; exits 1 if any check fails.
 
     python tests/quality/run.py                # from studio/, all suites, 4 at a time
@@ -42,6 +43,7 @@ SUITES = {
     "grid": ("suite_grid.py", [], 54),
     "refqueue": ("suite_refqueue.py", [], 88),
     "transcript_edit": ("suite_transcript_edit.py", [], 80),
+    "showcase": ("suite_showcase.py", [], 32),
 }
 TIMEOUT = 90 * 60  # a hang, not a slow box: finalcheck alone takes 15-45 min on 4 vCPU
 RUNNING = []  # each suite runs in a process group of its own (with its ffmpeg and Chrome)

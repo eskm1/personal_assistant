@@ -1270,7 +1270,14 @@ bigger; 2160x2700 photos stay as they are), with an optional short **cover line*
 many at once (pick several from Photos on the phone, or drop a folder on a computer), in file-name order, up to 10, as
 Instagram allows; past 10 it says which were left out. Before the database update, the grid page says it needs
 `cloud_setup.py --update`; until Instagram is connected the header comes from `STUDIO_INSTAGRAM_HANDLE`,
-`STUDIO_INSTAGRAM_NAME` and `STUDIO_INSTAGRAM_BIO`.
+`STUDIO_INSTAGRAM_NAME` and `STUDIO_INSTAGRAM_BIO`. The cover line is set small, in the serif, at the bottom.
+
+**Photos from OneDrive, many carousels at once** (`showcase.py`, `showcase_batch.py`): a batch file in `batches/` lists
+ideas with their posting date, title, caption, grid comment and, for those to make now, the photos by name from a
+OneDrive folder and the cover line. On the laptop, `.\venv\Scripts\python showcase_batch.py batches\<file>.json
+--folder "Showcases\<folder>"` shows what it would change; add `--apply` to change the ideas and send the carousels to
+Studio (like Make this). Studio fetches the photos in that order; if one is missing or two files share its name, that
+carousel isn't made and the planner says which. Nothing is posted or scheduled.
 
 Settings in `.env` (then **Restart Studio**): `STUDIO_POSTING=0` stops all posting; `STUDIO_POSTS_PER_WEEK` (blank =
 the content plan's); `STUDIO_POST_TIME` (19:30); `STUDIO_RESULTS_HOUR` (9); `STUDIO_PUBLIC_URL` (blank = the

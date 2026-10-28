@@ -670,10 +670,17 @@ def run_jobs(api: Client, conn, idea_map: dict[int, int]) -> list[str]:
                 rows = api.select("ideas", {"id": f"eq.{job['idea_id']}", "select": cols})
                 if not rows or rows[0].get("format") != "carousel":
                     raise RuntimeError("this idea isn't a carousel")
-                caption = (job.get("payload") or {}).get("caption")
-                production_id = carousel.make(conn, local_id, rows[0].get("slides"),
+                payload = job.get("payload") or {}
+                caption = payload.get("caption")
+                slides, layout = rows[0].get("slides"), rows[0].get("slide_layout")
+                if payload.get("photos"):  # photos named in a OneDrive folder (showcase.py): they become the slides
+                    import showcase
+                    slides, layout = showcase.import_photos(api, payload["photos"]), carousel.PHOTOS
+                    api.update("ideas", {"id": f"eq.{job['idea_id']}"},
+                               {"slides": slides, **({"slide_layout": layout} if check_grid(api) else {})})
+                production_id = carousel.make(conn, local_id, slides,
                                               caption if isinstance(caption, str) else rows[0].get("caption"),
-                                              layout=rows[0].get("slide_layout"))
+                                              layout=layout)
                 api.update("ideas", {"id": f"eq.{job['idea_id']}"},
                            {"status": "made", "production": _production(conn, production_id)})
                 _finish(api, job, {"production_id": production_id})

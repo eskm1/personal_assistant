@@ -314,6 +314,12 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   v+1 with the same cut, no Claude, $0, the read carried over; refuses a new sentence, >2 words added/cut, >40%
   changed). Remember this word adds the typed term to `Studio/glossary.txt` (`glossary.add`). `POST
   /api/production/<id>/words`. `tests/quality/suite_transcript_edit.py`. The team may tick Remember too (Bryan, 2026-10-28).
+- Photo carousels from OneDrive, built 2026-10-28 (the content lead's showcase brief, at Bryan's request: the long condo's
+  six photo carousels and the 21 Finished homes ideas re-dated; not yet proven on the server or real OneDrive): a
+  carousel job's payload `photos` {folder, files, cover} sets the slides from those OneDrive photos first
+  (`showcase.py`; all found or nothing changes; the folder name never kept), the photo cover line now Instrument Serif
+  400 50 px; `showcase_batch.py` (laptop, service key) re-dates/re-titles/re-captions, changes the "Grid" comment and
+  queues the carousel jobs; `batches/2026-11-showcases.json`. `tests/quality/suite_showcase.py`.
 - Reference library and taste report built 2026-10-19 (not yet proven against Instagram or real Claude):
   Import many (paste or CSV, dedupe by shortcode, `import_references()`), held until Bryan presses Analyse
   (all, or a stratified sample of 150), paced downloads with backoff and pauses (`ref_library.py`), carousels and

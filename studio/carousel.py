@@ -61,6 +61,7 @@ PHOTO_MAX_W = 2160          # a photos-only slide is kept up to this wide (Insta
 RENDERS = settings.ROOT / "Renders"
 HERE = render.RENDER_DIR / "carousel"
 FONTS = {"display": HERE / "fonts" / "BricolageGrotesque-latin.woff2", "text": HERE / "fonts" / "Figtree-latin.woff2"}
+SERIF = render.RENDER_DIR / "captions" / "fonts" / "InstrumentSerif-latin-400.woff2"   # the photo cover line
 SHOOT = HERE / "shoot.mjs"
 LOGO = HERE / "um-mark.svg"
 # The Urban Makers look: the green Bryan approved in the content plan, warm white, and the
@@ -483,22 +484,23 @@ def lay_out(conn, slides: list[dict], out_dir: Path, reel: bool = False, layout:
 # ── Photos only ───────────────────────────────────────────────────────────────
 
 _COVER_LINE_CSS = """
-@font-face{font-family:"UM Display";src:url("%(display)s") format("woff2");font-weight:200 800;font-display:block}
+@font-face{font-family:"UM Serif";src:url("%(serif)s") format("woff2");font-weight:400;font-display:block}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:1080px;background:#000}
 .slide{position:relative;width:1080px;height:1350px;overflow:hidden;background:%(bg)s}
 .pic{position:absolute;inset:0;width:1080px;height:1350px;object-fit:cover;display:block}
 .shade{position:absolute;left:0;right:0;bottom:0;height:420px;background:linear-gradient(rgba(10,16,14,0),rgba(10,16,14,.62))}
 .copy{position:absolute;left:84px;right:84px;bottom:96px;display:flex;flex-direction:column;justify-content:flex-end}
-.h{font-family:"UM Display",sans-serif;font-weight:700;font-size:var(--fs,54px);line-height:1.1;color:%(ink)s;
-  letter-spacing:-.01em;text-wrap:balance;overflow-wrap:break-word;text-shadow:0 2px 18px rgba(0,0,0,.35)}
+.h{font-family:"UM Serif",serif;font-weight:400;font-size:var(--fs,50px);line-height:1.12;color:%(ink)s;
+  letter-spacing:0;text-wrap:balance;overflow-wrap:break-word;text-shadow:0 2px 18px rgba(0,0,0,.35)}
 """
 
-# The cover line's size, shrunk to fit at most three lines (the planner keeps it short).
+# The cover line: small, in the serif, at the bottom (the content lead's showcase brief, 2026-10-28: the grid's
+# photo carousels look alike); shrunk to fit at most three lines (the planner keeps it short).
 _COVER_FIT = """
 window.studioFit = () => [...document.querySelectorAll(".slide")].map((s) => {
   const copy = s.querySelector(".copy"), h = s.querySelector(".h");
-  let px = 54;
+  let px = 50;
   const lines = () => Math.round(h.getBoundingClientRect().height / (px * 1.1));
   while (lines() > 3 && px > 34) { px -= 2; s.style.setProperty("--fs", px + "px"); }
   const t = s.getBoundingClientRect(), range = document.createRange();
@@ -506,7 +508,7 @@ window.studioFit = () => [...document.querySelectorAll(".slide")].map((s) => {
   const rs = [...range.getClientRects()];
   const ink = rs.length ? [Math.round(Math.min(...rs.map((r) => r.left)) - t.left), Math.round(Math.min(...rs.map((r) => r.top)) - t.top),
     Math.round(Math.max(...rs.map((r) => r.right)) - t.left), Math.round(Math.max(...rs.map((r) => r.bottom)) - t.top)] : null;
-  return { n: Number(s.dataset.n), layout: "photo-cover-line", fit: px / 54, overflow: lines() > 3, heading_px: px, body_px: null,
+  return { n: Number(s.dataset.n), layout: "photo-cover-line", fit: px / 50, overflow: lines() > 3, heading_px: px, body_px: null,
            boxes: { heading: ink } };
 });
 """
@@ -577,7 +579,7 @@ def lay_out_photos(conn, slides: list[dict], out_dir: Path) -> dict:
 def _cover_line(photo: Path, line: str, width: int, out_dir: Path) -> dict:
     """Slide 1 of a photos-only carousel with its small cover line, drawn over the photo in Chrome at the
     slides' 1080x1350 (Instagram shows 1080 wide; the other slides keep the photo's own size). 01.png."""
-    css = _COVER_LINE_CSS % {"display": FONTS["display"].resolve().as_uri(), **COLOURS}
+    css = _COVER_LINE_CSS % {"serif": SERIF.resolve().as_uri(), **COLOURS}
     page = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><style>{css}</style></head><body>'
             f'<section class="slide" id="slide-1" data-n="1"><img class="pic" src="{html.escape(photo.resolve().as_uri())}" alt="">'
             f'<div class="shade"></div><div class="copy"><div class="h">{_lines(line)}</div></div></section>'
