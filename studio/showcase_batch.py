@@ -44,6 +44,15 @@ import cloud_sync
 import showcase
 
 GRID = re.compile(r"^\s*grid\b", re.I)
+AUTHOR = "Content plan"   # the grid notes this script writes carry it, so a rerun finds them again
+
+
+def grid_notes(comments: list[dict], texts: set[str]) -> list[dict]:
+    """An idea's grid notes, oldest first: one this script wrote (author 'Content plan'), one starting "Grid", or one
+    whose words are one of the batch's grid notes."""
+    out = [c for c in comments if c.get("author_name") == AUTHOR or GRID.match(c.get("body") or "")
+           or norm(c.get("body")) in texts]
+    return sorted(out, key=lambda c: c["id"])
 
 
 def norm(text: str) -> str:
@@ -57,6 +66,7 @@ def stamp(day: date, title: str) -> str:
 def plan(spec: dict, ideas: list[dict], comments: dict[int, list[dict]]) -> tuple[list[dict], list[str]]:
     """Each entry with its idea and the changes; the problems that stop it."""
     out, problems, taken = [], [], {}
+    texts = {norm(e.get("grid")) for e in spec.get("ideas") or [] if e.get("grid")}
     for n, e in enumerate(spec.get("ideas") or [], 1):
         want = norm(e.get("match") or e.get("title"))
         hits = [i for i in ideas if want and want in norm(i["title"])]
@@ -89,8 +99,11 @@ def plan(spec: dict, ideas: list[dict], comments: dict[int, list[dict]]) -> tupl
                 problems.append(f"entry {n}: idea {idea['id']} isn't a carousel")
             if (idea.get("status") == "made" or idea.get("production")) and not spec.get("remake"):
                 make = None  # already made: left as it is (--remake makes it again)
-        grid = [c for c in comments.get(idea["id"], []) if GRID.match(c["body"] or "")]
-        out.append({"n": n, "idea": idea, "sets": sets, "grid": e.get("grid"), "grid_old": grid, "make": make})
+        grid = grid_notes(comments.get(idea["id"], []), texts)
+        # The oldest is changed in place; the script's own copies after it are the duplicates a rerun made: removed.
+        extra = [c for c in grid[1:] if c.get("author_name") == AUTHOR] if e.get("grid") else []
+        out.append({"n": n, "idea": idea, "sets": sets, "grid": e.get("grid"), "grid_old": grid[:1], "extra": extra,
+                    "make": make})
     return out, problems
 
 
@@ -129,6 +142,8 @@ def main() -> int:
     ap.add_argument("--folder", help="the OneDrive folder of the photos, its full path (instead of the spec's; it may "
                                      "name a place)")
     ap.add_argument("--no-photo-check", action="store_true", help="don't list OneDrive first (Studio still checks)")
+    ap.add_argument("--grid-only", action="store_true", help="only the grid notes: change them in place and remove "
+                                                             "duplicates; dates, titles, captions and carousels untouched")
     ap.add_argument("--remake", action="store_true", help="make the carousels again even if made: each draft waiting "
                                                           "for review is archived and made from the spec as written")
     args = ap.parse_args()
@@ -147,7 +162,7 @@ def main() -> int:
     comments: dict[int, list[dict]] = {}
     if ideas:
         ids = ",".join(str(i["id"]) for i in ideas)
-        for c in api.select("comments", {"idea_id": f"in.({ids})", "select": "id,idea_id,body"}):
+        for c in api.select("comments", {"idea_id": f"in.({ids})", "select": "id,idea_id,body,author_name"}):
             comments.setdefault(c["idea_id"], []).append(c)
     rows, problems = plan(spec, ideas, comments)
     for r in rows:
@@ -155,6 +170,7 @@ def main() -> int:
         print(f"#{i['id']}: {i['title']!r} -> {r['sets']['title']!r}, posting {r['sets']['post_on']}"
               f"{', caption replaced' if 'caption' in r['sets'] else ''}"
               f"{', grid comment ' + ('changed' if r['grid_old'] else 'added') if r['grid'] else ''}"
+              f"{', ' + str(len(r['extra'])) + ' duplicate grid note(s) removed' if r.get('extra') else ''}"
               f"{(', then made again from ' if r['idea'].get('production') else ', then made from ') + str(len(r['make']['files'])) + ' photos' if r['make'] else ''}")
     left = [i for i in ideas if i["id"] not in {r["idea"]["id"] for r in rows}]
     if left:
@@ -170,15 +186,20 @@ def main() -> int:
         return 0
     for r in rows:
         iid = r["idea"]["id"]
-        api.update("ideas", {"id": f"eq.{iid}"}, r["sets"])
+        if not args.grid_only:
+            api.update("ideas", {"id": f"eq.{iid}"}, r["sets"])
         if r["grid"]:
             if r["grid_old"]:
-                api.update("comments", {"id": f"eq.{r['grid_old'][0]['id']}"}, {"body": r["grid"]})
+                if r["grid_old"][0]["body"] != r["grid"]:
+                    api.update("comments", {"id": f"eq.{r['grid_old'][0]['id']}"}, {"body": r["grid"]})
             else:
-                api.insert("comments", {"idea_id": iid, "body": r["grid"], "author_name": "Content plan"}, returning=False)
+                api.insert("comments", {"idea_id": iid, "body": r["grid"], "author_name": AUTHOR}, returning=False)
+            if r.get("extra"):
+                api.request("DELETE", "/rest/v1/comments",
+                            params={"id": f"in.({','.join(str(c['id']) for c in r['extra'])})", "author_name": f"eq.{AUTHOR}"})
     queued = 0
     for r in rows:
-        if r["make"]:
+        if r["make"] and not args.grid_only:
             api.insert("jobs", {"kind": "carousel", "runner": "laptop", "state": "queued", "idea_id": r["idea"]["id"],
                                 "payload": {"caption": r["sets"].get("caption", r["idea"].get("caption") or ""),
                                             "photos": r["make"], **({"remake": True} if spec.get("remake") else {})}},

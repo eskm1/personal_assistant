@@ -251,6 +251,73 @@ spec["ideas"][0]["photos"] = ["Other 12", "Other 99"]
 rows2, _ = showcase_batch.plan(spec, ideas, comments)
 bad = showcase_batch.check_photos(rows2)
 ok(len(bad) == 1 and "Other 99" in bad[0] and "#24" in bad[0], f"a missing photo shows in the dry run, before anything changes ({bad})")
+# A rerun finds its own grid notes (the CTO, 2026-10-28: the notes start "Week 1 ...", not "Grid", so a second run
+# added a copy to every idea): the oldest is kept and changed in place, the script's later copies are removed.
+dup = {25: [{"id": 601, "idea_id": 25, "body": "Week 1 is the top row.", "author_name": "Content plan"},
+            {"id": 602, "idea_id": 25, "body": "Week 1 is the top row.", "author_name": "Content plan"},
+            {"id": 603, "idea_id": 25, "body": "Love this one", "author_name": "Michelle"}]}
+rows_d, _ = showcase_batch.plan(spec, ideas, dup)
+ok(rows_d[1]["grid_old"][0]["id"] == 601 and [c["id"] for c in rows_d[1]["extra"]] == [602],
+   "a rerun finds its own grid note (oldest kept), and the copy a rerun made is the one to remove")
+
+
+class BatchApi:
+    def __init__(self):
+        self.calls = []
+        self.comments = [dict(c) for c in dup[25]]
+
+    def select(self, table, params=None):
+        if table == "projects":
+            return [{"id": 5, "name": "Finished homes"}]
+        if table == "ideas":
+            return [dict(i) for i in ideas]
+        if table == "comments":
+            return [dict(c) for c in self.comments]
+        return []
+
+    def update(self, table, filters, values):
+        self.calls.append(("update", table, filters, values))
+        return [values]
+
+    def insert(self, table, rows, **kw):
+        self.calls.append(("insert", table, rows))
+        return []
+
+    def request(self, method, path, **kw):
+        self.calls.append((method, path, kw.get("params")))
+        if method == "DELETE":
+            gone = {int(x) for x in kw["params"]["id"][4:-1].split(",")}
+            self.comments = [c for c in self.comments if c["id"] not in gone or c.get("author_name") != "Content plan"]
+        return None
+
+
+import sys as _sys
+bapi = BatchApi()
+real_client = showcase_batch.cloud_sync.Client
+showcase_batch.cloud_sync.Client = lambda: bapi
+spec_file = ROOT / "grid_spec.json"
+spec_file.write_text(json.dumps({"project": "Finished homes", "ideas": [
+    {"title": "The living room", "date": "2026-11-04", "grid": "Week 1 is the top row."}]}))
+argv = _sys.argv
+_sys.argv = ["showcase_batch.py", str(spec_file), "--apply", "--no-photo-check"]
+code = showcase_batch.main()
+first = list(bapi.calls)
+bapi.calls.clear()
+code2 = showcase_batch.main()
+second = list(bapi.calls)
+_sys.argv, showcase_batch.cloud_sync.Client = argv, real_client
+ok(code == 0 and [c for c in first if c[0] == "DELETE"] and not [c for c in first if c[0] == "insert"]
+   and [c["id"] for c in bapi.comments] == [601, 603],
+   f"run with --apply: no new copy, the duplicate removed, the oldest and Michelle's comment kept ({[c['id'] for c in bapi.comments]})")
+bapi.comments.append({"id": 604, "idea_id": 25, "body": "Week 1 is the top row.", "author_name": "Content plan"})
+bapi.calls.clear()
+_sys.argv, showcase_batch.cloud_sync.Client = ["showcase_batch.py", str(spec_file), "--apply", "--grid-only", "--no-photo-check"], (lambda: bapi)
+code3 = showcase_batch.main()
+_sys.argv, showcase_batch.cloud_sync.Client = argv, real_client
+ok(code3 == 0 and [c["id"] for c in bapi.comments] == [601, 603] and not [c for c in bapi.calls if c[0] == "update" and c[1] == "ideas"]
+   and not [c for c in bapi.calls if c[0] == "insert"], "--grid-only: duplicates removed, the ideas' dates, titles and captions untouched")
+ok(code2 == 0 and not [c for c in second if c[0] in ("insert", "DELETE") or (c[0] == "update" and c[1] == "comments")],
+   "run again: the grid notes are left as they are")
 _, problems = showcase_batch.plan({"project": "x", "folder": FOLDER, "ideas": [{"title": "room", "date": "2026-11-02"}]}, ideas, {})
 ok(problems and "3 ideas match" in problems[0], f"a title matching several ideas stops it ({problems})")
 _, problems = showcase_batch.plan({"project": "x", "ideas": [{"title": "Kitchen", "date": "2026-11-02"},
