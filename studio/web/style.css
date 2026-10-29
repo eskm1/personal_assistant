@@ -607,6 +607,21 @@ code { background: var(--um-paper-mid); border-radius: 4px; padding: 1px 5px; fo
 .composer { display: flex; gap: 8px; }
 .composer label { display: flex; }
 .composer input { flex: 1; min-width: 0; min-height: 40px; font-size: var(--um-fs-body); padding: 0 12px; }
+.composer textarea#note-body { flex: 1; min-width: 0; min-height: 40px; padding: 9px 12px; resize: none; line-height: 1.4;
+  font-size: var(--um-fs-body); overflow-y: auto; }
+.composer .btn { align-self: flex-end; }
+/* A note being edited in place, and the caption: as tall as what's written. */
+.note-edit-box { width: 100%; min-height: 64px; resize: none; line-height: 1.45; font-size: var(--um-fs-body); }
+.note-edit-row { justify-content: flex-end; margin-top: 6px; gap: 8px; }
+.note-list .note-edit-btn { color: var(--ink-soft); }
+#caption { min-height: 96px; resize: vertical; overflow-y: auto; line-height: 1.45; }
+/* The caption, full screen (Bryan, 2026-10-29): the whole of it at once, Save to come back. */
+.cap-full { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; background: var(--um-paper);
+  padding: max(12px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom)); gap: 12px; }
+.cap-full-head { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.cap-full-title { font-weight: 600; text-align: center; flex: 1; }
+.cap-full textarea { flex: 1; width: 100%; resize: none; line-height: 1.5; font-size: var(--um-fs-body); padding: 12px; }
+body.cap-full-open { overflow: hidden; }
 .composer .btn { min-height: 40px; padding: 0 16px; }
 
 /* Folded rows */

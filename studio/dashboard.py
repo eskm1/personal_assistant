@@ -1053,6 +1053,29 @@ def add_note(target: str, target_id: int):
     return jsonify({"id": note_id})
 
 
+@app.post("/api/<target>/<int:target_id>/notes/<int:note_id>/edit")
+def edit_note(target: str, target_id: int, note_id: int):
+    """Change a note's words (Bryan, 2026-10-29: "the notes also need to be more easy to edit on mobile"): its author
+    or the owner, while the editor hasn't acted on it yet. A remembered note's playbook line changes with it."""
+    row = db().execute("SELECT * FROM feedback WHERE id = ? AND target = ? AND target_id = ?",
+                       (note_id, target, target_id)).fetchone()
+    if row is None:
+        abort(404)
+    body = str((request.json or {}).get("body") or "").strip()[:2000]
+    if not body:
+        return jsonify({"error": "empty note"}), 400
+    if row["status"] != "open":
+        return jsonify({"error": "the editor has already acted on this note"}), 400
+    if not is_owner() and row["author"] != g.user["name"]:
+        return jsonify({"error": "only the person who wrote it can change it"}), 403
+    db().execute("UPDATE feedback SET body = ? WHERE id = ?", (body, note_id))
+    db().commit()
+    if row["remember"] and body != row["body"]:
+        playbook.forget(row["body"])
+        playbook.remember(body, "edited note")
+    return jsonify({"ok": True})
+
+
 @app.post("/api/<target>/<int:target_id>/notes/<int:note_id>/delete")
 def delete_note(target: str, target_id: int, note_id: int):
     """Take back a note added by mistake: its author or the owner, while the editor hasn't

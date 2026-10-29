@@ -75,6 +75,8 @@ FEATURES = [
      "events": [("view", r"^brand_kit$"), ("action", r"^brand_kit_(saved|font_added|logo|kind)$")]},
     {"key": "edit_words", "name": "Edit words (correct the transcript, Fix captions)", "shipped": "2026-10-27",
      "events": [("click", r"^#words-(edit|fix)\b"), ("action", r"^words_(edit|fixed)$")]},
+    {"key": "caption_full", "name": "Caption full screen; notes that grow and can be edited", "shipped": "2026-10-29",
+     "events": [("action", r"^(caption_full|note_edited)$"), ("click", r"^#caption-full\b")]},
     {"key": "grid_order", "name": "Drag to reorder the grid, Save this order", "shipped": "2026-10-28",
      "events": [("action", r"^grid_(drag|saved|undo|undo_saved)$")]},
     {"key": "grid_spread", "name": "Spread these (many posting dates at once)", "shipped": "2026-10-28",

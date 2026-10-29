@@ -1593,6 +1593,7 @@ function openAny(item) {
 
 async function openItem(item) {
   if (!item) return;
+  state.noteEdit = null;
   stopPreviews();
   const fresh = !viewerOpen();
   if (fresh) rememberList();
@@ -1923,6 +1924,9 @@ function renderPanel() {
     panel.innerHTML = isCarousel(d) ? carouselPageHTML(d) : d.kind === "production" ? productionPageHTML(d) : clipPageHTML(d);
   });
   growWords($("#words-text"));
+  growBox($("#caption"));
+  growBox($("#note-body"), 0.45);
+  if (state.noteEdit) focusNoteEdit();
   if (isCarousel(d)) renderCarouselTile(d);
   keepDrafts(["quick-note"], () => renderTileMeta(d));
   renderHead();
@@ -2160,6 +2164,15 @@ async function voiceClick(e) {
 }
 $("#modal").addEventListener("input", (e) => { if (e.target.id === "voice-text") e.target.dataset.dirty = "1"; });
 
+const ICON_EDIT = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
+const touchScreen = () => window.matchMedia?.("(hover: none) and (pointer: coarse)").matches;
+// A text box as tall as what's in it (up to most of the screen), so a long note or caption is seen whole.
+function growBox(el, most = 0.6) {
+  if (!el || !el.offsetParent) return;  // folded away: measured when its fold opens
+  el.style.height = "auto";
+  el.style.height = `${Math.min(el.scrollHeight + 2, Math.round(innerHeight * most))}px`;
+}
+
 function noteListHTML(notes, currentVersion, isProduction) {
   if (!notes.length) return `<p class="muted small" data-no-notes>No notes yet.</p><ul class="note-list" hidden></ul>`;
   return `<ul class="note-list">${notes.map((n) => {
@@ -2171,15 +2184,17 @@ function noteListHTML(notes, currentVersion, isProduction) {
     ].filter(Boolean).join(" · ");
     const rule = n.rule ? `<span class="note-meta note-rule">Studio learned this as a rule: ${esc(n.rule)}</span>` : "";
     const mine = n.status === "open" && (isOwner() || n.author === state.me?.name);
-    const remove = mine ? `<button class="icon-btn" data-note-delete="${esc(n.id)}" title="Remove this note" aria-label="Remove note">×</button>` : "";
-    return `<li class="${esc(n.status)}">${n.slide ? slideChip(n.slide) : timeChip(n.at_seconds)}<span class="note-text"><span class="note-body">${esc(n.body)}</span>${tags ? `<span class="note-meta">${esc(tags)}</span>` : ""}${rule}</span>${remove}</li>`;
+    const remove = mine ? `<button class="icon-btn note-edit-btn" data-note-edit="${esc(n.id)}" title="Edit this note" aria-label="Edit note">${ICON_EDIT}</button><button class="icon-btn" data-note-delete="${esc(n.id)}" title="Remove this note" aria-label="Remove note">×</button>` : "";
+    const editing = mine && state.noteEdit && String(state.noteEdit.id) === String(n.id);
+    if (editing) return `<li class="${esc(n.status)}" data-note-id="${esc(n.id)}">${n.slide ? slideChip(n.slide) : timeChip(n.at_seconds)}<span class="note-text">${noteEditHTML(n.id, state.noteEdit.text)}</span></li>`;
+    return `<li class="${esc(n.status)}" data-note-id="${esc(n.id)}">${n.slide ? slideChip(n.slide) : timeChip(n.at_seconds)}<span class="note-text"><span class="note-body">${esc(n.body)}</span>${tags ? `<span class="note-meta">${esc(tags)}</span>` : ""}${rule}</span>${remove}</li>`;
   }).join("")}</ul>`;
 }
 
 function composerRowHTML(placeholder, remember = true) {
   return `<div class="composer">
       <label class="grow"><span class="sr-only">Add a note</span>
-        <input id="note-body" maxlength="2000" autocomplete="off" placeholder="${esc(placeholder)}"></label>
+        <textarea id="note-body" rows="1" maxlength="2000" autocomplete="off" placeholder="${esc(placeholder)}"></textarea></label>
       <button class="btn" id="note-add">Add note</button>
     </div>
     ${isOwner() && remember ? `<label class="check small" title="Adds it to the playbook the editor follows on every future edit"><input type="checkbox" id="note-remember"> Remember for future edits</label>` : ""}`;
@@ -2199,7 +2214,7 @@ function captionBody(d, extra = "") {
   return `<textarea id="caption" placeholder="The caption you'll post. You have the final say.">${esc(d.caption)}</textarea>
     <div class="cap-feed" id="cap-feed" aria-live="polite">${capFeedHTML(d.caption, d.caption_check)}</div>
     <p class="muted small">Keep place names (estates, streets, clients) out of it.</p>
-    <div class="row"><button class="btn" id="caption-save">Save caption</button>${extra}</div>`;
+    <div class="row"><button class="btn" id="caption-save">Save caption</button><button class="btn ghost" id="caption-full">Full screen</button>${extra}</div>`;
 }
 function capFeedHTML(text, check) {
   const t = String(text || "").trim();
@@ -2461,7 +2476,7 @@ function carouselComposerHTML(d) {
       <label class="note-slide-pick"><span class="sr-only">About</span><select id="note-slide" aria-label="Which slide the note is about">
         <option value="">Whole post</option>${(d.slides || []).map((x) => `<option value="${esc(x.n)}" ${x.n === at ? "selected" : ""}>Slide ${esc(x.n)}</option>`).join("")}</select></label>
       <label class="grow"><span class="sr-only">Add a note</span>
-        <input id="note-body" maxlength="2000" autocomplete="off" placeholder="What should change? e.g. &quot;Shorter heading&quot;"></label>
+        <textarea id="note-body" rows="1" maxlength="2000" autocomplete="off" placeholder="What should change? e.g. &quot;Shorter heading&quot;"></textarea></label>
       <button class="btn" id="note-add">Add note</button>
     </div>`;
 }
@@ -3021,15 +3036,96 @@ $("#panel").addEventListener("click", async (e) => {
 });
 // The quick note grows with what's typed, so the whole note is in view (Bryan, 2026-10-23: "the text box for
 // giving feedback is very small and can't see the full message"). Enter adds it; Shift+Enter starts a new line.
+// Editing a note in place: its words in a box as tall as they are, Save or Cancel. Kept in state.noteEdit, so the
+// page refreshing itself (a new draft, a sync) draws the box again with what's been typed.
+function noteEditHTML(id, text) {
+  return `<label class="sr-only" for="note-edit-${esc(id)}">Edit the note</label>
+    <textarea class="note-edit-box" id="note-edit-${esc(id)}" maxlength="2000">${esc(text)}</textarea>
+    <span class="row note-edit-row"><button type="button" class="btn small" data-note-cancel>Cancel</button>
+    <button type="button" class="btn small primary" data-note-save>Save</button></span>`;
+}
+function startNoteEdit(li) {
+  if (!li || li.querySelector(".note-edit-box")) return;
+  if (phone()) stopWatching();  // the video, pinned at the top while watching, would sit over the box
+  state.noteEdit = { id: li.dataset.noteId, text: li.querySelector(".note-body")?.textContent || "" };
+  li.querySelector(".note-text").innerHTML = noteEditHTML(state.noteEdit.id, state.noteEdit.text);
+  li.querySelectorAll("[data-note-edit],[data-note-delete]").forEach((b) => b.remove());
+  focusNoteEdit();
+  // Once the video has stepped aside (the layout changes), bring the box to the middle of the screen.
+  requestAnimationFrame(() => requestAnimationFrame(() => li.querySelector(".note-edit-box")?.scrollIntoView({ block: "center" })));
+}
+function focusNoteEdit() {
+  const ta = $(".note-edit-box");
+  if (!ta) return;
+  growBox(ta, 0.45);
+  if (document.activeElement !== ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(ta.value.length, ta.value.length); }
+}
+
+// The caption, full screen: the whole of it at once, then Save to come back (or Cancel).
+function openCaptionFull(d) {
+  const small = $("#caption");
+  if (!small) return;
+  const wrap = document.createElement("div");
+  wrap.className = "cap-full";
+  wrap.setAttribute("role", "dialog");
+  wrap.setAttribute("aria-modal", "true");
+  wrap.setAttribute("aria-label", "Caption");
+  wrap.innerHTML = `<div class="cap-full-head"><button type="button" class="btn" data-cap-cancel>Cancel</button>
+      <span class="cap-full-title">Caption <span class="muted small" id="cap-full-count"></span></span>
+      <button type="button" class="btn primary" data-cap-save>Save</button></div>
+    <textarea id="cap-full-text" aria-label="The caption you'll post">${esc(small.value)}</textarea>`;
+  document.body.appendChild(wrap);
+  document.body.classList.add("cap-full-open");
+  const ta = wrap.querySelector("textarea");
+  const count = () => { $("#cap-full-count").textContent = `${ta.value.length} / 2,200`; };
+  count();
+  ta.addEventListener("input", count);
+  ta.focus();
+  ta.setSelectionRange(0, 0);
+  ta.scrollTop = 0;
+  mark("caption_full");
+  const close = () => { wrap.remove(); document.body.classList.remove("cap-full-open"); document.removeEventListener("keydown", esc_); };
+  const esc_ = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", esc_);
+  wrap.addEventListener("click", async (e) => {
+    if (e.target.closest("[data-cap-cancel]")) close();
+    else if (e.target.closest("[data-cap-save]")) {
+      const btn = e.target.closest("[data-cap-save]");
+      btn.disabled = true;
+      try {
+        await api(`/api/production/${d.id}/decision`, { decision: "caption", caption: ta.value });
+      } catch (err) {
+        btn.disabled = false;
+        toast(`Couldn't save: ${err.message}`);
+        return;
+      }
+      small.value = ta.value;
+      small.dispatchEvent(new Event("input", { bubbles: true }));
+      growBox(small);
+      close();
+      toast("Caption saved.");
+    }
+  });
+}
+
 function growNote(el) {
   el.style.height = "auto";
-  el.style.height = `${Math.min(el.scrollHeight + 2, 240)}px`;
+  // Pinned under the video while watching on a phone: a few lines, then it scrolls, so the video stays in view.
+  const most = phone() && watching() ? Math.max(96, Math.round(innerHeight * 0.16)) : 240;
+  el.style.height = `${Math.min(el.scrollHeight + 2, most)}px`;
 }
 $("#tile-meta").addEventListener("input", (e) => { if (e.target.id === "quick-note") growNote(e.target); });
+$("#panel").addEventListener("toggle", (e) => { if (e.target.open) e.target.querySelectorAll("#caption, #note-body").forEach((t) => growBox(t)); }, true);
+// The note box, the caption and a note being edited grow with what's typed.
+$("#panel").addEventListener("input", (e) => {
+  if (e.target.classList?.contains("note-edit-box") && state.noteEdit) state.noteEdit.text = e.target.value;
+  if (e.target.id === "note-body" || e.target.classList?.contains("note-edit-box")) growBox(e.target, 0.45);
+  else if (e.target.id === "caption") growBox(e.target);
+});
 // Pressing Add keeps the cursor in the note, so the box doesn't fold back under the finger before the click lands.
 $("#tile-meta").addEventListener("mousedown", (e) => { if (e.target.closest("#quick-add")) e.preventDefault(); });
 $("#tile-meta").addEventListener("keydown", (e) => {
-  if (e.target.id === "quick-note" && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+  if (e.target.id === "quick-note" && e.key === "Enter" && !e.shiftKey && !e.isComposing && !touchScreen()) {
     e.preventDefault();
     addNote("quick-note").catch((err) => toast(`Couldn't save: ${err.message}`));
   }
@@ -3137,6 +3233,23 @@ async function detailClick(e) {
       toast("Added to the idea's shot list.");
     } else if (id === "review-get") {
       await api(`/api/production/${d.id}/review`, {});
+      await loadDetail();
+    } else if (id === "caption-full") {
+      openCaptionFull(d);
+    } else if (e.target.closest("[data-note-edit]")) {
+      startNoteEdit(e.target.closest("li[data-note-id]"));
+    } else if (e.target.closest("[data-note-save]")) {
+      const li = e.target.closest("li[data-note-id]");
+      const body = li.querySelector(".note-edit-box").value.trim();
+      if (!body) { toast("Write the note, or remove it with ×."); return; }
+      e.target.closest("[data-note-save]").disabled = true;
+      await api(`/api/${state.current.kind}/${state.current.id}/notes/${li.dataset.noteId}/edit`, { body });
+      mark("note_edited");
+      state.noteEdit = null;
+      await loadDetail();
+      toast("Note saved.");
+    } else if (e.target.closest("[data-note-cancel]")) {
+      state.noteEdit = null;
       await loadDetail();
     } else if (e.target.closest("[data-note-delete]")) {
       const b = e.target.closest("[data-note-delete]");
@@ -3355,7 +3468,7 @@ function quickStatus(text, bad = false, noteId = null) {
 
 $("#panel").addEventListener("keydown", (e) => {
   const ctrlEnter = e.key === "Enter" && (e.ctrlKey || e.metaKey);
-  if (e.target.id === "note-body" && (ctrlEnter || (e.key === "Enter" && e.target.tagName === "INPUT"))) {
+  if (e.target.id === "note-body" && (ctrlEnter || (e.key === "Enter" && !e.shiftKey && !e.isComposing && !touchScreen()))) {
     e.preventDefault();
     addNote().catch((err) => toast(`Couldn't save: ${err.message}`));
   } else if (e.target.id === "comment-body" && ctrlEnter) {
