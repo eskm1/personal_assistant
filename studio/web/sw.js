@@ -8,7 +8,10 @@
 // page has changed (Studio was updated) and nobody has touched it yet, it reloads itself.
 // Switched off with STUDIO_SERVICE_WORKER=off (this file then removes itself), and skipped for one
 // visit with ?sw=off on the address.
-const CACHE = "studio-pages-1";
+// studio-pages-2 (2026-10-30): the first version never replaced a kept page (it read the old copy after
+// the page had taken it, which fails), so a browser kept opening the page from the day it first saved
+// it (Bryan: no Grid in More, an empty Posting calendar, until Ctrl+Shift+R). The new name drops those.
+const CACHE = "studio-pages-2";
 const PAGES = ["/", "/plan/"];
 
 self.addEventListener("install", () => self.skipWaiting());
@@ -28,10 +31,12 @@ self.addEventListener("fetch", (e) => {
 async function page(e, path) {
   const cache = await caches.open(CACHE);
   const kept = await cache.match(path);
+  // Read now: once the page has taken the kept copy, it can't be read again.
+  const was = kept ? kept.clone().text() : Promise.resolve(null);
   const fresh = fetch(e.request).then(async (res) => {
     if (res.type === "basic" && res.status === 200 && (res.headers.get("Content-Type") || "").startsWith("text/html")) {
       const text = await res.clone().text();
-      const before = kept ? await kept.clone().text() : null;
+      const before = await was;
       await cache.put(path, res.clone());
       if (before !== null && before !== text) await updated(e.resultingClientId || e.clientId, path);
     } else {
