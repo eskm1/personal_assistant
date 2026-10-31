@@ -1444,6 +1444,24 @@ def redraw_concept(production_id: int, n: int):
     return _concept_change(production_id, n, lambda: carousel.redraw(db(), production_id, n, change))
 
 
+@app.post("/api/production/<int:production_id>/grade")
+def grade_carousel(production_id: int):
+    """A colour grade per photo of a carousel ({"looks": {"2": "marcus", ...}}; photo_grade.py): the next version
+    with those photos graded, then To review. The team may pick them too (it costs nothing and comes back to Bryan)."""
+    import carousel
+    looks = body().get("looks")
+    if not isinstance(looks, dict) or not looks:
+        return jsonify({"error": "no looks were picked"}), 400
+    try:
+        changed = carousel.regrade(db(), production_id, looks)
+    except KeyError:
+        abort(404)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    log.info("Production %s: grades picked for slides %s by %s", production_id, changed, g.user["id"])
+    return jsonify({"ok": True, "changed": changed})
+
+
 @app.get("/api/production/<int:production_id>/download")
 def download_carousel(production_id: int):
     """A carousel's slides and caption as a .zip (01.png, 02.png ... caption.txt)."""

@@ -720,6 +720,7 @@ def run(conn, production_id: int, client=None) -> Path:
         (production_id,))]
     revision = None
     redraws = data.get("redraw") if isinstance(data.get("redraw"), dict) else {}
+    grades = data.get("regrade") if isinstance(data.get("regrade"), dict) else {}
     # Sent back (or interrupted while revising): Bryan's open notes on the last version. A Redraw
     # from Review only draws pictures again: the notes wait for Send back.
     # Studio's read of the last version rides along with any revision (Bryan: add them automatically).
@@ -727,12 +728,12 @@ def run(conn, production_id: int, client=None) -> Path:
     import self_fix
     fresh = was == "revising" and row["restyle"] == restyle.FRESH
     read = [{**f, "body": f"From Studio's read: {f['body']}"} for f in self_fix.read_notes(row, notes)] \
-        if not fresh and (was == "revising" or (notes and row["version"] >= 1 and not redraws)) else []
+        if not fresh and (was == "revising" or (notes and row["version"] >= 1 and not redraws and not grades)) else []
     if fresh:  # start over: rewritten from the plan's own slides, not the last version's; no read of it
         slides = clean_slides(json.loads(row["plan"] or "{}").get("slides")) or slides
         revision = revise(conn, dict(row), slides, [restyle.CAROUSEL_NOTE] + notes, client)
         slides = revision["slides"]
-    elif notes and (was == "revising" or (row["version"] >= 1 and not redraws)):
+    elif notes and (was == "revising" or (row["version"] >= 1 and not redraws and not grades)):
         revision = revise(conn, dict(row), slides, notes + read, client)
         slides = revision["slides"]
     elif was == "revising" and (row["restyle"] or read):  # a restyle (restyle.py) and/or the read's fixes
@@ -742,6 +743,8 @@ def run(conn, production_id: int, client=None) -> Path:
         k = int(n)
         if 1 <= k <= len(slides) and slides[k - 1]["image"].get("source") == "concept":
             slides[k - 1] = {**slides[k - 1], "image": concepts.redraw_image(slides[k - 1]["image"], change)}
+    if grades:  # the colour grades picked (regrade): the photos only, nothing rewritten
+        slides = _apply_grades(slides, grades)
     # A Finished homes post: its concept slides are laid out as text (prepare says why) and
     # Studio's read flags them.
     kind = post_type(conn, row)
@@ -771,7 +774,7 @@ def run(conn, production_id: int, client=None) -> Path:
                source_clips = ?, duration = NULL, error = NULL, updated_at = ?, self_fix = ? WHERE id = ?""",
         (version, str(thumb), json.dumps(stored, ensure_ascii=False), caption, json.dumps(clip_ids), catalog.now(),
          json.dumps({"version": version, "pending": True}), production_id))
-    if revision is not None or not redraws:  # a note asking for a different photo stays open (revise_photos)
+    if revision is not None or not (redraws or grades):  # a note asking for a different photo stays open (revise_photos)
         still = [int(i) for i in (revision or {}).get("keep_open") or []]
         conn.execute(f"""UPDATE feedback SET status = 'addressed'
                          WHERE target = 'production' AND target_id = ? AND status = 'open'
@@ -937,6 +940,67 @@ def redraw(conn, production_id: int, n: int, change: str = "") -> None:
     conn.execute("UPDATE productions SET slides = ? WHERE id = ?", (json.dumps(data, ensure_ascii=False), production_id))
     catalog.set_production_status(conn, production_id, "planned")
     log.info("Carousel %s: redraw slide %d's concept pictures", production_id, n)
+
+
+
+def regrade(conn, production_id: int, looks: dict) -> list[int]:
+    """Pick a colour grade per photo (photo_grade.py; the team's side-by-side picker): {slide n: look}. Queued as the
+    next version, like Redraw: the photos are graded from the photo each slide was first given (never a grade on a
+    grade), laid out again with the same cover line and caption, then Studio's read, then To review (an approved draft
+    comes back too). Returns the slides whose look changes. Raises KeyError (no such carousel) or ValueError."""
+    import photo_grade
+    row = conn.execute("SELECT * FROM productions WHERE id = ?", (production_id,)).fetchone()
+    if row is None or row["format"] != "carousel":
+        raise KeyError(production_id)
+    if row["status"] not in ("ready", "approved", "failed"):
+        raise ValueError(f"the draft is {row['status']}: a grade is picked once it's waiting for review or approved")
+    live = conn.execute("SELECT state FROM posts WHERE production_id = ? AND state IN ('scheduled', 'publishing', 'posted')",
+                        (production_id,)).fetchone()
+    if live is not None:
+        raise ValueError(f"it's {live['state']} on Instagram, so its photos stay as they are")
+    data = current(row)
+    slides = data["slides"]
+    want, changes = {}, []
+    for k, look in (looks or {}).items():
+        try:
+            n = int(k)
+        except (TypeError, ValueError):
+            raise ValueError("a slide is named by its number") from None
+        if look not in photo_grade.NAMES:
+            raise ValueError(f"there's no look called {look!r}")
+        if not 1 <= n <= len(slides) or slides[n - 1]["image"].get("source") != "photo":
+            raise ValueError(f"slide {n} isn't a photo")
+        if (slides[n - 1]["image"].get("grade") or "original") != look:
+            want[str(n)] = look
+            changes.append(n)
+    if not changes:
+        return []
+    data["regrade"] = {**(data.get("regrade") or {}), **want}
+    conn.execute("UPDATE productions SET slides = ? WHERE id = ?", (json.dumps(data, ensure_ascii=False), production_id))
+    catalog.set_production_status(conn, production_id, "planned")
+    log.info("Carousel %s: new grades for slides %s", production_id, ", ".join(map(str, changes)))
+    return changes
+
+
+def _apply_grades(slides: list[dict], grades: dict) -> list[dict]:
+    """The slides with their photos in the looks picked ({n: look}); each from its ungraded photo."""
+    import photo_grade
+    out = [dict(s) for s in slides]
+    for k, look in grades.items():
+        n = int(k)
+        if not 1 <= n <= len(out) or out[n - 1]["image"].get("source") != "photo":
+            continue
+        image = dict(out[n - 1]["image"])
+        first = image.get("graded_from") or image["photo_id"]
+        if look == "original":
+            image["photo_id"] = first
+            image.pop("graded_from", None)
+            image.pop("grade", None)
+        else:
+            photo = photo_grade.grade_file(slide_images.photo_path(first), look)
+            image.update(photo_id=photo["id"], graded_from=first, grade=look)
+        out[n - 1] = {**out[n - 1], "image": image}
+    return out
 
 
 # ── Revising from Bryan's notes ───────────────────────────────────────────────

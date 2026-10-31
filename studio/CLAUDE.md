@@ -354,6 +354,7 @@ stubs for Claude/Epidemic (the sandbox can't reach them). Check `python -c "impo
   rebuilds with only the photos changed (the live caption and cover kept; an approved draft comes back to To review).
   No slideshow Reel from a photos-only carousel (it framed the photos in green).
   `tests/quality/suite_showcase.py`.
+- Colour grades for carousel photos, built 2026-10-31 (the team: the long condo's photos "could be warmer", like Marcus Ip; Bryan: "make this something that i can then pick and choose"; not yet proven on the server): `photo_grade.py` (looks original/soft/golden/marcus/dramatic/deeper, Lab tone curve + warm offsets by brightness, clarity and vignette on the dramatic two, measured against five of his photos), `carousel.regrade` + `POST /api/production/<id>/grade` ({looks: {slide n: look}}, team allowed): the next version graded from each slide's first photo (`graded_from`), nothing rewritten, notes left open, then To review; scheduled ones refused. Picked per photo on https://claude.ai/artifact/6Wqup39GdvzxH8aaLAHjTr (its `picks` collection, doc `p<production>_s<slide>`, default marcus); the lead reads the picks and posts them with the QA account. `tests/quality/suite_grade.py`.
 - Reference library and taste report built 2026-10-19 (not yet proven against Instagram or real Claude):
   Import many (paste or CSV, dedupe by shortcode, `import_references()`), held until Bryan presses Analyse
   (all, or a stratified sample of 150), paced downloads with backoff and pauses (`ref_library.py`), carousels and
